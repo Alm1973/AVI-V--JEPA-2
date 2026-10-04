@@ -19,13 +19,19 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 \
     "$MSI_HOST" 'Start-Process rundll32.exe -ArgumentList "powrprof.dll,SetSuspendState","0,1,0"' \
     >/dev/null 2>&1 || true
 
-# Windows takes a variable amount of time to finish the suspend transition, and
-# the network stays up for part of it. 45s produced false failures; 120s does not.
-DEADLINE=$(( $(date +%s) + 120 ))
-while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-  if ! msi_awake; then echo "MSI is asleep (took $(( 120 - (DEADLINE - $(date +%s)) ))s)."; exit 0; fi
-  sleep 3
+# CRITICAL: the Ethernet NIC has WakeOnPattern enabled, so an incoming TCP SYN
+# wakes the machine. An eager confirmation loop probing port 22 every few seconds
+# wakes it back up as fast as it sleeps - the earlier version of this script was
+# fighting itself and reporting "it may not have slept".
+# So: wait quietly with NO packets, then probe sparingly.
+echo "waiting quietly (probing would wake it again) ..."
+sleep 45
+for attempt in 1 2 3; do
+  if ! msi_awake; then echo "MSI is asleep."; exit 0; fi
+  [ "$attempt" -lt 3 ] && { echo "  still up; that probe may itself have woken it - waiting 30s"; sleep 30; }
 done
-echo "MSI still reachable after 120s - it may not have slept." >&2
-echo "Check: keep-awake still held (./keepawake-msi.sh status), or an app holding a SYSTEM power request (powercfg /requests)." >&2
+echo "MSI still reachable. Note: each probe can wake it while WakeOnPattern is enabled," >&2
+echo "so this check is not fully reliable. To make sleep stick, consider:" >&2
+echo "  Set-NetAdapterPowerManagement -Name Ethernet -WakeOnPattern Disabled" >&2
+echo "(keeps WakeOnMagicPacket, so wake-msi.sh still works)." >&2
 exit 1
