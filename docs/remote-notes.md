@@ -92,6 +92,37 @@ visible in `powercfg /q` output because the setting is hidden by default.
 Useful side effect: **wake timers are already enabled on AC**, so the doc's fallback plan
 needs no setup.
 
+### Sleep from the Mac: **WORKING, but the doc's command is wrong**
+
+The doc's Phase 1 command does **not** work over SSH:
+
+```
+ssh msi "rundll32.exe powrprof.dll,SetSuspendState 0,1,0"     # DOES NOT WORK
+```
+
+Two failures at once: sshd waits on the foreground `rundll32` process, so the connection
+stalls for `ServerAliveInterval x CountMax` (180 s with our config), **and** the suspend
+never takes effect. Detaching it fixes both:
+
+```
+ssh msi 'Start-Process rundll32.exe -ArgumentList "powrprof.dll,SetSuspendState","0,1,0"'
+```
+
+ssh then returns immediately and the machine goes down. Measured: **11 s** to sleep after the
+command, with keep-awake released first.
+
+Two further things learned:
+
+- **Release keep-awake before sleeping.** `sleep-msi.sh` does this automatically. With the
+  hold still active the machine stays up.
+- **Time-to-sleep is variable.** A 45 s confirmation window produced false "it may not have
+  slept" failures — the machine went down shortly after. Window is now 120 s.
+
+### Wake times are variable
+
+Five measured wakes via `wake-msi.sh`: **8 s, 6 s, 6 s, 37 s, 19 s**. All succeeded (5/5),
+but don't assume it's always under 10 s. The 90 s poll window is right.
+
 ### Keep-awake: **WORKING** (`scripts/keepawake-msi.sh`)
 
 Self-expiring by design, as the doc asks — a forgotten session can't leave the laptop on.
@@ -104,6 +135,8 @@ avoids needing a stored password.
 
 Verified: `powercfg /requests` SYSTEM section shows the holding
 `powershell.exe`, and the hold defeats the unattended-sleep timeout.
+**Endurance test passed: stayed awake 362 s**, against the 120 s threshold that was killing
+every earlier session.
 
 **Bug hit and fixed:** first run failed with `lastResult=1` and no hold. Cause — the task
 runs as SYSTEM, so `$env:USERPROFILE` inside the script resolved to the *system* profile,
