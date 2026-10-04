@@ -109,14 +109,47 @@ ssh msi 'Start-Process rundll32.exe -ArgumentList "powrprof.dll,SetSuspendState"
 ```
 
 ssh then returns immediately and the machine goes down. Measured: **11 s** to sleep after the
-command, with keep-awake released first.
+command, with keep-awake released first (see the `WakeOnPattern` section below for why
+confirming this is unreliable).
 
-Two further things learned:
+**Release keep-awake before sleeping.** `sleep-msi.sh` does this automatically. With the
+hold still active the machine stays up.
 
-- **Release keep-awake before sleeping.** `sleep-msi.sh` does this automatically. With the
-  hold still active the machine stays up.
-- **Time-to-sleep is variable.** A 45 s confirmation window produced false "it may not have
-  slept" failures — the machine went down shortly after. Window is now 120 s.
+### The big one: `WakeOnPattern` is enabled, so network traffic wakes it
+
+```
+Get-NetAdapterPowerManagement:
+  Ethernet : WakeOnMagicPacket Enabled, WakeOnPattern ENABLED
+  Wi-Fi    : WakeOnMagicPacket Enabled, WakeOnPattern ENABLED
+```
+
+With `WakeOnPattern` on, an ordinary incoming TCP SYN wakes the machine, not just a magic
+packet. Two consequences, both confirmed by behaviour:
+
+1. **My own confirmation loop was waking it.** `sleep-msi.sh` originally probed port 22
+   every 3 s to confirm sleep, which woke it back up as fast as it slept, then reported
+   "it may not have slept". The script was fighting itself. Widening the window from 45 s to
+   120 s did **not** help, because the cause was the probing, not the timing. Now fixed: a
+   quiet 45 s wait with no packets, then at most 3 sparing probes.
+2. **Tailscale keepalives can wake it too.** The MSI is on Ethernet (`192.168.0.27`) *and*
+   Wi-Fi (`192.168.0.119`) at the same time, and Tailscale's direct path was observed on the
+   **Wi-Fi** address. So the tailnet's own keepalive traffic lands on a NIC that wakes on any
+   pattern. Very likely why the laptop does not reliably stay asleep.
+
+**Honest status of sleep:** the command is issued correctly and the machine *does* sleep,
+observed asleep repeatedly including for minutes at a time (`offline, last seen 1m ago`).
+But **confirming it from the Mac is unreliable**, and it does not stay asleep dependably,
+because of `WakeOnPattern`.
+
+**Recommended fix (needs Shaurya's go-ahead, changes a device setting):**
+
+```powershell
+Set-NetAdapterPowerManagement -Name "Ethernet" -WakeOnPattern Disabled
+Set-NetAdapterPowerManagement -Name "Wi-Fi"    -WakeOnPattern Disabled
+```
+
+Keeps `WakeOnMagicPacket`, so `wake-msi.sh` still works, but stops stray traffic from waking
+the laptop. Without this, "sleeps when idle" is not really true.
 
 ### Wake times are variable
 
