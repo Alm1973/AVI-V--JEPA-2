@@ -141,15 +141,21 @@ observed asleep repeatedly including for minutes at a time (`offline, last seen 
 But **confirming it from the Mac is unreliable**, and it does not stay asleep dependably,
 because of `WakeOnPattern`.
 
-**Recommended fix (needs Shaurya's go-ahead, changes a device setting):**
+**FIXED 2026-10-04, with Shaurya's go-ahead:**
 
 ```powershell
 Set-NetAdapterPowerManagement -Name "Ethernet" -WakeOnPattern Disabled
 Set-NetAdapterPowerManagement -Name "Wi-Fi"    -WakeOnPattern Disabled
 ```
 
-Keeps `WakeOnMagicPacket`, so `wake-msi.sh` still works, but stops stray traffic from waking
-the laptop. Without this, "sleeps when idle" is not really true.
+Both adapters now read `WakeOnMagicPacket Enabled, WakeOnPattern Disabled`.
+
+Verified immediately after the change:
+
+- sleep issued, 50 s quiet wait, single probe -> **asleep and stayed asleep**
+- `wake-msi.sh` -> **awake in 18 s**
+
+So sleep now sticks and Wake-on-LAN still works. Phase 1 is genuinely complete.
 
 ### Wake times are variable
 
