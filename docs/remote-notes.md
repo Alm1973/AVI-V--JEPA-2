@@ -373,6 +373,67 @@ Ultralytics downloaded `yolov8s-worldv2.pt` (24.7 MB) plus a 338 MB CLIP backbon
 working directory on first run, so those now live in `avi\assistant\`. Expected, cached, and
 not re-downloaded.
 
+## Room tracker (2026-10-04)
+
+Motion on -> the logger runs. No motion -> the model is not even loaded, so the GPU is free.
+This is what resolves the VRAM conflict: the logger no longer has to hold 3.4 GB across a
+7.5-hour desk window.
+
+- `assistant/room_tracker.py` - cheap watcher and orchestrator, runs on the MSI
+- `observer.py --exit-after-away SECONDS` - the logger exits itself when the desk is empty
+- `scripts/tracker.sh start|stop|status|logs` - control from the Mac
+
+While idle the tracker holds the camera and does nothing but a 160x90 grayscale frame
+difference: no model, **zero VRAM**. It reuses `ChangeDetector._prep/_fraction` rather than
+reimplementing the differencing, so both agree on what a changed pixel is.
+
+**Camera ownership is exclusive.** Only one process can hold the C270 through DirectShow, so
+the camera belongs to exactly one of the two at any moment: released by the tracker before
+the logger starts (with a 1.5 s pause for DirectShow to let go), re-acquired only after the
+logger has exited.
+
+Verified end to end, with VRAM sampled from the Mac throughout:
+
+```
+22:22:50 watching for motion, no model loaded
+22:22:51 motion -> handing over the camera
+22:22:53 starting logger: observer.py --no-preview --exit-after-away 60
+22:23:41 startup  not at desk (0.82) | no verified objects | 2294 ms, 1 VLM calls
+         nobody at the desk for 60s - exiting so the GPU is free
+22:24:43 logger exited rc=0 after 110s - GPU released
+```
+
+VRAM: **39 -> 3404 -> 39 MiB.** Releases cleanly, no leak across cycles.
+
+A crash-loop guard is included: if the logger exits in under 30 s something is wrong (bad
+camera handoff, model failure), so the tracker backs off 30 s rather than hot-looping a
+3.4 GB model load.
+
+### Not yet calibrated: `--motion-fraction`
+
+**The 0.02 default is a guess, not a measurement.** The handoff above was forced with
+`--motion-fraction 0` to prove the pipeline, because the room was genuinely static and even
+0.0005 never triggered - so the quiet-room noise floor is below 0.0005, which is the one real
+data point. 0.02 (2% of pixels) is very likely too high: small movements like typing may not
+reach it, and the logger would then never start while Shaurya is sitting still.
+
+There is no way to pick this number from here. `--report-every` (default 300 s) now logs the
+peak idle motion, so the threshold can be set from the room's own data:
+
+```
+[tracker 14:35:02] idle: peak motion 0.00021 over the last 300s (threshold 0.02)
+```
+
+Run it through one real session, read the peaks with him at the desk and away, then set the
+threshold between the two.
+
+### Caveat worth saying out loud
+
+While "off", the tracker still **holds the camera open**, so the C270's activity light stays
+on even when no model is loaded and nothing is being logged. The GPU is free, but the camera
+is live. If that is unwanted, the tracker would have to open and close the device around each
+poll, which is slow and hard on DirectShow.
+
 ## Open items
 
 - `assistant.zip` is **not on this Mac** — searched the whole home directory. Blocks Phase 2

@@ -211,6 +211,9 @@ def main():
     ap.add_argument("--no-preview", action="store_true")
     ap.add_argument("--once", action="store_true",
                     help="make one observation, print it, and exit (for remote testing)")
+    ap.add_argument("--exit-after-away", type=float, default=0.0, metavar="SECONDS",
+                    help="exit once nobody has been at the desk this long, so the "
+                         "GPU is freed. 0 disables. Used by room_tracker.py")
     args = ap.parse_args()
     if args.once:
         args.no_preview = True   # nobody is at the desk to see a window
@@ -233,6 +236,7 @@ def main():
     today = datetime.now().date().isoformat()
     once_deadline = time.time() + 60.0 if args.once else None
     once_t0 = time.time()
+    last_present = time.time()   # for --exit-after-away
     try:
         while True:
             t_loop = time.time()
@@ -243,10 +247,17 @@ def main():
             now = time.time()
             if obs.step(frame, now) is not None:
                 print(obs.last_summary)
+                if obs.last_activity != settings.NOBODY:
+                    last_present = now
                 if args.once:
                     print(f"[observer] --once: one observation in "
                           f"{time.time() - once_t0:.2f}s (includes camera warm-up)")
                     break
+
+            if args.exit_after_away > 0 and (now - last_present) >= args.exit_after_away:
+                print(f"[observer] nobody at the desk for {args.exit_after_away:.0f}s "
+                      f"- exiting so the GPU is free")
+                break
 
             if once_deadline is not None and time.time() > once_deadline:
                 print("[observer] --once: no observation within 60s", file=sys.stderr)
