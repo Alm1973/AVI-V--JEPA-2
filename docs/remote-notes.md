@@ -532,3 +532,74 @@ re-measure then.
   WoL button). Unanswered.
 - Usual desk hours, for wake timers. Unanswered.
 - `~/.ssh/msi_ed25519.pub` is not installed on the MSI (optional; the existing key works).
+
+---
+
+## 2026-10-05 — new build spec adopted; M1 motion foundation
+
+The plan changed. `BUILD_SPEC.md` now defines the product (a Dum-E-style desk
+companion) and is the authority over `CLAUDE.md` where they differ. M0 is the
+work already logged above. M1 is the motion foundation, and almost all of it is
+Mac-testable, so it got built without touching the MSI.
+
+**Measured: easing curves cost peak speed.** Sampled each curve at 20 000
+points and took the steepest segment, as a multiple of the average rate:
+
+| curve | peak / average |
+|---|---|
+| linear | 1.00x |
+| ease_in_out | 1.571x (exactly pi/2) |
+| ease_in, ease_out | 3.00x |
+| every *_back curve | 4.70x |
+
+This matters because safety caps every joint at 60 deg/s *in firmware*. Nine of
+the thirteen gestures in BUILD_SPEC 6.3 ask for more than that:
+
+| gesture | peak as specified | fits the cap at |
+|---|---|---|
+| shake | 218 deg/s | 1.35 s (spec 0.9 s) |
+| startled | 147 deg/s | 1.2 s with linear easing |
+| perk_up / celebrate | 146 deg/s | 1.45 s, split into rise + overshoot |
+| nod | 131 deg/s | 1.1 s (spec 0.8 s) |
+| excited_wiggle | 126 deg/s | 1.2 s (spec 0.9 s) |
+| ahem, droop | 63 deg/s | 1.1 s / 1.7 s |
+| curious_lean | 3600 deg/s | — that one was a bug, see below |
+
+Going over the cap is not unsafe: the host limiter clamps and the firmware
+clamps again. It is worse than unsafe, it is **silently wrong**. The clamp
+smears the gesture into a different shape — a shake that cannot reach its
+reversal in time reads as a slow sway — and nothing in the logs says so. Every
+gesture is now the fastest version of its specified shape that fits 60 deg/s,
+with the spec's own value in a comment, and `tests/test_motion.py` recomputes
+the whole table from whatever `speed_cap_deg_s` says. Raise the cap and the
+test tells you which gestures can be shortened again.
+
+**The 3600 deg/s was a real bug.** `SequenceMove` discarded each leg's offset
+at the seam between legs, so `curious_lean`'s "extend and hold" held nothing
+and snapped back to base in one tick. It carries offsets forward now. This
+would have been invisible on hardware: the arm would just have looked oddly
+twitchy at the end of a lean, and the clamp would have hidden the spike.
+
+**A second startup jump, by another route.** `setPWMFreq()` loads the
+prescaler, which requires putting the PCA9685 to sleep, which stops the pulses
+— for those milliseconds a loaded arm can sag. So firmware v2 reads `PRE_SCALE`
+and `MODE1` first and only reprograms the frequency if it is not already right,
+which it never is after a bare Uno reset (the PCA9685 keeps power and keeps
+driving). It prints which path it took.
+
+**Two independent fences, not one.** `avi_bot/motion/safety.py` clamps on the
+host and the firmware clamps again from its own copy of the calibration table.
+Two copies can drift, so `tests/test_firmware_agrees.py` parses the `.ino` and
+compares every number, both degree-to-count maps over all 1801 tenth-degrees,
+the speed cap, the watchdog, and the v1 channel-1 bug. It also asserts that
+`setup()` writes no servo position at all.
+
+**Elbow and wrist stay pinned.** Their direction signs are unknown, so the
+limiter forces both to center and `nod` (wrist-only) does nothing on hardware.
+`drive_undriven=True` previews the full motion in the sim only.
+
+36 tests, all passing on the Mac, no GPU, no camera, no serial port:
+`./scripts/test.sh`.
+
+Still owed before M1 closes: the dashboard, and one live hardware run with
+Shaurya watching. The arm has not moved.
