@@ -24,18 +24,20 @@ first live hardware run, with him watching. See "Owed by Shaurya".
 
 ## What is running right now
 
-A motion-gated observation logger, from the **old** layout, deployed at
-`C:\Users\MSI-User\avi-remote\assistant\` on the MSI and started through
-`scripts/tracker.sh`. It writes to `desk_memory.db` with audit thumbnails at
-5 %. Its keep-awake was bounded to 120 minutes, so the MSI put itself to sleep
-after it.
+**Nothing.** The tracker is stopped and the MSI is asleep. Restart it during
+actual desk hours, not in the middle of the night.
+
+The logger lives at `C:\Users\MSI-User\avi\assistant\` — inside the
+`avi\` git repo, which is where `scripts/deploy.sh` puts it so it can import
+the GPU modules beside it. Only *our* helper scripts live outside, in
+`avi-remote\`. BUILD_SPEC 13 wants the whole thing in `avi-desk\` instead;
+move it at M3.
 
 It is deliberately **not** migrated into `avi_bot/perception/` yet: BUILD_SPEC
 folds the observer in at M3, it is gathering the data M6 needs two weeks of,
 and moving a running experiment to make a directory tidier is how you lose
-data. `scripts/deploy.sh` still targets `avi-remote\`; BUILD_SPEC 13 wants
-`avi-desk\`. Migrate both together at M3, on a fresh wake, with the tracker
-stopped.
+data. Do the directory move and the `avi-desk\` deploy-target change together
+at M3, with the tracker stopped.
 
 ## Owed by Shaurya (blocking, in order)
 

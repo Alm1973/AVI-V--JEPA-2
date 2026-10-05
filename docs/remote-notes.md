@@ -603,3 +603,58 @@ limiter forces both to center and `nod` (wrist-only) does nothing on hardware.
 
 Still owed before M1 closes: the dashboard, and one live hardware run with
 Shaurya watching. The arm has not moved.
+
+## 2026-10-05 02:30 — two bugs found in the overnight run
+
+Checked on the evening's logging run. It did not survive the night, and the
+reason it did not was not the reason the laptop was still awake. Two separate
+faults.
+
+**1. The tracker died on a camera handoff, after 20 minutes.**
+
+    [23:23:52] logger exited rc=0 after 1239s - GPU released
+    RuntimeError: camera still returns blank frames after 8 s
+
+The logger exited cleanly on its `--exit-after-away 900`, exactly as designed.
+Then the tracker tried to take the camera back, and DirectShow had not released
+it yet: `open_camera`'s 8-second blank-frame budget was not enough after a
+20-minute hold, and the 1.5 s settle before re-acquiring was too short. Nothing
+caught the exception — the loop only caught `KeyboardInterrupt` — so the process
+exited rc=1 and the task went Ready. It happened twice.
+
+Fixed: `acquire_camera()` retries with 2/4/8/16/30 s backoff, the settle is
+2.5 s in *both* directions (the logger's process has to die before the device
+frees), and each cycle is wrapped so a transient fault costs one cycle instead
+of the run, giving up only after 5 consecutive failures. Unit-tested on the Mac
+with `cv2` stubbed, including that it re-raises on the last attempt and does
+not sleep after it: `tests/test_room_tracker.py`.
+
+**2. The laptop stayed awake all night, and the keep-awake ceiling was a lie.**
+
+The tracker was started with `TRACKER_KEEPAWAKE_MIN=120`, and the scheduled
+task really was registered with `-Minutes 120`. But a keep-awake from 22:30 was
+already running with the 480-minute default, and `Start-ScheduledTask` on an
+already-running task does not start a second instance. So the new ceiling was
+silently discarded and the old one won:
+
+    22:30:23  keepawake START for 480 min (until 06:30:23)   <- the one that ran
+    23:01     task re-registered with -Minutes 120           <- never started
+
+The MSI was therefore held awake from 22:30 to 06:30 while the thing it was
+being held awake *for* had been dead since 23:23. A keep-awake that ignores its
+own ceiling is worse than no keep-awake, because the whole point is that this
+machine does not stay on.
+
+Fixed: `keepawake-ctl.ps1 start` now stops any running hold and kills its
+process before re-arming, and prints the actual deadline it ended up with.
+Verified by arming 60 minutes and then re-arming 15 while it ran:
+
+    02:25:15  keepawake START for 60 min (until 03:25:15)
+    02:25:25  keepawake START for 15 min (until 02:40:25)
+
+The shorter ceiling now takes effect. Hold released, MSI asleep.
+
+**Also corrected:** I had written in HANDOFF that the logger was deployed to
+`avi-remote\assistant\`. It is not; `deploy.sh` puts it in `avi\assistant\`,
+inside the `avi\` git repo, so it can import the GPU modules beside it. Only
+our own helper scripts live in `avi-remote\`.

@@ -77,6 +77,37 @@ def run_logger(args):
     return subprocess.call(cmd)
 
 
+# Seconds to wait after one process releases the camera before another opens
+# it. DirectShow hands the device over lazily.
+HANDOFF_S = 2.5
+
+# Consecutive failed cycles before the tracker stops trying. High enough to ride
+# out a camera that is slow to come back, low enough that a genuinely broken
+# camera does not spin all night.
+MAX_CONSECUTIVE_FAILS = 5
+
+
+def acquire_camera(args, attempts=6):
+    """open_camera, with backoff.
+
+    The camera is passed back and forth between this process and the logger, and
+    DirectShow does not always release it promptly. After a 20-minute logger
+    run, open_camera's 8-second blank-frame budget was not enough, and a single
+    miss used to kill the tracker outright.
+    """
+    delay = 2.0
+    for i in range(1, attempts + 1):
+        try:
+            return open_camera(args.camera)
+        except RuntimeError as exc:
+            if i == attempts:
+                raise
+            log(f"camera not ready ({exc}) - attempt {i}/{attempts}, "
+                f"waiting {delay:.0f}s")
+            time.sleep(delay)
+            delay = min(delay * 2.0, 30.0)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--camera", type=int, default=settings.CAMERA_INDEX)
@@ -101,21 +132,44 @@ def main():
 
     det = ChangeDetector()
     cycles = 0
+    fails = 0
     try:
         while True:
-            cap = open_camera(args.camera)
-            log(f"watching for motion, no model loaded "
-                f"(threshold {args.motion_fraction}, {args.motion_frames} frames)")
-            frac = watch_for_motion(cap, det, args)
-            log(f"motion {frac:.4f} >= {args.motion_fraction} - handing over the camera")
-            cap.release()
-            # DirectShow needs a moment to let go before another process opens it.
-            time.sleep(1.5)
+            try:
+                cap = acquire_camera(args)
+                log(f"watching for motion, no model loaded "
+                    f"(threshold {args.motion_fraction}, {args.motion_frames} frames)")
+                frac = watch_for_motion(cap, det, args)
+                log(f"motion {frac:.4f} >= {args.motion_fraction} - handing over the camera")
+                cap.release()
+                # DirectShow needs a moment to let go before another process opens it.
+                time.sleep(HANDOFF_S)
 
-            t0 = time.time()
-            rc = run_logger(args)
-            ran = time.time() - t0
-            log(f"logger exited rc={rc} after {ran:.0f}s - GPU released")
+                t0 = time.time()
+                rc = run_logger(args)
+                ran = time.time() - t0
+                log(f"logger exited rc={rc} after {ran:.0f}s - GPU released")
+                # And the same courtesy in the other direction. The logger's
+                # own process has to die before DirectShow frees the device.
+                time.sleep(HANDOFF_S)
+                fails = 0
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                # This runs unattended for days. A transient fault must cost one
+                # cycle, not the whole run -- which is exactly what happened on
+                # 2026-10-04: the camera was not ready when the logger handed it
+                # back, open_camera raised, and the process exited rc=1 at 23:23
+                # having logged for 20 minutes out of a planned evening.
+                fails += 1
+                if fails >= MAX_CONSECUTIVE_FAILS:
+                    log(f"{fails} consecutive failures, giving up: {exc!r}")
+                    raise
+                back = min(30.0 * fails, 300.0)
+                log(f"cycle failed ({exc!r}) - failure {fails}/"
+                    f"{MAX_CONSECUTIVE_FAILS}, retrying in {back:.0f}s")
+                time.sleep(back)
+                continue
 
             cycles += 1
             if args.cycles and cycles >= args.cycles:

@@ -30,6 +30,26 @@ function Show-Status {
 switch ($Action) {
   "start" {
     if (-not (Test-Path $Script)) { throw "keepawake.ps1 missing at $Script - push it first" }
+
+    # Release any hold that is already running, FIRST.
+    #
+    # Start-ScheduledTask on a task that is already running does not start a
+    # second instance, so without this the new -Minutes is silently ignored and
+    # whatever ceiling the previous hold was started with keeps running. That
+    # cost a whole night once: a 480-minute default hold from 22:30 outlived a
+    # 120-minute hold requested at 23:01, and the laptop stayed awake until
+    # 06:30 with nothing running on it. A keep-awake that ignores its own
+    # ceiling is worse than no keep-awake.
+    $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($existing -and $existing.State -eq "Running") {
+      Write-Output "releasing the hold that is already running before re-arming"
+      Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+      Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+        Where-Object { $_.CommandLine -like "*keepawake.ps1*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+      Start-Sleep -Seconds 2
+    }
+
     $log = "$env:USERPROFILE\avi-remote\keepawake.log"
     $arg = '-NoProfile -ExecutionPolicy Bypass -File "' + $Script + '" -Minutes ' + $Minutes + ' -LogPath "' + $log + '"'
     $act = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg
@@ -40,7 +60,7 @@ switch ($Action) {
         -Settings $st -Description "AVI desk: bounded keep-awake hold" -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
     Start-Sleep -Seconds 3
-    Write-Output "started keepawake for $Minutes minute(s)"
+    Write-Output "started keepawake for $Minutes minute(s) (until $((Get-Date).AddMinutes($Minutes).ToString('HH:mm:ss')))"
     Show-Status
     $log = "$env:USERPROFILE\avi-remote\keepawake.log"
     if (Test-Path $log) {
