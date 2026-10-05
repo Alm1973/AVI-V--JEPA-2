@@ -434,6 +434,63 @@ on even when no model is loaded and nothing is being logged. The GPU is free, bu
 is live. If that is unwanted, the tracker would have to open and close the device around each
 poll, which is slow and hard on DirectShow.
 
+## BLOCKER: the camera is aimed wrong (2026-10-04, live session)
+
+**Every observation says `not at desk` with 0.82-0.97 confidence, including with Shaurya
+sitting at the desk.** The VLM is not wrong. The camera is pointed somewhere that does not
+include the desk.
+
+Evidence, gathered without any image leaving the MSI:
+
+| Probe | Result |
+| --- | --- |
+| YOLO-World person confidence | **0.784 - he IS in frame** |
+| VLM "is there a person?" | YES (+0.27) |
+| VLM "is there a chair?" | YES (+2.27) |
+| VLM "is there a desk or table?" | **no (-0.44)** |
+| VLM "is there a monitor or laptop screen?" | **no (-3.72)** |
+| VLM "is there a keyboard?" | **no (-4.39)** |
+| Detector object candidates | **0 of 14 desk objects** |
+| VLM "is the image blurry?" | YES (+0.98) |
+| wall / ceiling / floor / bed / window | all no |
+
+So the camera sees **him and his chair, but not his desk.** Given `ACTIVITIES`, every option
+except `not at desk` and `other` requires seeing hands on a desk (laptop, writing on paper,
+reading, phone, eating, guitar), and `ACTIVITY_QUESTION` literally begins "Look at the person
+at the desk." With no desk in view, `nobody is sitting at the desk` is the closest match the
+model can pick. **The pipeline is behaving correctly on a bad view.**
+
+**Why this mattered to catch now:** logging for the two weeks milestone 5 needs would have
+produced a database where every row says nobody was home, at high confidence, with nothing in
+the logs looking wrong. That is exactly the false-belief failure the paper calls the worst
+kind. `audit.py` would eventually have caught it - after days of wasted logging.
+
+**Fix is physical:** aim the camera so the desk surface and his working area are in frame,
+with him in shot. The shoulder servo moves the camera and has not been homed. Secondary: the
+VLM also calls the image blurry (+0.98); the C270 is fixed-focus, so check the distance and
+the lens.
+
+**Re-check after aiming** by re-running the view probe; it takes about 60 s and needs no image
+transfer.
+
+### Motion threshold: measured
+
+| State | `frac > CHANGE_PIXEL_DIFF(25)` |
+| --- | --- |
+| Still room | **0.00000** |
+| Small / decaying motion | 0.003 - 0.07 |
+| Hand waving at the lens | **0.67 - 0.83** |
+
+Also established: **the stream is live, not frozen.** 0 of 110 consecutive *raw* 1280x720
+frame pairs were bit-identical, median raw max-abs-diff 51. The near-zero prepped numbers are
+`ChangeDetector` working as designed - resizing 1280x720 to 160x90 averages 64 pixels per
+cell, which crushes sensor noise. **Never diagnose a frozen camera from the prepped frames;
+compare raw ones.**
+
+Default `--motion-fraction` changed from the guessed 0.02 to **0.005**, comfortably above a
+0.00000 floor. Provisional: the view changes completely once the camera is re-aimed, so
+re-measure then.
+
 ## Open items
 
 - `assistant.zip` is **not on this Mac** — searched the whole home directory. Blocks Phase 2

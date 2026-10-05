@@ -82,8 +82,10 @@ def main():
     ap.add_argument("--camera", type=int, default=settings.CAMERA_INDEX)
     ap.add_argument("--fps", type=float, default=2.0,
                     help="watch loop rate while idle (cheap, no model loaded)")
-    ap.add_argument("--motion-fraction", type=float, default=0.02,
-                    help="fraction of changed pixels that counts as motion")
+    ap.add_argument("--motion-fraction", type=float, default=0.005,
+                    help="fraction of changed pixels that counts as motion. 0.005 is from "
+                         "measurement: a still room reads 0.00000 and a hand at the lens "
+                         "reads 0.67-0.83. Provisional - re-check after the camera is re-aimed")
     ap.add_argument("--motion-frames", type=int, default=3,
                     help="consecutive moving frames needed before starting the logger")
     ap.add_argument("--away-timeout", type=float, default=600.0,
