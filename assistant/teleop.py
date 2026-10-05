@@ -260,9 +260,6 @@ setInterval(async () => {
                          : "SIMULATOR - the arm is not moving";
   }
   draw(s);
-  document.getElementById("joints").innerHTML = s.joints.map(j =>
-    `<tr class="${j.driven?"":"pinned"}"><td>${j.name}${j.driven?"":" (pinned)"}</td>`+
-    `<td>${j.deg.toFixed(1)}&deg; / ${j.count}</td></tr>`).join("");
   const left = Math.max(0, s.ends_in);
   document.getElementById("dl").textContent =
     "auto-stops in " + Math.floor(left/60) + "m " + String(Math.floor(left%60)).padStart(2,"0") + "s";
@@ -310,7 +307,7 @@ async function refreshTaught(){
   const names = Object.keys(d).sort();
   document.getElementById("taught").textContent = names.length
     ? names.map(n => n.padEnd(10) + ["base_yaw","shoulder","elbow","wrist"]
-        .map(j => j[0] + String(d[n][j]).padStart(6)).join("  ")).join("\n")
+        .map(j => j[0] + String(d[n][j]).padStart(6)).join("  ")).join("\\n")
     : "nothing taught yet";
   document.getElementById("recall").innerHTML = names.map(n =>
     `<button onclick="post('/goto_taught',{name:'${n}'})">${n}</button>`).join("");
