@@ -26,9 +26,19 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 \
 # So: wait quietly with NO packets, then probe sparingly.
 echo "waiting quietly (probing would wake it again) ..."
 sleep 45
+# SetSuspendState does not always fire. Observed once: nothing holding a SYSTEM
+# power request, keep-awake released, yet the machine stayed up; a re-issue slept
+# it immediately. So re-issue rather than just probing again.
 for attempt in 1 2 3; do
   if ! msi_awake; then echo "MSI is asleep."; exit 0; fi
-  [ "$attempt" -lt 3 ] && { echo "  still up; that probe may itself have woken it - waiting 30s"; sleep 30; }
+  if [ "$attempt" -lt 3 ]; then
+    echo "  still up after attempt $attempt; re-issuing sleep"
+    ssh -o BatchMode=yes -o ConnectTimeout=10 \
+        -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+        "$MSI_HOST" 'Start-Process rundll32.exe -ArgumentList "powrprof.dll,SetSuspendState","0,1,0"' \
+        >/dev/null 2>&1 || true
+    sleep 40
+  fi
 done
 echo "MSI still reachable. Note: each probe can wake it while WakeOnPattern is enabled," >&2
 echo "so this check is not fully reliable. To make sleep stick, consider:" >&2

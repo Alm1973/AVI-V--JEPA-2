@@ -115,6 +115,11 @@ confirming this is unreliable).
 **Release keep-awake before sleeping.** `sleep-msi.sh` does this automatically. With the
 hold still active the machine stays up.
 
+**`SetSuspendState` does not always fire.** Observed once with `powercfg /requests` showing
+`SYSTEM: None.` and keep-awake already terminated: the machine simply stayed awake. Issuing
+the same command again slept it immediately. `sleep-msi.sh` now re-issues up to 3 times
+rather than only probing, so a silent no-op doesn't leave the laptop running.
+
 ### The big one: `WakeOnPattern` is enabled, so network traffic wakes it
 
 ```
