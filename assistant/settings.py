@@ -24,6 +24,11 @@ FORCE_AFTER_S = 8.0          # observe anyway if motion never settles (typing, f
 
 # Activity labels: (stored label, wording shown to the VLM).
 # The order is shuffled on every call, so position bias can't pick the answer.
+# These must not presume a desk is in shot. The old list had
+# "nobody is sitting at the desk" as the only fallback, so any view without a
+# visible desk scored it 0.82-0.97 even with a person plainly in frame
+# (YOLO person_conf 0.784). "away" now means no person at all, and "idle"
+# covers a person who is present but not doing anything on the list.
 ACTIVITIES = [
     ("laptop", "using a laptop or computer"),
     ("writing on paper", "writing on paper"),
@@ -31,15 +36,16 @@ ACTIVITIES = [
     ("phone", "using a phone"),
     ("eating or drinking", "eating or drinking"),
     ("guitar", "playing guitar"),
-    ("not at desk", "nobody is sitting at the desk"),
+    ("idle", "a person is present but not doing any of these"),
+    ("away", "there is no person in the picture"),
     ("other", "something else"),
 ]
-NOBODY = "not at desk"
+NOBODY = "away"
 UNCERTAIN = "uncertain"
 ACTIVITY_MIN_P = 0.6         # below this the observation is stored as "uncertain"
 MC_PASSES = 1                # 2 = ask with two different orders and average (costs ~0.3 s more)
-ACTIVITY_QUESTION = ("Look at the person at the desk. Which one best describes "
-                     "what they are doing right now?")
+ACTIVITY_QUESTION = ("Look at this picture. Which one best describes what the "
+                     "person is doing right now?")
 
 # Objects to remember. "water bottle" and "bottle" are left out on purpose:
 # YOLO-World's confidences were inverted for them on your held-out data

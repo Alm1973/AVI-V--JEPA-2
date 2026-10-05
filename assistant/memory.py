@@ -113,7 +113,7 @@ class Memory:
         """Merge one day's observations into activity sessions.
 
         Same-label observations closer than max_gap_s join one session
-        ("not at desk" uses the slower away heartbeat instead).
+        (settings.NOBODY uses the slower away heartbeat instead).
         "uncertain" observations never start or break a session, and a run of
         them bridges the gap between two same-label observations.
         A session runs until the next observation (capped at one heartbeat)

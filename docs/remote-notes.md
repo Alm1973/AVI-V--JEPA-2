@@ -434,7 +434,7 @@ on even when no model is loaded and nothing is being logged. The GPU is free, bu
 is live. If that is unwanted, the tracker would have to open and close the device around each
 poll, which is slow and hard on DirectShow.
 
-## BLOCKER: the camera is aimed wrong (2026-10-04, live session)
+## RESOLVED: it was the prompt, not the camera (2026-10-04, live session)
 
 **Every observation says `not at desk` with 0.82-0.97 confidence, including with Shaurya
 sitting at the desk.** The VLM is not wrong. The camera is pointed somewhere that does not
@@ -465,13 +465,45 @@ produced a database where every row says nobody was home, at high confidence, wi
 the logs looking wrong. That is exactly the false-belief failure the paper calls the worst
 kind. `audit.py` would eventually have caught it - after days of wasted logging.
 
-**Fix is physical:** aim the camera so the desk surface and his working area are in frame,
-with him in shot. The shoulder servo moves the camera and has not been homed. Secondary: the
-VLM also calls the image blurry (+0.98); the C270 is fixed-focus, so check the distance and
-the lens.
+**I first concluded the camera needed physical re-aiming. That was wrong.** The evidence above
+is real, but the defect was entirely in the prompt and label design. Shaurya's own instinct -
+"it doesn't matter where I test it, it just matters that it works anywhere" - was correct and
+led to the actual fix.
 
-**Re-check after aiming** by re-running the view probe; it takes about 60 s and needs no image
-transfer.
+**The real bug.** `ACTIVITY_QUESTION` began "Look at the person at the desk", and the only
+non-desk fallback in `ACTIVITIES` was `("not at desk", "nobody is sitting at the desk")`. With
+no desk in view the model had nothing else to pick, so a present person scored *absent* at
+0.82-0.97. The label conflated two different things: **no desk visible** and **no person
+present.**
+
+**The fix** (no hardware touched, camera unmoved):
+
+- `ACTIVITY_QUESTION` -> "Look at this picture. Which one best describes what the person is
+  doing right now?" - no desk presumed
+- `("away", "there is no person in the picture")` replaces the old desk-shaped label, and
+  `NOBODY = "away"`
+- new `("idle", "a person is present but not doing any of these")` so a visible but inactive
+  person is not scored as absent
+
+Result on the very next observation, same camera, same angle:
+
+```
+[22:50:36] startup  laptop (0.89) | glasses | 2291 ms, 2 VLM calls
+```
+
+Correct activity, a verified object, and the view the system had been calling empty all
+evening. All 15 self-checks still pass; every code path referenced `settings.NOBODY` rather
+than the literal string, so the rename was safe.
+
+**Note for the pre-registered metric:** `ACTIVITIES` is what the 80%-agreement audit scores
+against, and it changed. This happened *before* any real logging, so no data is invalidated -
+but the list should be frozen now, before the two-week run. `("talking", "talking with
+someone")` is a sensible later addition; each extra option dilutes probability mass against
+`ACTIVITY_MIN_P = 0.6`, so add deliberately, not casually.
+
+**Still open, lower priority:** the VLM calls the image blurry (+0.98). The C270 is
+fixed-focus, so distance and a lens wipe are worth checking - but it is clearly not blocking
+correct classification.
 
 ### Motion threshold: measured
 
