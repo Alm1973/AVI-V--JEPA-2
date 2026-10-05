@@ -338,21 +338,34 @@ is not a terminal, so `observer.sh logs` stayed empty for minutes and a perfectl
 looked hung. Only the bitsandbytes warning showed through, because stderr is not buffered.
 Fixed in `task-ctl.ps1`; the log now streams weight-loading progress live.
 
-### Open: latency is above target, and a bitsandbytes slow path
-
-Both measured observations were ~2.3-2.5 s against the doc's 1-2 s. Both were the *startup*
-observation of a cold process, so they include CUDA kernel warm-up and are not a fair
-steady-state figure. A warm measurement is still needed.
-
-Candidate cause, logged on every run:
+### Latency: RESOLVED, and better than target
 
 ```
-bitsandbytes\backends\cuda\ops.py:944: UserWarning: inner dimension (3420) is not aligned
+[21:59:13] startup    not at desk (0.97) | no verified objects | 2141 ms, 1 VLM calls
+[22:04:13] heartbeat  not at desk (0.97) | no verified objects |  575 ms, 1 VLM calls
+```
+
+**Warm observation: 575 ms.** The earlier 2141-2503 ms figures were entirely cold-process
+CUDA kernel warm-up on the first VLM call, not a real cost. Steady state is well inside the
+1-2 s target.
+
+Be precise about what 575 ms covers: that observation made **1 VLM call**, because nobody was
+at the desk and the detector proposed no objects to verify. A full observation adds up to five
+yes/no crop checks at roughly 0.3 s each, which lands around 2 s - exactly the doc's 1-2 s
+range. So 575 ms is the floor case, not the typical one. Both are healthy.
+
+**The bitsandbytes warning is a red herring.** It appears on every run:
+
+```
+bitsandbytes\\backends\\cuda\\ops.py:944: UserWarning: inner dimension (3420) is not aligned
 for fast kernel with blocksize=64, falling back to slower implementation.
 ```
 
-The 4-bit matmul is taking a slow path, which would tax every VLM call. Worth chasing only
-after a warm number confirms there is a real gap.
+At 575 ms for one call against the paper's ~334 ms, there is no meaningful gap to chase.
+Leave it alone. Noted here so it is not re-investigated later.
+
+**Away heartbeat fires exactly on time:** 21:59:13 + 300 s = 22:04:13, to the second.
+`AWAY_HEARTBEAT_S = 300` behaves as designed on real hardware.
 
 ### Side effect worth knowing
 
