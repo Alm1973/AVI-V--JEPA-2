@@ -304,7 +304,7 @@ Mac (source of truth) and deployed to `C:\Users\MSI-User\avi\assistant\`.
 | --- | --- |
 | `test_observer.py` | **15 passed**, twice - before and after the `--once` patch |
 | Startup "token id" error | **none** - the letter and yes/no token checks pass on real weights |
-| Peak VRAM | **3404 MiB (3.32 GiB)** of 6144, against the ~3.8 GB estimate. Fits, with nothing to spare |
+| Peak VRAM | **3520 MiB (3.44 GiB)** of 6144, against the ~3.8 GB estimate. Fits, with nothing to spare. Returns to 39 MiB on stop (no leak) |
 | Model load | Qwen2.5-VL-3B 4-bit, 824 shards, ~9 s warm / ~35 s cold page cache |
 | Camera in the real pipeline | opens at index 1, warm-up handled, first observation succeeded |
 | Thumbnails | `AUDIT_RATE = 0.0` by default, so no frames are saved |
