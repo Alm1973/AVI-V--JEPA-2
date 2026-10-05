@@ -116,7 +116,49 @@ class TestFirmwareAgreesWithConfig(unittest.TestCase):
                           "setup() calls setPWMFreq unconditionally")
         self.assertIn("ensurePwmFreq()", setup)
         guard = self.text.split("static bool ensurePwmFreq()", 1)[1]
-        self.assertIn("if (have == want && !asleep) return false;", guard)
+        self.assertIsNotNone(
+            re.search(r"if \(have == want && !asleep\)", guard),
+            "ensurePwmFreq no longer short-circuits when the chip is already "
+            "at the right frequency, so every boot will sleep the outputs")
+
+    def test_the_arm_position_is_read_before_anything_is_written(self):
+        """The ordering bug that made the read-back useless on the first build.
+
+        Reading the PCA9685's output registers only tells you where the arm is
+        while nothing has overwritten them yet. The first flashed build called
+        Adafruit's pwm.begin() first, which resets the chip and sets the PWM
+        frequency to 1 kHz, so the read always came back UNKNOWN. Verified on
+        hardware 2026-10-05.
+        """
+        setup = re.sub(r"//[^\n]*", "",
+                       self.text.split("void setup()", 1)[1]
+                                .split("void loop()", 1)[0])
+        read_at = setup.find("setup_start_pose()")
+        freq_at = setup.find("ensurePwmFreq()")
+        self.assertNotEqual(read_at, -1, "setup() never reads the start pose")
+        self.assertNotEqual(freq_at, -1)
+        self.assertLess(read_at, freq_at,
+                        "setup() touches the PWM registers before reading the "
+                        "arm's position back, which makes the read meaningless")
+
+    def test_readback_only_requires_the_driven_channels(self):
+        """Undriven channels have never been written, so they read 0, which is
+        outside their calibrated range. Requiring them made the read-back
+        impossible on every boot."""
+        body = self.text.split("static void setup_start_pose()", 1)[1].split("\n}", 1)[0]
+        self.assertIn("if (!JOINTS[j].driven)", body,
+                      "setup_start_pose demands a read-back from channels that "
+                      "nothing ever writes, so it can never succeed")
+        # and the skip must come before the read, not after it
+        self.assertLess(body.find("if (!JOINTS[j].driven)"),
+                        body.find("readOffCount(j)"))
+
+    def test_the_adafruit_driver_is_not_used(self):
+        # Its begin() resets the chip and reprograms the frequency, which is
+        # precisely the state this firmware needs to preserve.
+        code = re.sub(r"//[^\n]*", "", self.text)
+        self.assertNotIn("Adafruit_PWMServoDriver", code)
+        self.assertIsNone(re.search(r"\bpwm\.", code))
 
     def test_the_loop_refuses_to_move_before_the_first_command(self):
         loop = self.text.split("void loop()", 1)[1]

@@ -166,6 +166,8 @@ PAGE = b"""<!doctype html>
  <div class="wrap">
   <img src="/stream.mjpg" alt="camera">
   <div class="panel">
+   <svg id="sim" viewBox="0 0 260 150" width="100%"
+        style="background:#18181b;border-radius:10px"></svg>
    <table id="joints"></table>
    <div class="keys">
      <span></span><kbd id="k-w">W</kbd><span></span>
@@ -209,6 +211,7 @@ setInterval(async () => {
     b.textContent = live ? "LIVE - this is moving the real arm"
                          : "SIMULATOR - the arm is not moving";
   }
+  draw(s);
   document.getElementById("joints").innerHTML = s.joints.map(j =>
     `<tr class="${j.driven?"":"pinned"}"><td>${j.name}${j.driven?"":" (pinned)"}</td>`+
     `<td>${j.deg.toFixed(1)}&deg; / ${j.count}</td></tr>`).join("");
@@ -216,6 +219,40 @@ setInterval(async () => {
   document.getElementById("dl").textContent =
     "auto-stops in " + Math.floor(left/60) + "m " + String(Math.floor(left%60)).padStart(2,"0") + "s";
 }, 400);
+// Side view on the left, top view on the right. Angles are degrees with 90 as
+// the calibrated center, so everything is drawn relative to 90.
+function draw(s){
+  const g = {}; for (const j of s.joints) g[j.name] = j.deg;
+  const L = s.sim || {};
+  const l1 = (L.link_shoulder_mm||90)/2.4, l2 = (L.link_elbow_mm||70)/2.4,
+        l3 = (L.link_wrist_mm||40)/2.4, bh = (L.base_height_mm||55)/2.4;
+  const rad = d => d*Math.PI/180;
+  // --- side view: shoulder lifts, elbow and wrist follow ---
+  const ox=60, oy=120;
+  const a1 = rad(g.shoulder-90), a2 = a1 + rad(g.elbow-90), a3 = a2 + rad(g.wrist-90);
+  const x1=ox, y1=oy-bh;
+  const x2=x1+Math.sin(a1)*0+l1*Math.cos(a1-Math.PI/2)*0 + l1*Math.sin(a1), y2=y1-l1*Math.cos(a1);
+  const x3=x2+l2*Math.sin(a2), y3=y2-l2*Math.cos(a2);
+  const x4=x3+l3*Math.sin(a3), y4=y3-l3*Math.cos(a3);
+  // --- top view: base yaw ---
+  const tx=195, ty=75, yaw=rad(g.base_yaw-90), R=42;
+  const ex=tx+R*Math.sin(yaw), ey=ty-R*Math.cos(yaw);
+  const seg=(xa,ya,xb,yb,c,w)=>`<line x1="${xa}" y1="${ya}" x2="${xb}" y2="${yb}" stroke="${c}" stroke-width="${w}" stroke-linecap="round"/>`;
+  document.getElementById("sim").innerHTML =
+    `<text x="8" y="14" fill="#52525b" font-size="9">side</text>`+
+    `<text x="150" y="14" fill="#52525b" font-size="9">top (yaw)</text>`+
+    seg(20,oy,100,oy,"#3f3f46",2)+
+    seg(ox,oy,x1,y1,"#52525b",7)+
+    seg(x1,y1,x2,y2,"#60a5fa",6)+
+    seg(x2,y2,x3,y3,"#3b82f6",5)+
+    seg(x3,y3,x4,y4,"#93c5fd",4)+
+    `<circle cx="${x4}" cy="${y4}" r="4.5" fill="#fbbf24"/>`+
+    `<text x="${x4+7}" y="${y4+3}" fill="#a1a1aa" font-size="8">cam</text>`+
+    `<circle cx="${tx}" cy="${ty}" r="${R}" fill="none" stroke="#27272a" stroke-width="1"/>`+
+    seg(tx,ty,ex,ey,"#60a5fa",5)+
+    `<circle cx="${ex}" cy="${ey}" r="4" fill="#fbbf24"/>`+
+    `<circle cx="${tx}" cy="${ty}" r="3" fill="#52525b"/>`;
+}
 fetch("/gestures").then(r=>r.json()).then(gs => {
   document.getElementById("gestures").innerHTML = gs.map(g =>
     `<button onclick="post('/gesture',{name:'${g}'})">${g}</button>`).join("");
@@ -271,6 +308,10 @@ def make_handler(state):
                                 "count": round(cfg.deg_to_count(j, sent[j])),
                                 "driven": cfg.is_driven(j)}
                                for j in poses.JOINTS],
+                    # Link lengths so the page can draw the arm. Eyeballed, not
+                    # measured: they make the picture roughly right, and the
+                    # picture is there to show that a key did something.
+                    "sim": cfg.sim,
                 })
             elif self.path == "/gestures":
                 self._json(sorted(gestures.GESTURES))
@@ -382,13 +423,32 @@ def main():
 
     config = poses.load()
     backend = build_backend(args, config)
-    eng = engine.MotionEngine(config, backend)
+
+    # Start from where the arm actually is, not from center.
+    #
+    # The firmware does its half of this by reading the PCA9685 registers back
+    # on boot; this is the host's half. Without it, the first P frame of every
+    # live session asks for 90 and the arm walks there from wherever it was
+    # left -- a 7-degree lurch in the first test, which is exactly the startup
+    # jump both halves exist to prevent.
+    start = "HOME"
+    state = backend.read_state()
+    if state:
+        start = state[0]
+        log("arm reports " + " ".join(f"{j}={start[j]:.1f}" for j in poses.JOINTS)
+            + f" (firmware {state[1]}) - starting there, not at center")
+    eng = engine.MotionEngine(config, backend, start_pose=start)
     # Breathing and saccades are personality, not teleop. Off here so that what
     # moves is only what the keys asked for -- otherwise a live test cannot
     # tell a command from an idle animation.
     for layer in eng.layers:
         layer.weight = 0.0
     driver = Driver(eng, args.max_deg, args.speed)
+    # Seed the manual offsets from that same reading, or the first motion tick
+    # would overwrite the start pose with center and undo it.
+    for j in poses.JOINTS:
+        driver.manual[j] = max(-args.max_deg,
+                               min(args.max_deg, eng.base[j] - 90.0))
 
     deadline = time.time() + args.minutes * 60.0
     latest = Latest()

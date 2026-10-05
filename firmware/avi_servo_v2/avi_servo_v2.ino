@@ -33,15 +33,26 @@
 // Fixed from v1: channel 1 was driven with the wrist's range (140/380/580)
 // instead of the shoulder's (75/370/580).
 
+// Raw I2C, deliberately NOT Adafruit_PWMServoDriver.
+//
+// The library's begin() calls reset() and then setPWMFreq(), which sleeps the
+// chip to load the prescaler. Both of those destroy the output registers --
+// which are the one thing this firmware needs to read before it touches
+// anything, so that it can start from where the arm actually is. Measured on
+// 2026-10-05: with pwm.begin() in setup(), the read-back reported UNKNOWN every
+// time, because the library had already wiped it.
+//
+// The PCA9685 register map is small enough that owning it outright is cheaper
+// than fighting a library whose init sequence is the problem.
 #include <Wire.h>
-#include <Adafruit_PWMServoDriver.h>
-
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 
 static const uint8_t  PCA_ADDR      = 0x40;
 static const uint8_t  LED0_ON_L     = 0x06;
 static const uint8_t  REG_MODE1     = 0x00;
 static const uint8_t  REG_PRESCALE  = 0xFE;
+static const uint8_t  MODE1_SLEEP   = 0x10;
+static const uint8_t  MODE1_AI      = 0x20;   // auto-increment
+static const uint8_t  MODE1_RESTART = 0x80;
 static const uint16_t PWM_FREQ_HZ   = 50;
 static const uint8_t  NJ            = 4;
 
@@ -112,6 +123,23 @@ static float clampDeg(uint8_t j, float deg) {
   return deg;
 }
 
+static bool writeReg(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(PCA_ADDR);
+  Wire.write(reg);
+  Wire.write(val);
+  return Wire.endTransmission() == 0;
+}
+
+static void setPWMRaw(uint8_t ch, uint16_t on, uint16_t off) {
+  Wire.beginTransmission(PCA_ADDR);
+  Wire.write((uint8_t)(LED0_ON_L + 4 * ch));
+  Wire.write((uint8_t)(on & 0xFF));
+  Wire.write((uint8_t)(on >> 8));
+  Wire.write((uint8_t)(off & 0xFF));
+  Wire.write((uint8_t)(off >> 8));
+  Wire.endTransmission();
+}
+
 static uint8_t readReg(uint8_t reg) {
   Wire.beginTransmission(PCA_ADDR);
   Wire.write(reg);
@@ -130,9 +158,22 @@ static bool ensurePwmFreq() {
   uint8_t want = (uint8_t)(25000000.0f / (4096.0f * (float)PWM_FREQ_HZ) + 0.5f) - 1;
   uint8_t have = readReg(REG_PRESCALE);
   uint8_t mode1 = readReg(REG_MODE1);
-  bool asleep = (mode1 == 0xFF) || (mode1 & 0x10);
-  if (have == want && !asleep) return false;   // already running at 50 Hz
-  pwm.setPWMFreq(PWM_FREQ_HZ);
+  bool asleep = (mode1 == 0xFF) || (mode1 & MODE1_SLEEP);
+  if (have == want && !asleep) {
+    // Already at 50 Hz and awake. Enable auto-increment, which the block
+    // writes in setPWMRaw rely on, without disturbing anything else.
+    writeReg(REG_MODE1, (uint8_t)((mode1 | MODE1_AI) & ~MODE1_SLEEP));
+    return false;
+  }
+  // Cold chip, or wrong frequency. The prescaler can only be loaded while
+  // asleep, so the outputs do stop here; nothing can be done about that except
+  // avoid it when possible, which is what the branch above is for.
+  uint8_t old = (mode1 == 0xFF) ? 0x00 : mode1;
+  writeReg(REG_MODE1, (uint8_t)((old & ~MODE1_RESTART) | MODE1_SLEEP));
+  writeReg(REG_PRESCALE, want);
+  writeReg(REG_MODE1, (uint8_t)((old & ~MODE1_SLEEP) | MODE1_AI));
+  delay(5);
+  writeReg(REG_MODE1, (uint8_t)((old & ~MODE1_SLEEP) | MODE1_AI | MODE1_RESTART));
   return true;
 }
 
@@ -147,6 +188,8 @@ static uint16_t readOffCount(uint8_t ch) {
   uint16_t lo = Wire.read();
   uint16_t hi = Wire.read();
   if (hi & 0x10) return 0xFFFF;                    // bit 12 = full-off, not a position
+  // NOTE: this read must happen BEFORE anything writes to the chip. See the
+  // comment at the top about why Adafruit_PWMServoDriver is not used.
   uint16_t count = ((hi & 0x0F) << 8) | lo;
   const Joint &J = JOINTS[ch];
   if (count < J.minCount || count > J.maxCount) return 0xFFFF;
@@ -154,9 +197,19 @@ static uint16_t readOffCount(uint8_t ch) {
 }
 
 static void setup_start_pose() {
+  // Only the DRIVEN channels have to read back.
+  //
+  // The first build required all four, and bailed on the first failure. The
+  // elbow and wrist are not driven, so nothing has ever written their
+  // registers: they read 0, which is outside their calibrated range, which is
+  // correctly treated as "do not trust it" -- and so the read-back could never
+  // succeed, on any boot, no matter what the arm was doing. Measured on
+  // hardware 2026-10-05: start mode UNKNOWN every time, with base yaw sitting
+  // at a perfectly readable 99 degrees.
   bool all = true;
   float got[NJ];
   for (uint8_t j = 0; j < NJ; j++) {
+    if (!JOINTS[j].driven) { got[j] = 90.0f; continue; }
     uint16_t c = readOffCount(j);
     if (c == 0xFFFF) { all = false; break; }
     got[j] = countToDeg(j, c);
@@ -230,10 +283,13 @@ static void handleLine() {
 void setup() {
   Serial.begin(115200);
   Wire.begin();
-  pwm.begin();
+  // ORDER MATTERS. Read where the arm is first, while the chip is still
+  // holding whatever it was driving before the Uno reset, and only then touch
+  // any register. Reversing these two lines is what made the read-back report
+  // UNKNOWN on the first flashed build.
+  setup_start_pose();
   bool freqWasSet = ensurePwmFreq();
   delay(10);
-  setup_start_pose();
   // Deliberately no pwm.setPWM here. Writing anything now is exactly the
   // startup jump this firmware exists to prevent.
   Serial.print(F("# avi_servo_v2 ready, start mode "));
@@ -275,7 +331,7 @@ void loop() {
     else if (err < -maxStep) err = -maxStep;
     if (err != 0.0f) {
       current[j] = clampDeg(j, current[j] + err);
-      pwm.setPWM(j, 0, degToCount(j, current[j]));
+      setPWMRaw(j, 0, degToCount(j, current[j]));
       moved = true;
     }
   }

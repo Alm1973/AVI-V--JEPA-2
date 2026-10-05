@@ -100,9 +100,15 @@ class SerialBackend(MotionBackend):
 
     def open(self):
         import serial  # imported late: the Mac has no pyserial and needs none
-        self.ser = serial.Serial(self.port, self.baud, timeout=0.2)
-        # The Uno reboots when the port opens; its bootloader eats early bytes.
-        time.sleep(2.0)
+        self.ser = serial.Serial(self.port, self.baud, timeout=0.3)
+        # Opening the port asserts DTR, which reboots the Uno. The bootloader
+        # waits before handing over, so 2 s was marginal: measured 3 s from
+        # open to the sketch's banner.
+        time.sleep(3.0)
+        try:
+            self.ser.reset_input_buffer()
+        except Exception:
+            pass
         return self
 
     def _write(self, line):
@@ -122,13 +128,32 @@ class SerialBackend(MotionBackend):
     def resume(self):
         self._write("R")
 
-    def read_state(self):
-        self._write("?")
-        line = self.ser.readline().decode("ascii", "replace").strip()
-        parts = line.split()
-        if len(parts) != 6 or parts[0] != "S":
-            return None
-        return dict(zip(poses.JOINTS, (float(p) for p in parts[1:5]))), parts[5]
+    def read_state(self, attempts=4):
+        """Ask the firmware where it is. Returns ({joint: deg}, version) or None.
+
+        It reads several lines per attempt rather than one, because the boot
+        banner and any stray output share this port: taking the first line that
+        comes back would hand the caller a comment and call it a position.
+        """
+        for _ in range(attempts):
+            try:
+                self.ser.reset_input_buffer()
+            except Exception:
+                pass
+            self._write("?")
+            for _ in range(6):
+                raw = self.ser.readline()
+                if not raw:
+                    break
+                parts = raw.decode("ascii", "replace").strip().split()
+                if len(parts) == 6 and parts[0] == "S":
+                    try:
+                        vals = [float(v) for v in parts[1:5]]
+                    except ValueError:
+                        continue
+                    return dict(zip(poses.JOINTS, vals)), parts[5]
+            time.sleep(0.25)
+        return None
 
     def close(self):
         if self.ser is not None:
