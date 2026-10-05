@@ -22,6 +22,7 @@ SKETCH = ROOT / "firmware" / "avi_servo_v2" / "avi_servo_v2.ino"
 ROW = re.compile(
     r"\{\s*(\d+),\s*(\d+),\s*(\d+),\s*"        # min, center, max
     r"([\d.]+)f,\s*([\d.]+)f,\s*"              # softMin, softMax
+    r"(-?\d+),\s*"                              # sign
     r"(true|false)\s*\}")
 
 
@@ -30,15 +31,18 @@ def parse_sketch():
     body = text.split("JOINTS[NJ] = {", 1)[1].split("};", 1)[0]
     rows = ROW.findall(body)
     out = []
-    for mn, ct, mx, lo, hi, driven in rows:
+    for mn, ct, mx, lo, hi, sign, driven in rows:
         out.append({"min_count": int(mn), "center_count": int(ct),
                     "max_count": int(mx), "soft_min": float(lo),
-                    "soft_max": float(hi), "driven": driven == "true"})
+                    "soft_max": float(hi), "sign": int(sign),
+                    "driven": driven == "true"})
     return out, text
 
 
 def firmware_deg_to_count(row, deg):
-    """The sketch's degToCount, including its +0.5 integer rounding."""
+    """The sketch's degToCount, including applySign and its +0.5 rounding."""
+    if row["sign"] < 0:
+        deg = 180.0 - deg
     deg = max(0.0, min(180.0, deg))
     if deg <= 90.0:
         c = row["min_count"] + (row["center_count"] - row["min_count"]) * (deg / 90.0)
@@ -61,7 +65,7 @@ class TestFirmwareAgreesWithConfig(unittest.TestCase):
             row = self.rows[i]
             cfg = self.config.joints[joint]
             for key in ("min_count", "center_count", "max_count",
-                        "soft_min", "soft_max"):
+                        "soft_min", "soft_max", "sign"):
                 self.assertEqual(row[key], cfg[key],
                                  f"{joint}.{key}: sketch {row[key]} != "
                                  f"joints.toml {cfg[key]}")
@@ -152,6 +156,18 @@ class TestFirmwareAgreesWithConfig(unittest.TestCase):
         # and the skip must come before the read, not after it
         self.assertLess(body.find("if (!JOINTS[j].driven)"),
                         body.find("readOffCount(j)"))
+
+    def test_a_reversed_joint_is_reflected_about_center(self):
+        """Both driven joints run backwards, so this path is load-bearing: if
+        the reflection is dropped, every direction in the system inverts."""
+        for joint in ("base_yaw", "shoulder"):
+            self.assertEqual(self.config.sign(joint), -1, joint)
+            lo = self.config.deg_to_count(joint, 80.0)
+            hi = self.config.deg_to_count(joint, 100.0)
+            self.assertGreater(lo, hi,
+                               f"{joint} sign is -1 but counts still rise with "
+                               "degrees, so the reflection is not applied")
+        self.assertIn("applySign", self.text)
 
     def test_the_adafruit_driver_is_not_used(self):
         # Its begin() resets the chip and reprograms the frequency, which is

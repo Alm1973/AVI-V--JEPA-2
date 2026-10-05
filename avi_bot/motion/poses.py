@@ -42,6 +42,21 @@ class JointConfig:
     def sign(self, joint):
         return int(self.joints[joint]["sign"])
 
+    def apply_sign(self, joint, deg):
+        """Reflect a logical angle about center when the joint runs backwards.
+
+        Logical degrees are what the whole system reasons in: for base_yaw,
+        larger means "look further right". Which direction that is in PWM
+        counts is a wiring and linkage fact, so it lives here and nowhere else.
+        Getting it wrong does more than reverse a key: LookAt is a feedback
+        loop, and an inverted sign makes it accelerate away from its target
+        instead of settling on it.
+        """
+        s = self.sign(joint)
+        if s >= 0:
+            return deg
+        return 180.0 - deg
+
     def deg_to_count(self, joint, deg):
         """The piecewise map documented at the top of config/joints.toml.
 
@@ -50,7 +65,7 @@ class JointConfig:
         """
         j = self.joints[joint]
         lo, mid, hi = j["min_count"], j["center_count"], j["max_count"]
-        deg = max(0.0, min(180.0, float(deg)))
+        deg = max(0.0, min(180.0, self.apply_sign(joint, float(deg))))
         if deg <= 90.0:
             return lo + (mid - lo) * (deg / 90.0)
         return mid + (hi - mid) * ((deg - 90.0) / 90.0)

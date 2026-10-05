@@ -66,15 +66,16 @@ static const uint8_t  TICK_MS         = 10;
 struct Joint {
   uint16_t minCount, centerCount, maxCount;
   float    softMin, softMax;
+  int8_t   sign;      // -1 if the joint runs backwards; see config/joints.toml
   bool     driven;
 };
 
 static const Joint JOINTS[NJ] = {
-  //  min  center  max   softMin softMax driven
-  {    75,    250,  460,   20.0f, 160.0f, true  },  // 0 base yaw
-  {    75,    370,  580,   25.0f, 155.0f, true  },  // 1 shoulder  (v1 BUG here)
-  {    80,    430,  570,   30.0f, 150.0f, false },  // 2 elbow, sign unknown
-  {   140,    380,  580,   30.0f, 150.0f, false },  // 3 wrist, sign unknown
+  //  min  center  max   softMin softMax sign driven
+  {    75,    250,  460,   20.0f, 160.0f,  -1, true  },  // 0 base yaw (MEASURED)
+  {    75,    370,  580,   25.0f, 155.0f,  -1, true  },  // 1 shoulder (MEASURED; v1 BUG here)
+  {    80,    430,  570,   30.0f, 150.0f,   0, false },  // 2 elbow, sign unknown
+  {   140,    380,  580,   30.0f, 150.0f,   0, false },  // 3 wrist, sign unknown
 };
 
 enum StartMode { MODE_UNKNOWN, MODE_READBACK };
@@ -93,8 +94,16 @@ static uint8_t    lineLen    = 0;
 // 0 deg -> minCount, 90 -> centerCount, 180 -> maxCount. A degree is worth a
 // different number of counts on each side of center, because the calibrated
 // center is not the midpoint of the calibrated range.
+// Logical degrees in, counts out. A joint with sign -1 is reflected about
+// center, so that "larger logical degrees" always means the same direction in
+// the world no matter how the linkage is wired.
+static float applySign(uint8_t j, float deg) {
+  return (JOINTS[j].sign < 0) ? (180.0f - deg) : deg;
+}
+
 static uint16_t degToCount(uint8_t j, float deg) {
   const Joint &J = JOINTS[j];
+  deg = applySign(j, deg);
   if (deg < 0.0f)   deg = 0.0f;
   if (deg > 180.0f) deg = 180.0f;
   float c;
@@ -108,12 +117,16 @@ static uint16_t degToCount(uint8_t j, float deg) {
 
 static float countToDeg(uint8_t j, uint16_t count) {
   const Joint &J = JOINTS[j];
+  float deg;
   if (count <= J.centerCount) {
     if (J.centerCount == J.minCount) return 90.0f;
-    return 90.0f * (float)(count - J.minCount) / (float)(J.centerCount - J.minCount);
+    deg = 90.0f * (float)(count - J.minCount) / (float)(J.centerCount - J.minCount);
+  } else if (J.maxCount == J.centerCount) {
+    return 90.0f;
+  } else {
+    deg = 90.0f + 90.0f * (float)(count - J.centerCount) / (float)(J.maxCount - J.centerCount);
   }
-  if (J.maxCount == J.centerCount) return 90.0f;
-  return 90.0f + 90.0f * (float)(count - J.centerCount) / (float)(J.maxCount - J.centerCount);
+  return applySign(j, deg);   // the reflection is its own inverse
 }
 
 static float clampDeg(uint8_t j, float deg) {

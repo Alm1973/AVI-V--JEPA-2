@@ -54,16 +54,26 @@ class TestConfig(unittest.TestCase):
                          [0, 1, 2, 3])
 
     def test_piecewise_map_hits_the_calibration_points(self):
+        """0 and 180 degrees hit the calibrated ends, and center always hits
+        center. A reversed joint swaps which end is which -- that is the whole
+        meaning of its sign."""
         for j in poses.JOINTS:
             cfg = self.c.joints[j]
-            self.assertAlmostEqual(self.c.deg_to_count(j, 0), cfg["min_count"])
-            self.assertAlmostEqual(self.c.deg_to_count(j, 90), cfg["center_count"])
-            self.assertAlmostEqual(self.c.deg_to_count(j, 180), cfg["max_count"])
+            ends = (cfg["min_count"], cfg["max_count"])
+            if self.c.sign(j) < 0:
+                ends = tuple(reversed(ends))
+            self.assertAlmostEqual(self.c.deg_to_count(j, 0), ends[0], msg=j)
+            self.assertAlmostEqual(self.c.deg_to_count(j, 90),
+                                   cfg["center_count"], msg=j)
+            self.assertAlmostEqual(self.c.deg_to_count(j, 180), ends[1], msg=j)
 
     def test_map_is_monotonic(self):
+        """Monotonic in one direction or the other, never both. A non-monotonic
+        map would mean two different angles drive the servo to the same place."""
         for j in poses.JOINTS:
             vals = [self.c.deg_to_count(j, d) for d in range(0, 181)]
-            self.assertEqual(vals, sorted(vals), f"{j} map is not monotonic")
+            want = sorted(vals, reverse=self.c.sign(j) < 0)
+            self.assertEqual(vals, want, f"{j} map is not monotonic")
 
     def test_soft_limits_sit_inside_the_calibrated_range(self):
         for j in poses.JOINTS:

@@ -37,8 +37,9 @@ center_count = 250
 max_count = 460
 soft_min  = 20.0
 soft_max  = 160.0
-# CONFIRMED on hardware: arm.update(+10, 0) moves the VIEW right.
-sign      = 1
+# MEASURED on hardware 2026-10-05: see the note under [joints.shoulder]. Both
+# driven joints came out reversed under firmware v2's mapping.
+sign      = -1
 driven    = true
 
 # --- channel 1: shoulder, whole arm up/down -----------------------------------
@@ -49,8 +50,19 @@ center_count = 370
 max_count = 580
 soft_min  = 25.0
 soft_max  = 155.0
-# CONFIRMED on hardware: arm.update(0, +10) moves the VIEW down.
-sign      = 1
+# MEASURED on hardware 2026-10-05: reversed, like base yaw.
+#
+# BOTH driven joints came out backwards from what BUILD_SPEC section 3 records
+# ("+10 moves the view right", "+10 moves the view down"). Those were not wrong
+# when measured -- they were measured through v1's relative X:/Y: API, which
+# reaches the counts by a different route. Two independent linkages would not
+# both flip, so this is one systematic difference between v1's angle->pulse
+# mapping and v2's, not two coincidences. Treat every direction claim in the
+# docs as v1-relative and re-measure it under v2.
+#
+# Shaurya found both in about a minute of driving the thing, which is the
+# argument for shipping a controller he can actually hold.
+sign      = -1
 driven    = true
 # BUG in the current firmware: channel 1 is driven with the WRIST's range
 # (140/380/580) instead of the shoulder's. Fixed in avi_servo_v2.
