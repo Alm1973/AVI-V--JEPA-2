@@ -38,7 +38,9 @@ switch ($Action) {
     if (-not (Test-Path $Python))              { throw "venv python not found at $Python" }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Log) | Out-Null
     # cmd /c wrapper so stdout+stderr both land in the log file.
-    $cmd = "/c `"`"$Python`" `"$Assistant\$Script`" $ScriptArgs >> `"$Log`" 2>&1`""
+    # -u is essential: python block-buffers stdout when it is redirected to a file,
+    # so without it the log stays empty for minutes and a healthy run looks hung.
+    $cmd = "/c `"`"$Python`" -u `"$Assistant\$Script`" $ScriptArgs >> `"$Log`" 2>&1`""
     $act = New-ScheduledTaskAction -Execute "cmd.exe" -Argument $cmd -WorkingDirectory $Assistant
     # $env:USERDOMAIN is not reliable over SSH; Register-ScheduledTask then fails
     # with 0x80070534 (no account-name-to-SID mapping). Use the real identity.

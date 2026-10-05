@@ -295,6 +295,71 @@ non-interactive session, so the doc's "must be the interactive session" requirem
 apply. If the camera ever fails under the task but works over plain SSH, switch
 `-LogonType` to `Interactive`.
 
+## Phase 4 — the logger on real hardware (2026-10-04)
+
+`assistant.zip` arrived: 10 files, exactly as the doc listed. Unpacked to `assistant/` on the
+Mac (source of truth) and deployed to `C:\Users\MSI-User\avi\assistant\`.
+
+| Check | Result |
+| --- | --- |
+| `test_observer.py` | **15 passed**, twice - before and after the `--once` patch |
+| Startup "token id" error | **none** - the letter and yes/no token checks pass on real weights |
+| Peak VRAM | **3404 MiB (3.32 GiB)** of 6144, against the ~3.8 GB estimate. Fits, with nothing to spare |
+| Model load | Qwen2.5-VL-3B 4-bit, 824 shards, ~9 s warm / ~35 s cold page cache |
+| Camera in the real pipeline | opens at index 1, warm-up handled, first observation succeeded |
+| Thumbnails | `AUDIT_RATE = 0.0` by default, so no frames are saved |
+
+First observations, both from a cold process:
+
+```
+[21:53:03] startup  not at desk (0.90) | no verified objects | 2503 ms, 1 VLM calls
+[21:57:28] startup  not at desk (0.82) | no verified objects | 2286 ms, 1 VLM calls
+```
+
+### `--once` added to `observer.py`
+
+Implies `--no-preview` (nobody is at the desk to see a window), and has a 60 s deadline so it
+cannot hang a remote session. Self-checks still 15 passed afterwards.
+
+**Bug caught in my own patch before it shipped:** the `--once` timeout path used `sys.stderr`,
+but `observer.py` never imported `sys`. It would have raised `NameError` on exactly the path
+meant to report a failure. Fixed by adding the import.
+
+### The camera trap was already handled - no change needed
+
+`open_camera()` already loops until `frame.mean() >= 1.0` with an 8 s budget and raises
+`"camera still returns blank frames after 8 s"` otherwise. The C270's black period is ~0.75 s,
+well inside that. `CAMERA_INDEX = 1` is correct for the C270.
+
+### Monitoring bug: python must run with `-u`
+
+The task runner redirected stdout to a file without `-u`. Python block-buffers stdout when it
+is not a terminal, so `observer.sh logs` stayed empty for minutes and a perfectly healthy run
+looked hung. Only the bitsandbytes warning showed through, because stderr is not buffered.
+Fixed in `task-ctl.ps1`; the log now streams weight-loading progress live.
+
+### Open: latency is above target, and a bitsandbytes slow path
+
+Both measured observations were ~2.3-2.5 s against the doc's 1-2 s. Both were the *startup*
+observation of a cold process, so they include CUDA kernel warm-up and are not a fair
+steady-state figure. A warm measurement is still needed.
+
+Candidate cause, logged on every run:
+
+```
+bitsandbytes\backends\cuda\ops.py:944: UserWarning: inner dimension (3420) is not aligned
+for fast kernel with blocksize=64, falling back to slower implementation.
+```
+
+The 4-bit matmul is taking a slow path, which would tax every VLM call. Worth chasing only
+after a warm number confirms there is a real gap.
+
+### Side effect worth knowing
+
+Ultralytics downloaded `yolov8s-worldv2.pt` (24.7 MB) plus a 338 MB CLIP backbone into the
+working directory on first run, so those now live in `avi\assistant\`. Expected, cached, and
+not re-downloaded.
+
 ## Open items
 
 - `assistant.zip` is **not on this Mac** — searched the whole home directory. Blocks Phase 2
