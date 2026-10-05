@@ -27,8 +27,15 @@ FORCE_AFTER_S = 8.0          # observe anyway if motion never settles (typing, f
 # These must not presume a desk is in shot. The old list had
 # "nobody is sitting at the desk" as the only fallback, so any view without a
 # visible desk scored it 0.82-0.97 even with a person plainly in frame
-# (YOLO person_conf 0.784). "away" now means no person at all, and "idle"
-# covers a person who is present but not doing anything on the list.
+# (YOLO person_conf 0.784). "away" now means no person at all.
+#
+# Exactly ONE catch-all for "present but unrecognised". A first attempt had both
+# "idle" ("a person is present but not doing any of these") and "other"
+# ("something else"): the model could not separate two synonyms, split its mass
+# between them, and three observations in a row landed under ACTIVITY_MIN_P and
+# were stored as uncertain (p = 0.22, 0.51, 0.57). Keep the options mutually
+# exclusive in plain English, and keep the list short - every extra option makes
+# the 0.6 floor harder to clear.
 ACTIVITIES = [
     ("laptop", "using a laptop or computer"),
     ("writing on paper", "writing on paper"),
@@ -36,9 +43,8 @@ ACTIVITIES = [
     ("phone", "using a phone"),
     ("eating or drinking", "eating or drinking"),
     ("guitar", "playing guitar"),
-    ("idle", "a person is present but not doing any of these"),
+    ("other", "a person is there, doing something else"),
     ("away", "there is no person in the picture"),
-    ("other", "something else"),
 ]
 NOBODY = "away"
 UNCERTAIN = "uncertain"

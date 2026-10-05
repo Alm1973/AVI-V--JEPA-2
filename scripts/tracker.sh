@@ -16,7 +16,9 @@ ctl() {
 case "$ACTION" in
   start)  ./wake-msi.sh >/dev/null || exit 1
           # The tracker decides when the GPU is busy, so it must outlive a long idle.
-          ./keepawake-msi.sh start 480 >/dev/null 2>&1
+          # Bounded on purpose: when the hold expires the MSI sleeps on its own, so a
+          # forgotten session cannot keep the laptop running all night.
+          ./keepawake-msi.sh start "${TRACKER_KEEPAWAKE_MIN:-480}" >/dev/null 2>&1
           ctl start room_tracker.py "${*:-}" ;;
   stop)   ctl stop room_tracker.py ""
           # The logger is a child process; stop it too.
