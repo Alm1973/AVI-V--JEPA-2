@@ -264,9 +264,10 @@ GESTURES = {
     "yawn_wake": yawn_wake,
 }
 
-# Gestures that are wrist-only, so they do nothing on hardware until
-# config/joints.toml gets a real sign for channel 3.
-NO_OP_UNTIL_M1 = ("nod",)
+# Nothing is a complete no-op any more: the wrist is driven. Kept as an empty
+# tuple rather than deleted, because the elbow is still pinned and an
+# elbow-only gesture added later belongs here.
+NO_OP_UNTIL_M1 = ()
 
 # A gesture only makes sense from some poses. yawn_wake from HOME is a no-op by
 # definition, so tests and the dashboard start it where it belongs.

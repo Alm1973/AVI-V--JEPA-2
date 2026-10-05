@@ -18,7 +18,41 @@
 # firmware v2 is the authority and this file travels with it, so nothing
 # downstream has to change.
 #
-# Counts are from the bench calibration of 2026-08-04 (BUILD_SPEC section 3).
+# Counts are from Shaurya's own bench calibration (BUILD_SPEC section 3), and
+# he supplied the physical meaning of each endpoint on 2026-10-05:
+#
+#   ch0 base      75 = far LEFT,  460 = far RIGHT
+#   ch1 shoulder  75 = front/down, 370 ~ UPRIGHT, 580 = back/down
+#   ch2 elbow     80..570, centre 430   (calibrated individually)
+#   ch3 wrist     140..580, centre 380  (calibrated individually)
+#
+# These replaced an earlier global 75-580 map for every servo, which was wrong
+# because the servos do not share a range. The base figures specifically fixed
+# a tracking oscillation. He also replaced a failed PCA9685 at one point, so
+# the board in use now is the second one.
+#
+# TWO THINGS THESE FACTS DO NOT SETTLE, both recorded here rather than guessed:
+#
+# 1. BASE DIRECTION IS AMBIGUOUS, AND THE TWO SOURCES DISAGREE.
+#    By the table, count 460 = far right, so rising counts = rightward, which
+#    is sign = +1. But driving the arm with sign = +1, Shaurya reported A and D
+#    reversed, which implies sign = -1 (what is set below). The likely cause is
+#    that "right" means different things in the two observations: the arm's own
+#    right versus the direction the scene slides in a wrist-mounted camera's
+#    picture, which are opposite. His hands-on report wins for how the keys
+#    feel, and that is what is set -- but LookAt is a feedback loop and will
+#    diverge rather than settle if this is backwards, so it must be checked
+#    against a real tracked person before M3 relies on it.
+#
+# 2. THE SHOULDER IS NOT A MONOTONIC UP/DOWN AXIS.
+#    75 is front/down and 580 is back/down, with upright in the MIDDLE. So the
+#    arm is at its tallest at centre and BOTH directions lower it. The piecewise
+#    map below is monotonic in counts, which is fine, but it means logical 0 and
+#    logical 180 are both "down" and there is no such thing as "higher than
+#    centre". The named poses in avi_bot/motion/poses.py were written assuming a
+#    simple axis -- TALL above centre, LOW below -- so TALL and LOW as they
+#    stand are both leaning the arm down, in opposite directions. See the note
+#    in poses.py; they need re-deriving around "centre is upright".
 # soft_min/soft_max are kept INSIDE the calibrated range so the host never asks
 # for a mechanical end-stop; the firmware clamps to the same table independently.
 
@@ -111,8 +145,18 @@ center_count = 380
 max_count = 580
 soft_min  = 30.0
 soft_max  = 150.0
-sign      = 0      # UNKNOWN. Measure in M1 (wrist pitch up -> scene moves down).
-driven    = false
+# Driven as of 2026-10-05, with the sign still PROVISIONAL.
+#
+# This is the camera's own tilt, and the camera at its calibrated centre points
+# at the carpet, so leaving it pinned meant the robot could only ever look at
+# the floor -- the one joint that had to work for anything else to be useful.
+#
+# Driving it with an unverified sign is safe even though the direction is
+# unknown: the soft limits below clamp to 30..150 logical degrees, and the
+# piecewise map puts that inside [min_count, max_count] whichever way the sign
+# points. A wrong sign reverses R and F; it cannot reach an end stop.
+sign      = 1
+driven    = true
 
 # Approximate link lengths in mm, for the sim's side view only. Eyeballed, not
 # measured; they affect nothing but the drawing.

@@ -87,6 +87,23 @@ def pose(base_yaw=90.0, shoulder=90.0, elbow=90.0, wrist=90.0):
             "wrist": wrist}
 
 
+# WRONG GEOMETRY, KNOWN, NOT YET FIXED -- read this before trusting a pose.
+#
+# Shaurya's calibration (2026-10-05) says the shoulder's two ends are BOTH
+# down: count 75 is front/down, 580 is back/down, and ~370, the centre, is
+# upright. So the arm is at its tallest at centre and every shoulder movement
+# lowers it. There is no "taller than centre" to put TALL at.
+#
+# The poses below were written assuming a simple up/down axis, so TALL (below
+# centre) and LOW (above centre) are in fact both leaning the arm down, just in
+# opposite directions. They are safe -- well inside the soft limits -- but they
+# do not mean what their names say, and perk_up/droop/doze inherit that.
+#
+# Fixing it properly needs two things measured on the real arm: which shoulder
+# direction aims the camera usefully at the desk, and where the camera actually
+# points at centre (measured: at the carpet, which is why the wrist is now
+# driven). Left as-is deliberately rather than guessed at.
+#
 # Starting points only. BUILD_SPEC says to tune these on hardware, and they are
 # all well inside the soft limits so that tuning cannot walk into an end-stop.
 #
@@ -105,9 +122,16 @@ POSES = {
     "REST":      pose(shoulder=125.0),         # folded, camera down
 }
 
-# OBSERVE is the one pose the observer is allowed to log object positions from
-# (BUILD_SPEC 6.1 and 6.6), so it must stay pinned to the calibrated center.
-assert POSES["OBSERVE"] == pose(), "OBSERVE must be the calibrated center pose"
+# OBSERVE is the one pose the observer may log object positions from
+# (BUILD_SPEC 6.1 and 6.6), so it has to be a FIXED, recorded pose -- otherwise
+# every "left side of the desk" in the database means something different.
+#
+# It is deliberately NOT the mechanical centre any more. Measured 2026-10-05:
+# the camera at wrist centre points at the carpet, so a centred OBSERVE would
+# have the logger faithfully recording the floor. OBSERVE_WRIST below is the
+# aim, and it still needs setting from the real desk -- see docs/HANDOFF.md.
+assert set(POSES["OBSERVE"]) == set(JOINTS), "OBSERVE must name every joint"
+assert POSES["OBSERVE"]["base_yaw"] == 90.0, "OBSERVE must be centred in yaw"
 
 
 def get_pose(name):

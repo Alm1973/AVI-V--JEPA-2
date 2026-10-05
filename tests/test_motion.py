@@ -150,11 +150,15 @@ class TestLimiter(unittest.TestCase):
                              self.c.speed_cap * dt + 1e-9)
 
     def test_undriven_joints_are_pinned_by_default(self):
+        """Which joints are pinned comes from the config, not from this test.
+        Marking a joint driven should not leave a test asserting otherwise."""
         lim = safety.Limiter(self.c)
         out = lim.apply(poses.pose(elbow=140.0, wrist=40.0), dt=1.0)
-        self.assertEqual(out["elbow"], 90.0)
-        self.assertEqual(out["wrist"], 90.0)
-        self.assertIn("elbow", lim.clamped_joints)
+        pinned = [j for j in poses.JOINTS if not self.c.is_driven(j)]
+        self.assertTrue(pinned, "nothing is pinned; this test is now vacuous")
+        for j in pinned:
+            self.assertEqual(out[j], 90.0, j)
+            self.assertIn(j, lim.clamped_joints)
 
 
 class TestEngine(unittest.TestCase):
@@ -327,8 +331,9 @@ class TestGestures(unittest.TestCase):
                 self.assertGreater(spread, 1.0,
                                    f"{name} produced no motion at all")
 
-    def test_wrist_only_gestures_are_declared_as_no_ops(self):
-        """Keep the docstring's claim honest as the config changes."""
+    def test_declared_no_ops_really_are_no_ops(self):
+        """Keep the declaration honest as the config changes. Empty is fine --
+        it means every gesture now moves something on hardware."""
         for name in gestures.NO_OP_UNTIL_M1:
             sim = backends.SimBackend(self.c)
             e = engine.MotionEngine(self.c, sim)      # hardware-faithful pinning
@@ -342,6 +347,11 @@ class TestGestures(unittest.TestCase):
                             f"{name} is listed in NO_OP_UNTIL_M1 but it moves")
 
     def test_undriven_joints_never_move_on_the_hardware_path(self):
+        """Whatever is marked undriven stays pinned, read from the config
+        rather than named here, so marking a joint driven does not leave a
+        test asserting the opposite."""
+        pinned = [j for j in poses.JOINTS if not self.c.is_driven(j)]
+        self.assertTrue(pinned, "nothing is pinned; this test is now vacuous")
         for name, move in all_gestures():
             with self.subTest(gesture=name):
                 sim = backends.SimBackend(self.c)
@@ -350,8 +360,8 @@ class TestGestures(unittest.TestCase):
                 e.tick(0.0)
                 e.run(max(4.0, move.duration + 1.0), now=1.0 / self.c.tick_hz)
                 for _, p in sim.history:
-                    self.assertEqual(p["elbow"], 90.0, name)
-                    self.assertEqual(p["wrist"], 90.0, name)
+                    for j in pinned:
+                        self.assertEqual(p[j], 90.0, f"{name}: {j} moved")
 
 
 class TestBackends(unittest.TestCase):

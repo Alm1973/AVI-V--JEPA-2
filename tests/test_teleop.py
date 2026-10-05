@@ -107,16 +107,27 @@ class TestDriver(unittest.TestCase):
         self.assertEqual(self.driver.held, {"d"})
 
     def test_undriven_joints_stay_pinned_even_when_their_keys_are_held(self):
-        """Q/E/R/F are mapped so they work the day the signs are measured, but
-        until then the limiter must refuse to move those joints at all."""
-        for i in range(40):
+        """A joint whose direction sign is still unknown must not move at all,
+        however hard its key is held.
+
+        Which joints those are is read from the config, so driving one later
+        cannot leave this test asserting the opposite.
+        """
+        from avi_bot.motion import poses as _p
+        cfg = _p.load()
+        pinned = [j for j in _p.JOINTS if not cfg.is_driven(j)]
+        self.assertTrue(pinned, "nothing is pinned; this test is now vacuous")
+        keys = [k for k, (joint, _) in self.tp.KEYMAP.items()
+                if joint in pinned]
+        self.assertTrue(keys, "no key maps to a pinned joint")
+        for _ in range(40):
             self.t += 0.1
-            self.driver.set_held(["e", "f"])
+            self.driver.set_held(keys)
             manual = self.driver.integrate(self.t, 0.1)
             self.eng.base = {j: 90.0 + manual[j] for j in self.poses.JOINTS}
             out = self.eng.tick(self.t)
-        self.assertEqual(out["elbow"], 90.0)
-        self.assertEqual(out["wrist"], 90.0)
+        for j in pinned:
+            self.assertEqual(out[j], 90.0, j)
 
     def test_speed_cap_still_governs_the_output(self):
         """Even if --speed were set absurdly high, the limiter governs."""
