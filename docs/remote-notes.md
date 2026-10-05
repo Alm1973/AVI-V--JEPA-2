@@ -266,6 +266,35 @@ Needs Shaurya's explicit go-ahead.
 
 ---
 
+## Phase 4 machinery — built and proven ahead of `assistant.zip`
+
+`scripts/observer.sh start|stop|status|logs|once|today|test`, backed by
+`avi-remote\task-ctl.ps1`. Verified end-to-end on 2026-10-04 with a throwaway
+`_tasktest.py` (since removed from both machines):
+
+- `deploy.sh` pushed a real file and listed it on the MSI — **first real test, works**
+- task started, then **kept running and logging across several separate SSH sessions**
+  (ticks 7-12 appeared while disconnected), confirming it survives disconnect
+- `logs` tails the file; `stop` is clean (state `Ready`, `lastResult=267014`, 0 python procs)
+
+Short runs (`once`, `today`, `test`) go over plain SSH — no task needed.
+Long runs (`start`) go through the task **and** take a 240-minute keep-awake.
+
+Two bugs found and fixed in the process:
+
+- **`-ScriptArgs ''` breaks.** An empty string is stripped by the bash -> ssh -> PowerShell
+  layers and PowerShell then reports the parameter as missing. `observer.sh` omits the
+  parameter entirely when there are no args.
+- **`$env:USERDOMAIN` is wrong over SSH.** It reports `WORKGROUP`, while the real identity
+  is `MSI\msi-user`. `Register-ScheduledTask` then fails with `0x80070534`
+  (no account-name-to-SID mapping). Fixed by using
+  `[Security.Principal.WindowsIdentity]::GetCurrent().Name`.
+
+Task runs with **S4U logon** (no stored password). Camera access already works from a
+non-interactive session, so the doc's "must be the interactive session" requirement does not
+apply. If the camera ever fails under the task but works over plain SSH, switch
+`-LogonType` to `Interactive`.
+
 ## Open items
 
 - `assistant.zip` is **not on this Mac** — searched the whole home directory. Blocks Phase 2
