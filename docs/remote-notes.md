@@ -217,9 +217,42 @@ no room for anything else running alongside (as the doc warns).
 
 Harmless warning on every import: `triton not found; flop counting will not work`.
 
-### 2. Camera from an SSH session: **not tested yet**
+### 2. Camera from an SSH session: **WORKS** (2026-10-04)
 
-Needs `assistant/` on the MSI, and a snapshot must not leave the machine without Shaurya's OK.
+No session isolation problem. The doc worried that `cv2.VideoCapture(1, cv2.CAP_DSHOW)`
+might fail outside the interactive desktop session. It does not - it opens and delivers real
+frames from a plain non-interactive SSH command. **The interactive scheduled task is not
+needed just for camera access.**
+
+Cameras present (`Get-PnpDevice`): `Logi C270 HD WebCam`, `Integrated Camera`.
+The doc's index mapping is correct: **index 1 = C270**, index 0 = the laptop's Integrated
+Camera. Both open at 1280x720 via DSHOW. DSHOW reports `CAP_PROP_FPS = -1.0`; ignore it.
+
+Privacy: no frame was saved or copied off the MSI. Only metadata (shape, dtype, mean
+brightness, nonzero pixel count) was returned.
+
+#### Trap: the C270's first ~5 frames are pure black, and `read()` reports success
+
+Mean pixel value over 12 consecutive frames, index 1:
+
+```
+[0.0, 0.0, 0.0, 0.0, 0.0, 153.6, 149.7, 140.8, 137.0, 137.0, 137.0, 137.0]
+```
+
+`ok=True` on every one of those reads, and the first five are `mean=0.0` with
+**0 of 2,764,800 pixels** above 8. A first-frame grab returns a fully black image while
+reporting success. Index 0 (Integrated Camera) does not do this - it is usable immediately,
+which is why the two look different in a naive test.
+
+**Why this matters more than it looks:** the observer asks the VLM yes/no questions about
+frames. Asked "is there a cup?" about a black frame, the model will answer confidently and
+wrongly, and by design nothing enters memory without a VLM "yes". That is precisely the
+**false belief** error the paper calls the worst kind, and it would be invisible in the logs.
+
+**Required in any camera open path:** discard frames until the frame is actually exposed -
+e.g. read until `frame.mean() > 1.0`, with a cap of ~15 attempts and a hard failure if it
+never exposes. Do not just `sleep()` and hope, and do not trust `ok`. Check this against
+`assistant/settings.py` and `camera.py` when `assistant.zip` arrives.
 
 ### 3. Arduino on COM5: **not touched, by design**
 
