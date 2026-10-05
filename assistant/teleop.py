@@ -116,11 +116,18 @@ class Driver:
             return dict(self.manual)
 
 
-def motion_loop(eng, driver, stop_event, deadline, hz):
+def motion_loop(eng, driver, stop_event, deadline, hz, pause=None):
     period = 1.0 / hz
     last = time.time()
     while not stop_event.is_set() and time.time() < deadline:
         now = time.time()
+        if pause is not None and pause.is_set():
+            # A calibration move is deliberately NOT followed by P frames; if
+            # this loop kept streaming them it would overwrite the calibration
+            # target 50 times a second and the joint would never move.
+            last = now
+            time.sleep(period)
+            continue
         dt = max(1e-4, now - last)
         last = now
         manual = driver.integrate(now, dt)
@@ -266,6 +273,7 @@ def make_handler(state):
     latest, eng, driver, deadline, fps, stop_event = (
         state["latest"], state["engine"], state["driver"],
         state["deadline"], state["fps"], state["stop"])
+    pause = state["pause"]
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -339,6 +347,30 @@ def make_handler(state):
                 log(f"gesture {name}")
                 eng.push(gestures.make(name))
                 self._json({"ok": True})
+            elif self.path == "/calib":
+                body = self._read_json()
+                ch = int(body.get("channel", -1))
+                deg = float(body.get("deg", 90.0))
+                if not (0 <= ch < len(poses.JOINTS)):
+                    return self._json({"error": "channel 0..3"}, 400)
+                if not hasattr(eng.backend, "calibrate"):
+                    return self._json({"error": "not a serial backend"}, 400)
+                log(f"CALIB channel {ch} ({poses.JOINTS[ch]}) -> {deg:.1f} deg")
+                pause.set()                    # stop the P stream
+                time.sleep(0.15)
+                eng.backend.calibrate(ch, deg)
+                self._json({"ok": True, "joint": poses.JOINTS[ch], "deg": deg})
+            elif self.path == "/resume":
+                pause.clear()
+                driver.home()
+                self._json({"ok": True})
+            elif self.path == "/cap":
+                v = float(self._read_json().get("deg_s", 60.0))
+                if not hasattr(eng.backend, "set_speed_cap"):
+                    return self._json({"error": "not a serial backend"}, 400)
+                log(f"speed cap -> {v:.1f} deg/s")
+                eng.backend.set_speed_cap(v)
+                self._json({"ok": True, "deg_s": v})
             elif self.path == "/stop":
                 log("session stop requested from the page")
                 self._json({"ok": True})
@@ -457,13 +489,15 @@ def main():
     if not args.no_camera:
         threading.Thread(target=grabber, args=(latest, args, deadline),
                          daemon=True).start()
+    pause = threading.Event()
     threading.Thread(target=motion_loop,
                      args=(eng, driver, stop_event, deadline,
-                           config.tick_hz), daemon=True).start()
+                           config.tick_hz, pause), daemon=True).start()
 
     srv = ThreadingHTTPServer((host, args.port), make_handler({
         "latest": latest, "engine": eng, "driver": driver,
-        "deadline": deadline, "fps": args.fps, "stop": stop_event}))
+        "deadline": deadline, "fps": args.fps, "stop": stop_event,
+        "pause": pause}))
     srv.daemon_threads = True
     log(f"backend={backend.name} envelope=+-{args.max_deg:g} deg "
         f"speed={args.speed:g} deg/s")

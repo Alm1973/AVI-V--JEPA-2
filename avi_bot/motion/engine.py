@@ -53,7 +53,7 @@ class KeyframeMove(Move):
     offset. Missing joints are 0. Interpolation between frames uses `ease`.
     """
 
-    def __init__(self, name, keys, duration, ease="ease_in_out"):
+    def __init__(self, name, keys, duration, ease="ease_in_out", max_rate=None):
         self.name = name
         self.duration = float(duration)
         self.keys = sorted(((float(t), dict(v)) for t, v in keys),
@@ -63,7 +63,39 @@ class KeyframeMove(Move):
         if self.keys[0][0] != 0.0:
             raise ValueError(f"{name}: first keyframe must be at 0.0 so the "
                              "gesture starts from where the arm already is")
+        self.ease_name = ease
         self.ease = easing.get(ease)
+        self.scale = 1.0
+        if max_rate:
+            self._fit(float(max_rate))
+
+    def peak_rate(self):
+        """Steepest per-joint rate this curve asks for, deg/s."""
+        mult = easing.peak_of(self.ease_name)
+        worst = 0.0
+        for (ta, va), (tb, vb) in zip(self.keys, self.keys[1:]):
+            span = (tb - ta) * self.duration
+            if span <= 0:
+                continue
+            for j in set(va) | set(vb):
+                worst = max(worst,
+                            abs(vb.get(j, 0.0) - va.get(j, 0.0)) / span * mult)
+        return worst
+
+    def _fit(self, max_rate):
+        """Shrink the amplitudes until the peak fits, keeping the timing.
+
+        Timing is what makes a gesture read as that gesture -- a nod's rhythm
+        is the nod. Amplitude is only how far it goes, and BUILD_SPEC calls the
+        amplitudes starting points. So when the arm is too slow, this gives up
+        size rather than rhythm.
+        """
+        peak = self.peak_rate()
+        if peak <= max_rate or peak <= 0:
+            return
+        self.scale = max_rate / peak
+        self.keys = [(ta, {j: v * self.scale for j, v in va.items()})
+                     for ta, va in self.keys]
 
     def sample(self, elapsed):
         frac = 1.0 if self.duration <= 0 else min(1.0, elapsed / self.duration)
@@ -93,15 +125,29 @@ class PoseMove(Move):
     perk_up and yawn_wake are described as doing.
     """
 
-    def __init__(self, name, target, duration, ease="ease_in_out"):
+    def __init__(self, name, target, duration, ease="ease_in_out",
+                 max_rate=None):
         self.name = name
         self.target = poses.get_pose(target) if isinstance(target, str) else dict(target)
+        self.base_duration = float(duration)
         self.duration = float(duration)
+        self.ease_name = ease
         self.ease = easing.get(ease)
+        self.max_rate = float(max_rate) if max_rate else None
         self._from = None
 
     def start(self, base):
         self._from = dict(base)
+        # A pose move MUST arrive at its pose, so it cannot give up amplitude
+        # the way a keyframe curve can. It gives up time instead, and only as
+        # much as the actual travel needs -- which is not knowable until the
+        # move starts, because it depends on where the arm already is.
+        self.duration = self.base_duration
+        if self.max_rate:
+            travel = max(abs(self.target[j] - base[j]) for j in poses.JOINTS)
+            need = travel * easing.peak_of(self.ease_name) / self.max_rate
+            if need > self.duration:
+                self.duration = need
 
     def sample(self, elapsed):
         if self._from is None:          # sampled without start(); be harmless
@@ -127,11 +173,20 @@ class SequenceMove(Move):
     def __init__(self, name, moves):
         self.name = name
         self.moves = list(moves)
-        self.duration = sum(m.duration for m in self.moves)
         self._i = 0
         self._t0 = 0.0
         self._base = None
         self._carry = _zero()
+
+    @property
+    def duration(self):
+        """Summed live, not cached.
+
+        A PoseMove leg stretches its own duration at start() when the arm is
+        too slow for the travel, so a total computed once at construction goes
+        stale and the sequence ends while a leg is still moving.
+        """
+        return sum(m.duration for m in self.moves)
 
     def start(self, base):
         self._i = 0

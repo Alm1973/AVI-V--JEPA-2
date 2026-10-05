@@ -1,12 +1,20 @@
 """The gesture library of BUILD_SPEC 6.3.
 
-SPEED CAP, AND WHY SOME DURATIONS DIFFER FROM THE SPEC
-------------------------------------------------------
-Safety caps every joint at 60 deg/s in firmware (BUILD_SPEC 6.4), and the
-*current* sketch is slower still at about 37 deg/s. Several of the spec's
-gesture values ask for more than that, because peak speed is not average
-speed: an easing curve's steepest moment is a multiple of its average, and
-these are the measured multipliers:
+TWO SPEED NUMBERS, AND WHY
+--------------------------
+`speed_cap_deg_s` (60) is a SAFETY clamp on what may be commanded, enforced in
+firmware and again host-side. `achievable_deg_s` is what the arm can ACTUALLY
+do, measured at about 28 deg/s on 2026-10-05 by raising the firmware cap step
+by step and timing a 60 degree sweep optically: it plateaus, and a commanded
+140 is no faster than a commanded 60.
+
+Durations and amplitudes are derived from the *achievable* figure, because a
+gesture designed for a speed the arm cannot reach is not refused -- it is
+silently smeared into a different shape, and nothing in the logs says so. A
+shake that cannot reach its reversal in time reads as a sway.
+
+Peak speed is not average speed: an easing curve's steepest moment is a
+multiple of its average, and these are the measured multipliers:
 
     linear 1.00x   ease_in_out 1.57x   ease_in / ease_out 3.00x
     every *_back curve 4.70x
@@ -17,13 +25,14 @@ not unsafe -- the limiter and the firmware both clamp -- but it is worse than
 unsafe, it is *silently wrong*: the gesture gets smeared into a different
 shape, so a shake reads as a slow sway and nobody can tell from the logs.
 
-Each gesture below is therefore the fastest version of the spec's shape that
-fits 60 deg/s, with the spec's own value kept in a comment. Fast oscillations
-use linear interpolation, since an ease between every keyframe of a shake both
-costs 1.57x and makes the motion stutter. If the arm turns out to manage more
-than 60 deg/s, raise speed_cap_deg_s in config/joints.toml and shorten these
-again; tests/test_motion.py recomputes the whole table against whatever the cap
-says.
+Each gesture below keeps the spec's shape and timing, and _kf/_pose shrink its
+amplitude (or stretch a pose move's duration) to whatever the arm can do. So
+the numbers written here are the INTENT, and the arm performs the largest
+version of that intent it is capable of. Raise achievable_deg_s once the 5 V
+4 A supply is in and every gesture gets its size back with no code change.
+
+Fast oscillations use linear interpolation, since an ease between every
+keyframe of a shake both costs pi/2 in peak speed and makes the motion stutter.
 
 WHICH GESTURES ARE VISIBLE TODAY
 --------------------------------
@@ -40,7 +49,35 @@ Build the sim with drive_undriven=True to preview the full motion.
 """
 import math
 
+from . import poses
 from .engine import HoldMove, KeyframeMove, PoseMove, SequenceMove
+
+_CFG = None
+
+
+def _rate():
+    """What the arm can actually do, from config/joints.toml.
+
+    MEASURED, not the safety cap: about 28 deg/s on 2026-10-05, roughly ten
+    times slower than these servos' datasheet, which points at the UBEC
+    current-limiting them rather than at the servos. When the 5 V 4 A supply is
+    installed, re-measure and raise achievable_deg_s -- every gesture below
+    gets its snap back from that one edit, with no code change.
+    """
+    global _CFG
+    if _CFG is None:
+        _CFG = poses.load()
+    return _CFG.achievable
+
+
+def _kf(name, keys, duration, ease="ease_in_out"):
+    """A keyframe curve that shrinks its amplitude to fit what the arm can do."""
+    return KeyframeMove(name, keys, duration, ease, max_rate=_rate())
+
+
+def _pose(name, target, duration, ease="ease_in_out"):
+    """A pose move that stretches its duration to fit what the arm can do."""
+    return PoseMove(name, target, duration, ease, max_rate=_rate())
 
 # Travel in degrees that each easing may cover per second at the 60 deg/s cap.
 # Kept here as documentation; the test is what actually enforces it.
@@ -58,7 +95,7 @@ def nod():
 
     WRIST-ONLY, so it is a no-op on hardware today.
     """
-    return KeyframeMove("nod", [
+    return _kf("nod", [
         (0.0000, {"wrist": 0.0}),
         (0.1250, {"wrist": -8.0}),
         (0.3125, {"wrist": 4.0}),
@@ -75,7 +112,7 @@ def shake():
     A +-10 reversal is 20 deg of travel; twice inside 0.9 s simply is not
     something a 60 deg/s joint can do.
     """
-    return KeyframeMove("shake", [
+    return _kf("shake", [
         (0.000, {"base_yaw": 0.0}),
         (0.125, {"base_yaw": -10.0}),
         (0.375, {"base_yaw": 10.0}),
@@ -95,8 +132,8 @@ def perk_up():
     anticipation dip is too slow to register as a wind-up.
     """
     return SequenceMove("perk_up", [
-        PoseMove("perk_rise", "TALL", 1.1, ease="ease_out"),
-        KeyframeMove("perk_overshoot", [
+        _pose("perk_rise", "TALL", 1.1, ease="ease_out"),
+        _kf("perk_overshoot", [
             (0.0, {}), (0.4, {"shoulder": -3.0}), (1.0, {}),
         ], duration=0.35, ease="linear"),
     ])
@@ -105,8 +142,8 @@ def perk_up():
 def droop():
     """Slow ease down to LOW, wrist down last.  wrist leg 0.3 s -> 0.5 s."""
     return SequenceMove("droop", [
-        PoseMove("droop_body", "LOW", 1.2, ease="ease_in_out"),
-        KeyframeMove("droop_wrist", [(0.0, {}), (1.0, {"wrist": 12.0})],
+        _pose("droop_body", "LOW", 1.2, ease="ease_in_out"),
+        _kf("droop_wrist", [(0.0, {}), (1.0, {"wrist": 12.0})],
                      duration=0.5, ease="ease_in_out"),
     ])
 
@@ -119,7 +156,7 @@ def curious_lean(hold=1.0):
     SequenceMove carries each finished leg's offset forward.
     """
     return SequenceMove("curious_lean", [
-        KeyframeMove("lean", [
+        _kf("lean", [
             (0.0, {}),
             (1.0, {"shoulder": -7.0, "elbow": -9.0, "wrist": -5.0}),
         ], duration=1.2, ease="ease_out"),
@@ -135,7 +172,7 @@ def excited_wiggle():
         keys.append(((i + 0.5) / 3.0, {"base_yaw": 6.0 * sign, "wrist": -4.0}))
         keys.append(((i + 1.0) / 3.0, {"base_yaw": -6.0 * sign, "wrist": 2.0}))
     keys.append((1.0, {"base_yaw": 0.0, "wrist": 0.0}))
-    return KeyframeMove("excited_wiggle", keys, duration=1.2, ease="linear")
+    return _kf("excited_wiggle", keys, duration=1.2, ease="linear")
 
 
 def celebrate():
@@ -152,7 +189,7 @@ def startled():
     The recoil is linear on purpose: an ease_out recoil costs 3.00x and would
     need 1 s of the 1.2 s budget just for the first 6 degrees.
     """
-    return KeyframeMove("startled", [
+    return _kf("startled", [
         (0.00, {}),
         (0.10, {"shoulder": 6.0, "elbow": 6.0}),   # recoil, away from the desk
         (0.35, {"shoulder": 6.0, "elbow": 6.0}),   # freeze
@@ -162,7 +199,7 @@ def startled():
 
 def thinking():
     """Slow look up and to one side, pause, return.  1.5 s, as specified."""
-    return KeyframeMove("thinking", [
+    return _kf("thinking", [
         (0.00, {}),
         (0.33, {"base_yaw": -9.0, "shoulder": -5.0, "wrist": -6.0}),
         (0.66, {"base_yaw": -9.0, "shoulder": -5.0, "wrist": -6.0}),
@@ -175,7 +212,7 @@ def embarrassed():
 
     Only the 5 deg yaw shows on hardware today.
     """
-    return KeyframeMove("embarrassed", [
+    return _kf("embarrassed", [
         (0.00, {}),
         (0.25, {"wrist": 10.0, "base_yaw": -5.0}),
         (0.55, {"wrist": 10.0, "base_yaw": -5.0}),
@@ -193,9 +230,9 @@ def ahem(yaw=0.0):
     turn = max(0.7, abs(float(yaw)) * PEAK_MULTIPLIER["ease_in_out"]
                * SPEED_CAP_MARGIN / 60.0)
     return SequenceMove("ahem", [
-        KeyframeMove("ahem_turn", [(0.0, {}), (1.0, {"base_yaw": float(yaw)})],
+        _kf("ahem_turn", [(0.0, {}), (1.0, {"base_yaw": float(yaw)})],
                      duration=turn, ease="ease_in_out"),
-        KeyframeMove("ahem_nod", [
+        _kf("ahem_nod", [
             (0.0, {}), (0.5, {"wrist": -6.0}), (1.0, {}),
         ], duration=0.4, ease="linear"),
     ])
@@ -203,7 +240,7 @@ def ahem(yaw=0.0):
 
 def doze():
     """Ease to REST and stay. The caller deepens breathing; see DOZE_BREATH."""
-    m = PoseMove("doze", "REST", 2.0, ease="ease_in_out")
+    m = _pose("doze", "REST", 2.0, ease="ease_in_out")
     m.continuous = True          # stays primary until something interrupts it
     return m
 
@@ -216,7 +253,7 @@ def yawn_wake():
 
     35 deg of travel on a 4.70x overshoot curve needs 2.74 s at the cap.
     """
-    return PoseMove("yawn_wake", "HOME", 2.8, ease="ease_out_back")
+    return _pose("yawn_wake", "HOME", 2.8, ease="ease_out_back")
 
 
 GESTURES = {

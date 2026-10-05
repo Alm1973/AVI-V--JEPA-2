@@ -30,7 +30,13 @@ class JointConfig:
 
     @property
     def speed_cap(self):
+        """The safety clamp: the fastest anything may be COMMANDED."""
         return float(self.meta["speed_cap_deg_s"])
+
+    @property
+    def achievable(self):
+        """What the arm can actually do. Gesture durations derive from this."""
+        return float(self.meta.get("achievable_deg_s", self.speed_cap))
 
     def soft_limits(self, joint):
         j = self.joints[joint]

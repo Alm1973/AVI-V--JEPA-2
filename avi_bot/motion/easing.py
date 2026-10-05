@@ -55,6 +55,25 @@ BY_NAME = {
 }
 
 
+# How much steeper each curve's steepest moment is than its average, measured
+# by sampling at 20 000 points. A move's peak rate is
+#     travel / duration * PEAK[ease]
+# and that peak is what has to fit inside what the arm can actually do.
+PEAK = {
+    "linear": 1.0,
+    "ease_in": 3.0,
+    "ease_out": 3.0,
+    "ease_in_out": math.pi / 2,
+    "ease_out_back": 4.70,
+    "ease_in_back": 4.70,
+    "ease_in_out_back": 4.70,
+}
+
+
+def peak_of(name):
+    return PEAK[name]
+
+
 def get(name):
     try:
         return BY_NAME[name]

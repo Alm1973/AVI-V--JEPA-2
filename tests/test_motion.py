@@ -196,9 +196,20 @@ class TestEngine(unittest.TestCase):
                              f"cross-fade produced a {worst:.2f} deg jump")
 
     def test_pose_move_lands_on_its_target(self):
+        """Run until the move reports it is finished, not for a fixed time.
+
+        A pose move stretches its own duration to fit what the arm can do, so
+        any hardcoded wait here is a guess that breaks the moment the measured
+        speed changes.
+        """
         e = engine.MotionEngine(self.c, self.sim)
         e.push(gestures.perk_up())
-        e.run(2.0)
+        step = 1.0 / self.c.tick_hz
+        now = 0.0
+        while e.busy() and now < 30.0:
+            e.tick(now)
+            now += step
+        self.assertFalse(e.busy(), "perk_up never finished")
         self.assertAlmostEqual(e.base["shoulder"],
                                poses.get_pose("TALL")["shoulder"], places=3)
 
@@ -247,25 +258,48 @@ class TestGestures(unittest.TestCase):
                 sim = backends.SimBackend(self.c)
                 e = engine.MotionEngine(self.c, sim, drive_undriven=True)
                 e.push(move)
-                e.run(max(3.0, move.duration + 1.0))
+                e.tick(0.0)                      # start it, so it sizes itself
+                e.run(max(4.0, move.duration + 1.0), now=1.0 / self.c.tick_hz)
                 for _, p in sim.history:
                     for j in poses.JOINTS:
                         lo, hi = self.c.soft_limits(j)
                         self.assertTrue(lo <= p[j] <= hi, f"{name}: {j}={p[j]}")
 
-    def test_every_gesture_fits_the_firmware_speed_cap(self):
-        """A gesture that asks for more than the cap gets silently smeared.
+    def test_every_gesture_fits_what_the_arm_can_actually_do(self):
+        """Not the safety cap -- the MEASURED ceiling.
 
-        It would still be safe, but it would not look like the gesture any
-        more: a shake that cannot reach its reversal in time reads as a sway.
+        A gesture that asks for more is not refused, it is silently smeared
+        into a different shape: a shake that cannot reach its reversal in time
+        reads as a sway, and nothing in the logs says so.
         """
         over = {}
         for name, move in all_gestures():
             rate = peak_rate(move, gestures.START_POSE.get(name, "HOME"))
-            if rate > self.c.speed_cap + 1e-6:
+            if rate > self.c.achievable + 0.5:
                 over[name] = round(rate, 1)
-        self.assertEqual(over, {}, f"gestures exceeding "
-                                   f"{self.c.speed_cap:.0f} deg/s: {over}")
+        self.assertEqual(over, {}, f"gestures exceeding the measured "
+                                   f"{self.c.achievable:.0f} deg/s: {over}")
+
+    def test_the_safety_cap_is_above_what_the_arm_can_reach(self):
+        """If the clamp were below the arm's ability it would be the thing
+        limiting motion, and the measured ceiling would be meaningless."""
+        self.assertGreater(self.c.speed_cap, self.c.achievable)
+
+    def test_raising_the_achievable_rate_restores_amplitude(self):
+        """The whole point of deriving from the measurement: when the servo
+        supply is fixed and the number goes up, the gestures get their size
+        back without anyone editing a gesture."""
+        slow = engine.KeyframeMove("t", [(0.0, {"base_yaw": 0.0}),
+                                         (0.5, {"base_yaw": 10.0}),
+                                         (1.0, {"base_yaw": 0.0})],
+                                   0.4, "linear", max_rate=28.0)
+        fast = engine.KeyframeMove("t", [(0.0, {"base_yaw": 0.0}),
+                                         (0.5, {"base_yaw": 10.0}),
+                                         (1.0, {"base_yaw": 0.0})],
+                                   0.4, "linear", max_rate=120.0)
+        self.assertLess(slow.scale, fast.scale)
+        self.assertAlmostEqual(fast.scale, 1.0)
+        self.assertAlmostEqual(slow.peak_rate(), 28.0, delta=0.5)
 
     def test_ahem_scales_its_turn_with_the_angle(self):
         for yaw in (0.0, 10.0, 25.0, 40.0, -40.0):
@@ -284,7 +318,8 @@ class TestGestures(unittest.TestCase):
                 for layer in e.layers:
                     layer.weight = 0.0      # isolate the gesture from breathing
                 e.push(move)
-                e.run(max(3.0, move.duration + 1.0))
+                e.tick(0.0)
+                e.run(max(4.0, move.duration + 1.0), now=1.0 / self.c.tick_hz)
                 origin = poses.get_pose(start)
                 spread = max(
                     max(abs(p[j] - origin[j]) for j in poses.JOINTS)
@@ -312,7 +347,8 @@ class TestGestures(unittest.TestCase):
                 sim = backends.SimBackend(self.c)
                 e = engine.MotionEngine(self.c, sim)   # drive_undriven=False
                 e.push(move)
-                e.run(max(3.0, move.duration + 1.0))
+                e.tick(0.0)
+                e.run(max(4.0, move.duration + 1.0), now=1.0 / self.c.tick_hz)
                 for _, p in sim.history:
                     self.assertEqual(p["elbow"], 90.0, name)
                     self.assertEqual(p["wrist"], 90.0, name)

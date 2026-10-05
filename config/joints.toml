@@ -26,6 +26,31 @@
 calibrated = "2026-08-04"
 center_deg = 90.0
 speed_cap_deg_s = 60.0      # per joint, enforced in firmware AND host-side
+
+# What the arm can ACTUALLY do, which is not the same thing as the safety cap.
+#
+# MEASURED 2026-10-05 by raising the firmware cap step by step and timing a
+# 60 degree sweep optically:
+#
+#     cap commanded   predicted   measured   implied actual
+#         25 deg/s      2.40 s     3.30 s      18.2 deg/s
+#         40 deg/s      1.50 s     2.69 s      22.3 deg/s
+#         60 deg/s      1.00 s     2.22 s      27.1 deg/s
+#         90 deg/s      0.67 s     2.24 s      26.7 deg/s
+#        140 deg/s      0.43 s     2.55 s      23.6 deg/s
+#
+# It plateaus: above about 60 commanded, nothing gets faster, and 140 is
+# slightly WORSE than 60. So roughly 27 deg/s is the ceiling, and the v1
+# sketch's ~37 deg/s was far closer to the truth than the 60 this project
+# assumed. The figure carries an unknown POSITIVE bias, because MJPEG buffering
+# delays a frame by some tens of milliseconds, so treat 27 as a floor.
+#
+# Why both numbers exist: speed_cap_deg_s is a SAFETY clamp on what may be
+# commanded, and 60 is fine for that since the servo simply will not achieve
+# it. This number is a PHYSICAL FACT, and it is what gesture durations have to
+# be derived from -- a gesture designed for 60 deg/s gets silently smeared into
+# a different shape, which is worse than being refused.
+achievable_deg_s = 27.0
 watchdog_ms = 500           # no P frame for this long -> firmware holds position
 tick_hz = 50
 

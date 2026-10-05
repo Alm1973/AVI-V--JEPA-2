@@ -60,6 +60,7 @@ static const float    SPEED_CAP_DEG_S = 60.0f;   // config/joints.toml meta
 static const float    HOMING_DEG_S    = 18.0f;   // H, and the unknown-pose ramp
 static const uint16_t WATCHDOG_MS     = 500;
 static const uint8_t  TICK_MS         = 10;
+static const uint16_t CALIB_WINDOW_MS = 6000;   // how long a C command is honoured
 
 // Bench calibration of 2026-08-04. MUST stay in step with config/joints.toml.
 // min/center/max are raw PCA9685 counts; soft limits are degrees.
@@ -80,6 +81,8 @@ static const Joint JOINTS[NJ] = {
 
 enum StartMode { MODE_UNKNOWN, MODE_READBACK };
 
+static float      speedCap = SPEED_CAP_DEG_S;  // V sets this at runtime
+static uint32_t   calibUntil = 0;       // C grants a short calibration window
 static float      current[NJ];          // degrees we are actually outputting
 static float      target[NJ];           // degrees we are easing toward
 static bool       haveTarget = false;   // nothing is written before the first P
@@ -270,6 +273,40 @@ static void handleLine() {
       holding = false;
       lastCmdMs = millis();
       break;
+    case 'C': {
+      // C <ch> <deg> -- calibration move. Drives a channel even when it is
+      // marked undriven, which is the only way to discover an unknown
+      // direction sign in the first place. Still clamped to that joint's soft
+      // limits, still at the slow homing rate, and the permission expires on
+      // its own after CALIB_WINDOW_MS so a dropped connection cannot leave the
+      // interlock open.
+      char *tok = strtok(line + 1, " \t");
+      if (!tok) break;
+      int ch = atoi(tok);
+      tok = strtok(NULL, " \t");
+      if (!tok || ch < 0 || ch >= NJ) break;
+      target[ch] = clampDeg((uint8_t)ch, atof(tok));
+      haveTarget = true;
+      homing = true;                    // slow rate for anything unknown
+      calibUntil = millis() + CALIB_WINDOW_MS;
+      lastCmdMs = millis();
+      Serial.print(F("C ok ch=")); Serial.print(ch);
+      Serial.print(F(" -> ")); Serial.println(target[ch], 1);
+      break;
+    }
+    case 'V': {
+      // V <deg_s> -- set the speed cap at runtime, so the arm's real limit can
+      // be measured without reflashing between every attempt. Bounded well
+      // below anything that could slam a joint.
+      float v = atof(line + 1);
+      if (v >= 5.0f && v <= 150.0f) {
+        speedCap = v;
+        Serial.print(F("V ok ")); Serial.println(speedCap, 1);
+      } else {
+        Serial.println(F("V range 5..150"));
+      }
+      break;
+    }
     case 'E': holding = true; break;
     case 'R': holding = false; lastCmdMs = millis(); break;
     case '?':
@@ -286,7 +323,9 @@ static void handleLine() {
       Serial.print(F(" holding="));
       Serial.print(holding ? 1 : 0);
       Serial.print(F(" haveTarget="));
-      Serial.println(haveTarget ? 1 : 0);
+      Serial.print(haveTarget ? 1 : 0);
+      Serial.print(F(" cap="));
+      Serial.println(speedCap, 1);
       break;
     default: break;
   }
@@ -330,15 +369,18 @@ void loop() {
 
   if (!haveTarget) return;                       // never move unbidden
   if (holding) return;                           // E
-  if (now - lastCmdMs > WATCHDOG_MS) return;     // host went quiet: hold still
+  bool calibrating = (int32_t)(calibUntil - now) > 0;
+  // The watchdog is suspended during a calibration window, because a C move
+  // is deliberately not followed by a 50 Hz stream of P frames.
+  if (!calibrating && now - lastCmdMs > WATCHDOG_MS) return;
 
   float cap = (homing || startMode == MODE_UNKNOWN)
-              ? HOMING_DEG_S : SPEED_CAP_DEG_S;
+              ? HOMING_DEG_S : speedCap;
   float maxStep = cap * (float)TICK_MS / 1000.0f;
 
   bool moved = false;
   for (uint8_t j = 0; j < NJ; j++) {
-    if (!JOINTS[j].driven) continue;
+    if (!JOINTS[j].driven && !calibrating) continue;
     float err = target[j] - current[j];
     if (err > maxStep)       err = maxStep;
     else if (err < -maxStep) err = -maxStep;

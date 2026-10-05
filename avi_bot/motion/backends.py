@@ -122,6 +122,20 @@ class SerialBackend(MotionBackend):
     def home(self):
         self._write("H")
 
+    def calibrate(self, channel, deg):
+        """Drive one channel even if it is marked undriven (firmware `C`).
+
+        This is how an unknown direction sign gets discovered: there is no other
+        way to learn which way a joint goes than to move it a little and look.
+        The firmware clamps to the joint's soft limits and only honours it for a
+        few seconds.
+        """
+        self._write(f"C {int(channel)} {float(deg):.1f}")
+
+    def set_speed_cap(self, deg_s):
+        """Set the firmware's speed cap at runtime (firmware `V`)."""
+        self._write(f"V {float(deg_s):.1f}")
+
     def hold(self):
         self._write("E")
 
