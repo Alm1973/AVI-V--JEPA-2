@@ -1,0 +1,86 @@
+# Joint calibration and limits.
+#
+# The host works in DEGREES, 0..180, with 90 = the bench-calibrated center.
+# The firmware converts degrees to PCA9685 counts with a PIECEWISE map, because
+# the calibrated center is not the midpoint of the calibrated range:
+#
+#     angle <= 90 : count = lerp(min_count,    center_count, angle / 90)
+#     angle >  90 : count = lerp(center_count, max_count,   (angle - 90) / 90)
+#
+# So 0 deg is exactly min_count and 180 deg is exactly max_count, and a degree
+# is worth a different number of counts on either side of center. This is the
+# convention BUILD_SPEC section 6.4 calls "a piecewise angle->pulse mapping
+# around the calibrated center".
+#
+# ASSUMPTION TO VERIFY (flagged for Shaurya): the existing sketch
+# firmware/servo_controller/sketch_jul1a.ino lives on the MSI, not here, so the
+# exact breakpoints of its map have not been read back. If its map differs,
+# firmware v2 is the authority and this file travels with it, so nothing
+# downstream has to change.
+#
+# Counts are from the bench calibration of 2026-08-04 (BUILD_SPEC section 3).
+# soft_min/soft_max are kept INSIDE the calibrated range so the host never asks
+# for a mechanical end-stop; the firmware clamps to the same table independently.
+
+[meta]
+calibrated = "2026-08-04"
+center_deg = 90.0
+speed_cap_deg_s = 60.0      # per joint, enforced in firmware AND host-side
+watchdog_ms = 500           # no P frame for this long -> firmware holds position
+tick_hz = 50
+
+# --- channel 0: base yaw, look left/right -------------------------------------
+[joints.base_yaw]
+channel   = 0
+min_count = 75
+center_count = 250
+max_count = 460
+soft_min  = 20.0
+soft_max  = 160.0
+# CONFIRMED on hardware: arm.update(+10, 0) moves the VIEW right.
+sign      = 1
+driven    = true
+
+# --- channel 1: shoulder, whole arm up/down -----------------------------------
+[joints.shoulder]
+channel   = 1
+min_count = 75
+center_count = 370
+max_count = 580
+soft_min  = 25.0
+soft_max  = 155.0
+# CONFIRMED on hardware: arm.update(0, +10) moves the VIEW down.
+sign      = 1
+driven    = true
+# BUG in the current firmware: channel 1 is driven with the WRIST's range
+# (140/380/580) instead of the shoulder's. Fixed in avi_servo_v2.
+
+# --- channel 2: elbow ---------------------------------------------------------
+[joints.elbow]
+channel   = 2
+min_count = 80
+center_count = 430
+max_count = 570
+soft_min  = 30.0
+soft_max  = 150.0
+sign      = 0      # UNKNOWN. 0 means "do not drive". Measure in M1, then set +-1.
+driven    = false
+
+# --- channel 3: wrist / camera tilt -------------------------------------------
+[joints.wrist]
+channel   = 3
+min_count = 140
+center_count = 380
+max_count = 580
+soft_min  = 30.0
+soft_max  = 150.0
+sign      = 0      # UNKNOWN. Measure in M1 (wrist pitch up -> scene moves down).
+driven    = false
+
+# Approximate link lengths in mm, for the sim's side view only. Eyeballed, not
+# measured; they affect nothing but the drawing.
+[sim]
+link_shoulder_mm = 90
+link_elbow_mm    = 70
+link_wrist_mm    = 40
+base_height_mm   = 55
