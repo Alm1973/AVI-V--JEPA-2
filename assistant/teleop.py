@@ -31,6 +31,7 @@ that misbehaves in sim would have misbehaved on the arm.
 """
 import argparse
 import json
+import os
 import sys
 import threading
 import time
@@ -49,6 +50,29 @@ from avi_bot.motion import backends, engine, gestures, poses  # noqa: E402
 
 # key -> (joint, direction). The two signs that are confirmed on hardware:
 # base_yaw + moves the view right, shoulder + moves the view down.
+# Where taught poses are kept on the MSI. The Mac stays the source of truth:
+# this file is a scratchpad that gets pulled back and written into the repo, so
+# it is in .gitignore rather than committed.
+TAUGHT_PATH = os.path.join(os.environ.get("USERPROFILE", "."),
+                           "avi-remote", "taught_poses.json")
+
+
+def load_taught():
+    try:
+        with open(TAUGHT_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_taught(data):
+    os.makedirs(os.path.dirname(TAUGHT_PATH), exist_ok=True)
+    tmp = TAUGHT_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+    os.replace(tmp, TAUGHT_PATH)   # atomic, so a crash cannot truncate it
+
+
 KEYMAP = {
     "w": ("shoulder", -1.0), "s": ("shoulder", +1.0),
     "a": ("base_yaw", -1.0), "d": ("base_yaw", +1.0),
@@ -167,15 +191,32 @@ PAGE = b"""<!doctype html>
  button:hover{background:#3f3f46}
  button.danger{background:#7f1d1d;border-color:#991b1b}
  code{color:#71717a;font-size:12px}
+ .gauge{margin:5px 0;font:11px ui-monospace,monospace;color:#a1a1aa}
+ .gauge .bar{position:relative;height:10px;background:#27272a;border-radius:5px;margin-top:2px}
+ .gauge .mid{position:absolute;top:-2px;bottom:-2px;width:1px;background:#52525b}
+ .gauge .pip{position:absolute;top:-2px;width:3px;height:14px;border-radius:2px;background:#60a5fa}
+ .gauge.pinned .pip{background:#52525b}
+ .gauge .row{display:flex;justify-content:space-between}
+ .teach{border-top:1px solid #27272a;padding-top:8px;margin-top:4px}
+ .lbl{color:#71717a;font-size:11px;margin:6px 0 3px}
+ #taught{font:10px ui-monospace,monospace;color:#71717a;white-space:pre-wrap;
+         max-height:130px;overflow:auto;margin:6px 0 0}
 </style></head>
 <body>
  <div id="banner">connecting...</div>
  <div class="wrap">
   <img src="/stream.mjpg" alt="camera">
   <div class="panel">
-   <svg id="sim" viewBox="0 0 260 150" width="100%"
+   <svg id="sim" viewBox="0 0 260 96" width="100%"
         style="background:#18181b;border-radius:10px"></svg>
-   <table id="joints"></table>
+   <div id="gauges"></div>
+   <div class="teach">
+     <div class="lbl">teach the current position as a pose:</div>
+     <div class="g" id="poses"></div>
+     <div class="lbl">recall a taught pose:</div>
+     <div class="g" id="recall"></div>
+     <pre id="taught"></pre>
+   </div>
    <div class="keys">
      <span></span><kbd id="k-w">W</kbd><span></span>
      <kbd id="k-a">A</kbd><kbd id="k-s">S</kbd><kbd id="k-d">D</kbd>
@@ -230,40 +271,59 @@ setInterval(async () => {
 // the calibrated center, so everything is drawn relative to 90.
 function draw(s){
   const g = {}; for (const j of s.joints) g[j.name] = j.deg;
-  const L = s.sim || {};
-  const l1 = (L.link_shoulder_mm||90)/2.4, l2 = (L.link_elbow_mm||70)/2.4,
-        l3 = (L.link_wrist_mm||40)/2.4, bh = (L.base_height_mm||55)/2.4;
+  // Only the yaw dial is drawn. There used to be a side-profile arm here, and
+  // it was wrong: its link angles assumed the shoulder was a simple up/down
+  // axis, when in fact both ends of the shoulder's range are DOWN and upright
+  // is in the middle. Drawing a confident picture from geometry nobody has
+  // measured is worse than drawing nothing, so the joints get honest gauges
+  // instead until the poses below are taught on the real arm.
   const rad = d => d*Math.PI/180;
-  // --- side view: shoulder lifts, elbow and wrist follow ---
-  const ox=60, oy=120;
-  const a1 = rad(g.shoulder-90), a2 = a1 + rad(g.elbow-90), a3 = a2 + rad(g.wrist-90);
-  const x1=ox, y1=oy-bh;
-  const x2=x1+Math.sin(a1)*0+l1*Math.cos(a1-Math.PI/2)*0 + l1*Math.sin(a1), y2=y1-l1*Math.cos(a1);
-  const x3=x2+l2*Math.sin(a2), y3=y2-l2*Math.cos(a2);
-  const x4=x3+l3*Math.sin(a3), y4=y3-l3*Math.cos(a3);
-  // --- top view: base yaw ---
-  const tx=195, ty=75, yaw=rad(g.base_yaw-90), R=42;
+  const tx=130, ty=52, yaw=rad(g.base_yaw-90), R=34;
   const ex=tx+R*Math.sin(yaw), ey=ty-R*Math.cos(yaw);
-  const seg=(xa,ya,xb,yb,c,w)=>`<line x1="${xa}" y1="${ya}" x2="${xb}" y2="${yb}" stroke="${c}" stroke-width="${w}" stroke-linecap="round"/>`;
   document.getElementById("sim").innerHTML =
-    `<text x="8" y="14" fill="#52525b" font-size="9">side</text>`+
-    `<text x="150" y="14" fill="#52525b" font-size="9">top (yaw)</text>`+
-    seg(20,oy,100,oy,"#3f3f46",2)+
-    seg(ox,oy,x1,y1,"#52525b",7)+
-    seg(x1,y1,x2,y2,"#60a5fa",6)+
-    seg(x2,y2,x3,y3,"#3b82f6",5)+
-    seg(x3,y3,x4,y4,"#93c5fd",4)+
-    `<circle cx="${x4}" cy="${y4}" r="4.5" fill="#fbbf24"/>`+
-    `<text x="${x4+7}" y="${y4+3}" fill="#a1a1aa" font-size="8">cam</text>`+
+    `<text x="8" y="13" fill="#52525b" font-size="9">top view (base yaw)</text>`+
     `<circle cx="${tx}" cy="${ty}" r="${R}" fill="none" stroke="#27272a" stroke-width="1"/>`+
-    seg(tx,ty,ex,ey,"#60a5fa",5)+
+    `<line x1="${tx}" y1="${ty}" x2="${tx}" y2="${ty-R}" stroke="#27272a" stroke-width="1"/>`+
+    `<line x1="${tx}" y1="${ty}" x2="${ex}" y2="${ey}" stroke="#60a5fa" stroke-width="5" stroke-linecap="round"/>`+
     `<circle cx="${ex}" cy="${ey}" r="4" fill="#fbbf24"/>`+
-    `<circle cx="${tx}" cy="${ty}" r="3" fill="#52525b"/>`;
+    `<circle cx="${tx}" cy="${ty}" r="3" fill="#52525b"/>`+
+    `<text x="${tx-4}" y="${ty+R+12}" fill="#52525b" font-size="9">${g.base_yaw.toFixed(0)}&deg;</text>`;
+
+  document.getElementById("gauges").innerHTML = s.joints.map(j => {
+    const f = Math.max(0, Math.min(1, (j.deg - j.lo) / (j.hi - j.lo)));
+    const mid = (90 - j.lo) / (j.hi - j.lo);
+    return `<div class="gauge ${j.driven?"":"pinned"}">`+
+      `<div class="row"><span>${j.name}${j.driven?"":" (pinned)"}</span>`+
+      `<span>${j.deg.toFixed(1)}&deg; &nbsp;${j.count} &nbsp;sign ${j.sign>=0?"+":"-"}</span></div>`+
+      `<div class="bar"><div class="mid" style="left:${mid*100}%"></div>`+
+      `<div class="pip" style="left:calc(${f*100}% - 1.5px)"></div></div>`+
+      `<div class="row"><span>${j.lo}&deg;</span><span>${j.hi}&deg;</span></div></div>`;
+  }).join("");
 }
+
 fetch("/gestures").then(r=>r.json()).then(gs => {
   document.getElementById("gestures").innerHTML = gs.map(g =>
     `<button onclick="post('/gesture',{name:'${g}'})">${g}</button>`).join("");
 });
+async function refreshTaught(){
+  const d = await (await fetch("/taught")).json();
+  const names = Object.keys(d).sort();
+  document.getElementById("taught").textContent = names.length
+    ? names.map(n => n.padEnd(10) + ["base_yaw","shoulder","elbow","wrist"]
+        .map(j => j[0] + String(d[n][j]).padStart(6)).join("  ")).join("\n")
+    : "nothing taught yet";
+  document.getElementById("recall").innerHTML = names.map(n =>
+    `<button onclick="post('/goto_taught',{name:'${n}'})">${n}</button>`).join("");
+}
+fetch("/poses").then(r=>r.json()).then(ps => {
+  document.getElementById("poses").innerHTML = ps.map(n =>
+    `<button onclick="teach('${n}')">${n}</button>`).join("");
+});
+async function teach(n){
+  await post("/teach", {name:n});
+  await refreshTaught();
+}
+refreshTaught();
 </script>
 </body></html>
 """
@@ -314,13 +374,20 @@ def make_handler(state):
                     "busy": eng.busy(),
                     "joints": [{"name": j, "deg": sent[j],
                                 "count": round(cfg.deg_to_count(j, sent[j])),
-                                "driven": cfg.is_driven(j)}
+                                "driven": cfg.is_driven(j),
+                                "lo": cfg.soft_limits(j)[0],
+                                "hi": cfg.soft_limits(j)[1],
+                                "sign": cfg.sign(j)}
                                for j in poses.JOINTS],
                     # Link lengths so the page can draw the arm. Eyeballed, not
                     # measured: they make the picture roughly right, and the
                     # picture is there to show that a key did something.
                     "sim": cfg.sim,
                 })
+            elif self.path == "/taught":
+                self._json(load_taught())
+            elif self.path == "/poses":
+                self._json(sorted(poses.POSES))
             elif self.path == "/gestures":
                 self._json(sorted(gestures.GESTURES))
             elif self.path == "/stream.mjpg":
@@ -347,6 +414,33 @@ def make_handler(state):
                 log(f"gesture {name}")
                 eng.push(gestures.make(name))
                 self._json({"ok": True})
+            elif self.path == "/teach":
+                name = (self._read_json().get("name") or "").strip()
+                if not name:
+                    return self._json({"error": "need a pose name"}, 400)
+                sent = eng.last_sent
+                entry = {j: round(sent[j], 1) for j in poses.JOINTS}
+                entry["counts"] = {j: round(eng.config.deg_to_count(j, sent[j]))
+                                   for j in poses.JOINTS}
+                data = load_taught()
+                data[name] = entry
+                save_taught(data)
+                log(f"TAUGHT {name}: " +
+                    " ".join(f"{j}={entry[j]}" for j in poses.JOINTS))
+                self._json({"ok": True, "name": name, "pose": entry})
+            elif self.path == "/goto_taught":
+                name = (self._read_json().get("name") or "").strip()
+                data = load_taught()
+                if name not in data:
+                    return self._json({"error": "not taught yet"}, 404)
+                want = data[name]
+                for j in poses.JOINTS:
+                    driver.manual[j] = max(-driver.max_deg,
+                                           min(driver.max_deg,
+                                               float(want[j]) - 90.0))
+                driver.last_input = driver.clock()
+                log(f"recalled {name}")
+                self._json({"ok": True, "name": name})
             elif self.path == "/calib":
                 body = self._read_json()
                 ch = int(body.get("channel", -1))

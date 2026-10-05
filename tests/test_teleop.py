@@ -113,13 +113,18 @@ class TestDriver(unittest.TestCase):
         Which joints those are is read from the config, so driving one later
         cannot leave this test asserting the opposite.
         """
-        from avi_bot.motion import poses as _p
-        cfg = _p.load()
-        pinned = [j for j in _p.JOINTS if not cfg.is_driven(j)]
-        self.assertTrue(pinned, "nothing is pinned; this test is now vacuous")
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "tests"))
+        from test_motion import config_with_pinned
+        cfg, pinned = config_with_pinned("wrist")
+        from avi_bot.motion import backends, engine
+        self.eng = engine.MotionEngine(cfg, backends.SimBackend(cfg))
+        self.driver = self.tp.Driver(self.eng, max_deg=15.0, speed_deg_s=12.0,
+                                     clock=lambda: self.t)
+        pinned = [pinned]
         keys = [k for k, (joint, _) in self.tp.KEYMAP.items()
                 if joint in pinned]
-        self.assertTrue(keys, "no key maps to a pinned joint")
+        self.assertTrue(keys, "no key maps to the pinned joint")
         for _ in range(40):
             self.t += 0.1
             self.driver.set_held(keys)

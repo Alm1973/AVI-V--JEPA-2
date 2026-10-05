@@ -134,8 +134,13 @@ center_count = 430
 max_count = 570
 soft_min  = 30.0
 soft_max  = 150.0
-sign      = 0      # UNKNOWN. 0 means "do not drive". Measure in M1, then set +-1.
-driven    = false
+# Driven as of 2026-10-05, sign still PROVISIONAL, same reasoning as the wrist:
+# the soft limits clamp to 30..150 logical degrees, which the piecewise map puts
+# inside [min_count, max_count] whichever way the sign points, so a wrong sign
+# reverses Q and E and cannot reach a mechanical stop. Needed so complete poses
+# can be taught rather than poses with a dead joint in them.
+sign      = 1
+driven    = true
 
 # --- channel 3: wrist / camera tilt -------------------------------------------
 [joints.wrist]

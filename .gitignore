@@ -6,3 +6,11 @@ __pycache__/
 .DS_Store
 audit/
 logs/
+
+# Secrets. Keys go in .env, which is never committed; .env.example documents
+# the names without the values.
+.env
+.env.local
+*.key
+*.pem
+taught_poses.json

@@ -26,6 +26,12 @@ if ! msi_awake; then
 fi
 ./keepawake-msi.sh start 30 >/dev/null 2>&1 || true
 
+
+# All single-file transfers go through push-file.sh, which chunks the base64
+# under Windows' 32767-character command-line limit and verifies the byte count
+# afterwards. See that script's header for the two approaches that do not work.
+push_one() { ./push-file.sh "$1" "$2"; }
+
 push_tree() {
   local src="$1" dest="$2" count=0 rel dir b64
   [ -d "$src" ] || return 0
@@ -60,15 +66,30 @@ n=0
 for f in "$SRC"/*; do
   [ -f "$f" ] || continue
   name=$(basename "$f")
-  b64=$(base64 < "$f" | tr -d '\n')
-  ssh "${SSH_OPTS[@]}" "$MSI_HOST" \
-    "[IO.File]::WriteAllBytes(\"$REMOTE/assistant/$name\", [Convert]::FromBase64String('$b64'))" \
+  push_one "$f" "assistant/$name" >/dev/null \
     && { echo "  -> assistant/$name"; n=$((n+1)); }
 done
 echo "deployed $n file(s) to $MSI_ASSISTANT"
 
 push_tree "../avi_bot" "avi_bot" || exit 1
 push_tree "../config"  "config"  || exit 1
+
+# Verify the bytes actually landed. A silent short write is exactly what the
+# command-line limit used to cause, and it looked like success.
+echo "--- size check ---"
+bad=0
+for f in "$SRC"/*.py; do
+  [ -f "$f" ] || continue
+  name=$(basename "$f")
+  local_n=$(wc -c < "$f" | tr -d ' ')
+  remote_n=$(ssh -n "${SSH_OPTS[@]}" "$MSI_HOST" \
+    "(Get-Item \"$REMOTE/assistant/$name\").Length" 2>/dev/null | tr -d '\r ')
+  if [ "$local_n" != "$remote_n" ]; then
+    echo "  MISMATCH $name: local $local_n, remote ${remote_n:-missing}" >&2
+    bad=$((bad+1))
+  fi
+done
+[ "$bad" -eq 0 ] && echo "  all assistant/*.py match byte-for-byte" || exit 1
 
 # Prove the import actually resolves, rather than trusting that files landed.
 echo "--- import check on the MSI ---"

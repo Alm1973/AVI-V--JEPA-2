@@ -75,7 +75,7 @@ static const Joint JOINTS[NJ] = {
   //  min  center  max   softMin softMax sign driven
   {    75,    250,  460,   20.0f, 160.0f,  -1, true  },  // 0 base yaw (MEASURED)
   {    75,    370,  580,   25.0f, 155.0f,  -1, true  },  // 1 shoulder (MEASURED; v1 BUG here)
-  {    80,    430,  570,   30.0f, 150.0f,   0, false },  // 2 elbow, sign unknown
+  {    80,    430,  570,   30.0f, 150.0f,   1, true  },  // 2 elbow, sign PROVISIONAL
   {   140,    380,  580,   30.0f, 150.0f,   1, true  },  // 3 wrist, sign PROVISIONAL
 };
 

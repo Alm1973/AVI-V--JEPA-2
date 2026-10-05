@@ -40,6 +40,23 @@ def peak_rate(move, start="HOME", hz=400):
     return worst
 
 
+def config_with_pinned(joint="wrist"):
+    """The real config, with one joint forced undriven.
+
+    The pinning mechanism has to keep working even when every joint in
+    config/joints.toml happens to be driven -- which is now the case. Testing
+    it against the live config would simply stop testing anything, so the
+    fixture supplies the condition instead.
+    """
+    import copy
+    import tomllib
+    with open(poses.CONFIG_PATH, "rb") as f:
+        data = copy.deepcopy(tomllib.load(f))
+    data["joints"][joint]["driven"] = False
+    data["joints"][joint]["sign"] = 0
+    return poses.JointConfig(data), joint
+
+
 def all_gestures():
     for name in sorted(gestures.GESTURES):
         yield name, gestures.make(name)
@@ -149,16 +166,23 @@ class TestLimiter(unittest.TestCase):
         self.assertLessEqual(abs(out["base_yaw"] - before),
                              self.c.speed_cap * dt + 1e-9)
 
-    def test_undriven_joints_are_pinned_by_default(self):
-        """Which joints are pinned comes from the config, not from this test.
-        Marking a joint driven should not leave a test asserting otherwise."""
-        lim = safety.Limiter(self.c)
-        out = lim.apply(poses.pose(elbow=140.0, wrist=40.0), dt=1.0)
-        pinned = [j for j in poses.JOINTS if not self.c.is_driven(j)]
-        self.assertTrue(pinned, "nothing is pinned; this test is now vacuous")
-        for j in pinned:
-            self.assertEqual(out[j], 90.0, j)
-            self.assertIn(j, lim.clamped_joints)
+    def test_an_undriven_joint_is_pinned_to_centre(self):
+        """A joint with an unknown direction sign must not move at all: a wrong
+        sign could drive it into its own end stop."""
+        for joint in poses.JOINTS:
+            cfg, pinned = config_with_pinned(joint)
+            lim = safety.Limiter(cfg)
+            out = lim.apply(poses.pose(**{pinned: 140.0}), dt=1.0)
+            self.assertEqual(out[pinned], 90.0, pinned)
+            self.assertIn(pinned, lim.clamped_joints)
+
+    def test_every_joint_is_driven_right_now(self):
+        """Not a rule, a record. If a joint is ever pinned again this fails and
+        whoever did it has to say why here."""
+        undriven = [j for j in poses.JOINTS if not self.c.is_driven(j)]
+        self.assertEqual(undriven, [],
+                         "a joint was pinned again; say why, and note that "
+                         "poses taught on the real arm may include it")
 
 
 class TestEngine(unittest.TestCase):
@@ -346,22 +370,20 @@ class TestGestures(unittest.TestCase):
             self.assertLess(spread, 1.0,
                             f"{name} is listed in NO_OP_UNTIL_M1 but it moves")
 
-    def test_undriven_joints_never_move_on_the_hardware_path(self):
-        """Whatever is marked undriven stays pinned, read from the config
-        rather than named here, so marking a joint driven does not leave a
-        test asserting the opposite."""
-        pinned = [j for j in poses.JOINTS if not self.c.is_driven(j)]
-        self.assertTrue(pinned, "nothing is pinned; this test is now vacuous")
+    def test_a_pinned_joint_never_moves_however_a_gesture_asks(self):
+        """Gestures do not get to override the pin, whatever their keyframes
+        say. Checked against a synthetic pinned joint so it keeps testing the
+        mechanism once every real joint is driven."""
+        cfg, pinned = config_with_pinned("wrist")
         for name, move in all_gestures():
             with self.subTest(gesture=name):
-                sim = backends.SimBackend(self.c)
-                e = engine.MotionEngine(self.c, sim)   # drive_undriven=False
+                sim = backends.SimBackend(cfg)
+                e = engine.MotionEngine(cfg, sim)      # drive_undriven=False
                 e.push(move)
                 e.tick(0.0)
-                e.run(max(4.0, move.duration + 1.0), now=1.0 / self.c.tick_hz)
+                e.run(max(4.0, move.duration + 1.0), now=1.0 / cfg.tick_hz)
                 for _, p in sim.history:
-                    for j in pinned:
-                        self.assertEqual(p[j], 90.0, f"{name}: {j} moved")
+                    self.assertEqual(p[pinned], 90.0, f"{name}: {pinned} moved")
 
 
 class TestBackends(unittest.TestCase):
