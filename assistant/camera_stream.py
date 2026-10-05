@@ -118,6 +118,12 @@ def make_handler(latest, deadline, fps):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(PAGE)))
+                # no-store, because this page changes between sessions and a
+                # cached copy is indistinguishable from a broken one: the
+                # selector was served correctly for a while and simply never
+                # reached the browser.
+                self.send_header("Cache-Control", "no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
                 self.end_headers()
                 self.wfile.write(PAGE)
             elif self.path == "/deadline":

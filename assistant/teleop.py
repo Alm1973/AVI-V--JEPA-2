@@ -30,6 +30,7 @@ the same MotionEngine, limiter and gesture library run in both, so anything
 that misbehaves in sim would have misbehaved on the arm.
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -196,8 +197,8 @@ PAGE = b"""<!doctype html>
  .gauge .mid{position:absolute;top:-2px;bottom:-2px;width:1px;background:#52525b}
  .gauge .pip{position:absolute;top:-2px;width:3px;height:14px;border-radius:2px;background:#60a5fa}
  .gauge.pinned .pip{background:#52525b}
- .gauge.sel{background:#1e293b;border-radius:7px;padding:4px 6px;margin:5px -6px}
- .gauge.sel .row:first-child{color:#bfdbfe;font-weight:600}
+ .gauge.is-sel{background:#1e293b;border-radius:7px;padding:4px 6px;margin:5px -6px}
+ .gauge.is-sel .row:first-child{color:#bfdbfe;font-weight:600}
  .nudge{display:flex;gap:4px;margin-top:3px}
  .nudge button{padding:1px 7px;font:11px ui-monospace,monospace}
  button.on{background:#3b82f6;border-color:#60a5fa;color:#fff}
@@ -215,7 +216,7 @@ PAGE = b"""<!doctype html>
    <svg id="sim" viewBox="0 0 260 96" width="100%"
         style="background:#18181b;border-radius:10px"></svg>
    <div class="lbl">which joint do W/S and the arrow keys move?</div>
-   <div class="g" id="sel"></div>
+   <div class="g" id="selrow"></div>
    <div id="gauges"></div>
    <div class="teach">
      <div class="lbl">teach the current position as a pose:</div>
@@ -233,6 +234,7 @@ PAGE = b"""<!doctype html>
    <div class="g" id="gestures"></div>
    <button class="danger" onclick="post('/stop')">stop the session</button>
    <code id="dl"></code>
+   <code>build __BUILD__</code>
   </div>
  </div>
 <script>
@@ -243,11 +245,11 @@ const KEYS = ["w","a","s","d","q","e","r","f"];
 const JOINTS = ["base_yaw","shoulder","elbow","wrist"];
 const PAIR = {base_yaw:["a","d"], shoulder:["w","s"],
               elbow:["q","e"], wrist:["r","f"]};
-let sel = "wrist";
+let selJoint = "wrist";
 function post(p, body){ return fetch(p,{method:"POST",
   headers:{"Content-Type":"application/json"}, body: body?JSON.stringify(body):null}); }
 function paint(){
-  const p = PAIR[sel];
+  const p = PAIR[selJoint];
   const lit = {w: held.has(p[0]), s: held.has(p[1]),
                a: held.has("a"), d: held.has("d")};
   for (const k of ["w","a","s","d"]) {
@@ -259,18 +261,18 @@ function setSel(j){
   if (!JOINTS.includes(j)) return;
   held.clear();                 // never leave a key held on the joint we left
   post("/stop_motion");
-  sel = j;
+  selJoint = j;
   drawSel();
   paint();
 }
 function drawSel(){
-  document.getElementById("sel").innerHTML = JOINTS.map((j,i) =>
-    `<button class="${j===sel?"on":""}" onclick="setSel('${j}')">`+
+  document.getElementById("selrow").innerHTML = JOINTS.map((j,i) =>
+    `<button class="${j===selJoint?"on":""}" onclick="setSel('${j}')">`+
     `${i+1} ${j}</button>`).join("");
 }
 function selKey(k){
   // W/S and the arrows are aliases for the selected joint's own pair.
-  const p = PAIR[sel];
+  const p = PAIR[selJoint];
   if (k === "w" || k === "arrowup")   return p[0];
   if (k === "s" || k === "arrowdown") return p[1];
   return null;
@@ -343,7 +345,7 @@ function draw(s){
     const nudges = [-5,-1,1,5].map(d =>
       `<button onclick="nudge('${j.name}',${d})">${d>0?"+":""}${d}&deg;</button>`
     ).join("");
-    return `<div class="gauge ${j.driven?"":"pinned"} ${j.name===sel?"sel":""}">`+
+    return `<div class="gauge ${j.driven?"":"pinned"} ${j.name===selJoint?"is-sel":""}">`+
       `<div class="row"><span>${j.name}${j.driven?"":" (pinned)"}</span>`+
       `<span>${j.deg.toFixed(1)}&deg; &nbsp;${j.count} &nbsp;sign ${j.sign>=0?"+":"-"}</span></div>`+
       `<div class="bar"><div class="mid" style="left:${mid*100}%"></div>`+
@@ -386,6 +388,15 @@ refreshTaught();
 """
 
 
+# A short hash of the page, shown in the corner. A cached page is otherwise
+# indistinguishable from a broken one, which cost two rounds of "it still does
+# not work" on a page the server was already serving correctly. If the build
+# shown in the browser does not match what the log prints at startup, the
+# browser is holding an old copy.
+BUILD = hashlib.md5(PAGE).hexdigest()[:7]
+PAGE_OUT = PAGE.replace(b"__BUILD__", BUILD.encode())
+
+
 def make_handler(state):
     latest, eng, driver, deadline, fps, stop_event = (
         state["latest"], state["engine"], state["driver"],
@@ -419,9 +430,15 @@ def make_handler(state):
             if self.path in ("/", "/index.html"):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(PAGE)))
+                self.send_header("Content-Length", str(len(PAGE_OUT)))
+                # no-store, because this page changes between sessions and a
+                # cached copy is indistinguishable from a broken one: the
+                # selector was served correctly for a while and simply never
+                # reached the browser.
+                self.send_header("Cache-Control", "no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
                 self.end_headers()
-                self.wfile.write(PAGE)
+                self.wfile.write(PAGE_OUT)
             elif self.path == "/state":
                 cfg = eng.config
                 sent = eng.last_sent
@@ -672,7 +689,7 @@ def main():
         "pause": pause}))
     srv.daemon_threads = True
     log(f"backend={backend.name} envelope=+-{args.max_deg:g} deg "
-        f"speed={args.speed:g} deg/s")
+        f"speed={args.speed:g} deg/s  page build {BUILD}")
     log(f"serving http://{host}:{args.port}/ (http://msi:{args.port}/) "
         f"for {args.minutes:.0f} min")
     try:
