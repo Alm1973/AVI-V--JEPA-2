@@ -196,6 +196,11 @@ PAGE = b"""<!doctype html>
  .gauge .mid{position:absolute;top:-2px;bottom:-2px;width:1px;background:#52525b}
  .gauge .pip{position:absolute;top:-2px;width:3px;height:14px;border-radius:2px;background:#60a5fa}
  .gauge.pinned .pip{background:#52525b}
+ .gauge.sel{background:#1e293b;border-radius:7px;padding:4px 6px;margin:5px -6px}
+ .gauge.sel .row:first-child{color:#bfdbfe;font-weight:600}
+ .nudge{display:flex;gap:4px;margin-top:3px}
+ .nudge button{padding:1px 7px;font:11px ui-monospace,monospace}
+ button.on{background:#3b82f6;border-color:#60a5fa;color:#fff}
  .gauge .row{display:flex;justify-content:space-between}
  .teach{border-top:1px solid #27272a;padding-top:8px;margin-top:4px}
  .lbl{color:#71717a;font-size:11px;margin:6px 0 3px}
@@ -209,6 +214,8 @@ PAGE = b"""<!doctype html>
   <div class="panel">
    <svg id="sim" viewBox="0 0 260 96" width="100%"
         style="background:#18181b;border-radius:10px"></svg>
+   <div class="lbl">which joint do W/S and the arrow keys move?</div>
+   <div class="g" id="sel"></div>
    <div id="gauges"></div>
    <div class="teach">
      <div class="lbl">teach the current position as a pose:</div>
@@ -221,7 +228,8 @@ PAGE = b"""<!doctype html>
      <span></span><kbd id="k-w">W</kbd><span></span>
      <kbd id="k-a">A</kbd><kbd id="k-s">S</kbd><kbd id="k-d">D</kbd>
    </div>
-   <code id="hint">click here, then hold WASD. space = stop, H = home.</code>
+   <code id="hint">click here first. W/S or up/down move the selected joint.
+     A/D yaw, Q/E elbow, R/F wrist always work. 1-4 select. space = stop, H = home.</code>
    <div class="g" id="gestures"></div>
    <button class="danger" onclick="post('/stop')">stop the session</button>
    <code id="dl"></code>
@@ -230,18 +238,61 @@ PAGE = b"""<!doctype html>
 <script>
 const held = new Set();
 const KEYS = ["w","a","s","d","q","e","r","f"];
+// Which joint W/S and the arrows drive. Every joint keeps its own dedicated
+// pair as well, so nothing that already worked stops working.
+const JOINTS = ["base_yaw","shoulder","elbow","wrist"];
+const PAIR = {base_yaw:["a","d"], shoulder:["w","s"],
+              elbow:["q","e"], wrist:["r","f"]};
+let sel = "wrist";
 function post(p, body){ return fetch(p,{method:"POST",
   headers:{"Content-Type":"application/json"}, body: body?JSON.stringify(body):null}); }
-function paint(){ for (const k of ["w","a","s","d"]) {
-  const el = document.getElementById("k-"+k); if(el) el.classList.toggle("on", held.has(k)); } }
+function paint(){
+  const p = PAIR[sel];
+  const lit = {w: held.has(p[0]), s: held.has(p[1]),
+               a: held.has("a"), d: held.has("d")};
+  for (const k of ["w","a","s","d"]) {
+    const el = document.getElementById("k-"+k);
+    if (el) el.classList.toggle("on", !!lit[k]);
+  }
+}
+function setSel(j){
+  if (!JOINTS.includes(j)) return;
+  held.clear();                 // never leave a key held on the joint we left
+  post("/stop_motion");
+  sel = j;
+  drawSel();
+  paint();
+}
+function drawSel(){
+  document.getElementById("sel").innerHTML = JOINTS.map((j,i) =>
+    `<button class="${j===sel?"on":""}" onclick="setSel('${j}')">`+
+    `${i+1} ${j}</button>`).join("");
+}
+function selKey(k){
+  // W/S and the arrows are aliases for the selected joint's own pair.
+  const p = PAIR[sel];
+  if (k === "w" || k === "arrowup")   return p[0];
+  if (k === "s" || k === "arrowdown") return p[1];
+  return null;
+}
 addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   if (k === " ") { held.clear(); post("/stop_motion"); e.preventDefault(); paint(); return; }
   if (k === "h") { held.clear(); post("/home"); paint(); return; }
+  const n = parseInt(k, 10);
+  if (n >= 1 && n <= 4) { setSel(JOINTS[n-1]); e.preventDefault(); return; }
+  const mapped = selKey(k);
+  if (mapped) {
+    if (!held.has(mapped)) { held.add(mapped); paint(); }
+    e.preventDefault();
+    return;
+  }
   if (KEYS.includes(k) && !held.has(k)) { held.add(k); paint(); e.preventDefault(); }
 });
 addEventListener("keyup", e => {
   const k = e.key.toLowerCase();
+  const mapped = selKey(k);
+  if (mapped && held.delete(mapped)) { paint(); e.preventDefault(); return; }
   if (held.delete(k)) { paint(); e.preventDefault(); }
 });
 addEventListener("blur", () => { held.clear(); paint(); });
@@ -289,12 +340,16 @@ function draw(s){
   document.getElementById("gauges").innerHTML = s.joints.map(j => {
     const f = Math.max(0, Math.min(1, (j.deg - j.lo) / (j.hi - j.lo)));
     const mid = (90 - j.lo) / (j.hi - j.lo);
-    return `<div class="gauge ${j.driven?"":"pinned"}">`+
+    const nudges = [-5,-1,1,5].map(d =>
+      `<button onclick="nudge('${j.name}',${d})">${d>0?"+":""}${d}&deg;</button>`
+    ).join("");
+    return `<div class="gauge ${j.driven?"":"pinned"} ${j.name===sel?"sel":""}">`+
       `<div class="row"><span>${j.name}${j.driven?"":" (pinned)"}</span>`+
       `<span>${j.deg.toFixed(1)}&deg; &nbsp;${j.count} &nbsp;sign ${j.sign>=0?"+":"-"}</span></div>`+
       `<div class="bar"><div class="mid" style="left:${mid*100}%"></div>`+
       `<div class="pip" style="left:calc(${f*100}% - 1.5px)"></div></div>`+
-      `<div class="row"><span>${j.lo}&deg;</span><span>${j.hi}&deg;</span></div></div>`;
+      `<div class="row"><span>${j.lo}&deg;</span><span>${j.hi}&deg;</span></div>`+
+      `<div class="nudge">${nudges}</div></div>`;
   }).join("");
 }
 
@@ -318,7 +373,12 @@ fetch("/poses").then(r=>r.json()).then(ps => {
 });
 async function teach(n){
   await post("/teach", {name:n});
-  await refreshTaught();
+  await function nudge(j, d){
+  setSel(j);                    // nudging a joint selects it, so W/S follow
+  post("/nudge", {joint:j, deg:d});
+}
+drawSel();
+refreshTaught();
 }
 refreshTaught();
 </script>
@@ -411,6 +471,27 @@ def make_handler(state):
                 log(f"gesture {name}")
                 eng.push(gestures.make(name))
                 self._json({"ok": True})
+            elif self.path == "/nudge":
+                body = self._read_json()
+                joint = (body.get("joint") or "").strip()
+                try:
+                    deg = float(body.get("deg", 0.0))
+                except (TypeError, ValueError):
+                    return self._json({"error": "deg must be a number"}, 400)
+                if joint not in poses.JOINTS:
+                    return self._json({"error": f"joint must be one of "
+                                                f"{list(poses.JOINTS)}"}, 400)
+                # Held keys are for coarse aiming; this is for setting a value.
+                # It moves the target by an exact amount and the engine's
+                # limiter still governs how fast the arm gets there.
+                with driver.lock:
+                    v = driver.manual[joint] + deg
+                    driver.manual[joint] = max(-driver.max_deg,
+                                               min(driver.max_deg, v))
+                    driver.held = set()
+                    driver.last_input = driver.clock()
+                    now_deg = 90.0 + driver.manual[joint]
+                self._json({"ok": True, "joint": joint, "deg": round(now_deg, 1)})
             elif self.path == "/teach":
                 name = (self._read_json().get("name") or "").strip()
                 if not name:
