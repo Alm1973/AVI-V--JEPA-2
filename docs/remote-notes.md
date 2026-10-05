@@ -658,3 +658,57 @@ The shorter ceiling now takes effect. Hold released, MSI asleep.
 `avi-remote\assistant\`. It is not; `deploy.sh` puts it in `avi\assistant\`,
 inside the `avi\` git repo, so it can import the GPU modules beside it. Only
 our own helper scripts live in `avi-remote\`.
+
+## 2026-10-05 09:40 — camera stream, and wake timers for being away from home
+
+Shaurya asked for a live camera view while away. The MSI was asleep and there
+was **no way to reach it**: wake-on-LAN needs a packet on the home broadcast
+domain, his Mac was on 172.16.2.250 rather than 192.168.0.x, Tailscale carries
+IP and not the layer-2 broadcast WoL needs, the MSI's Tailscale client is off
+while it sleeps, and the tailnet holds only those two machines so there was
+nothing at home to relay through. Somebody at home turned it on by hand.
+
+**The stream works.** `scripts/stream.sh start 20`, then `http://msi:8080/`.
+Measured: HTTP 200 in 43 ms, and a 4-second probe pulled 894 918 bytes across
+40 frame boundaries — 10 fps at about 22 KB a frame. Frame size is also the
+check that the image is not black without anyone having to look at it: a black
+1280x720 frame compresses to roughly 2 KB. Windows Firewall does not block 8080
+on the Tailscale interface, which was the one thing that could not be tested
+from the Mac.
+
+It binds to the Tailscale address only and refuses to start if it cannot find
+one, rather than falling back to 0.0.0.0 and putting a camera that faces his
+room on the whole house network.
+
+**Wake timers installed**, so this cannot happen again: task `AVI wake`,
+`WakeToRun`, holding 10 minutes per wake. Two-hourly from 08:05 to 22:05, plus
+14:28 on Mon/Wed/Thu/Fri and 19:58 on Tuesdays for desk hours. Each wake runs
+the same bounded keepawake hold the rest of the project uses, because a wake
+with nobody present hits the hidden ~120 s unattended-sleep timeout and goes
+straight back down; two minutes is not a window you can count on catching.
+
+**A silent failure, caught by checking rather than assuming.** The first
+version used one trigger repeating every two hours. The task installed fine and
+reported `wakeToRun: True`, but `powercfg /waketimers` showed the next armed
+wake at **14:27**, not 10:05:
+
+    Timer set by [SERVICE] svchost.exe (SystemEventsBroker) expires at
+    2:27:30 PM. Reason: Windows will execute 'NT TASK\AVI wake' scheduled task
+    that requested waking the computer.
+
+Windows arms a hardware wake for a trigger's **start boundary**, not for the
+repetition occurrences beneath it. So the two-hourly grid would have fired only
+when the machine was already awake — precisely the case it exists to cover —
+and nothing in the task's own properties said so. Replaced with eight separate
+daily triggers; the armed wake moved to 10:04:30, 21 minutes out. Always check
+`powercfg /waketimers`, never the task's `WakeToRun` flag.
+
+**Known limit, not fixed:** `allow-wake-timers` is AC=1, DC=0 on this machine.
+Wake timers do not fire on battery. If the MSI is ever unplugged these timers
+stop working with no indication, and remote access is gone again. Left alone
+rather than changed unasked; `wake-timers.sh status` prints it and warns.
+
+**Still unverified:** that a wake timer actually brings it up out of S3. The
+hardware timer is armed, which is good evidence, but it has not been watched
+from sleep to awake yet. Test it with margin at a window that is not adjacent
+to a keepawake expiry.

@@ -61,8 +61,19 @@ at M3, with the tracker stopped.
    (frames never leave the machine, more work) or copy thumbnails to the Mac
    (simpler, but frames leave the machine — his call, the camera faces his
    room).
-5. **Away-from-home wake.** A Raspberry Pi on the tailnet, or a router wake
-   button? Wake-on-LAN only works while this Mac is on the home LAN.
+5. **Keep the MSI plugged in.** Wake timers are enabled on AC and disabled on
+   DC, so they do not fire on battery. Unplug it and remote access silently
+   stops working. `scripts/wake-timers.sh status` prints the setting.
+
+## Remote access, as it stands
+
+Wake timers are installed (`scripts/wake-timers.sh status`): two-hourly from
+08:05 to 22:05, plus desk-hours starts. So the MSI is reachable within about
+two hours during the day, and **not at all between 22:15 and 08:05**. Reaching
+it on demand still needs an always-on device at home running Tailscale, which
+would send the magic packet; any old phone, Pi or desktop would do.
+
+Live camera view: `scripts/stream.sh start 20`, then `http://msi:8080/`.
 
 ## Open questions I cannot answer from here
 
@@ -77,6 +88,9 @@ at M3, with the tracker stopped.
   `config/joints.toml`.
 - **Does the PCA9685 keep its output registers across an Uno reset?** The
   whole no-jump-on-startup design assumes yes. Unverified; bench test.
+- **Does a wake timer actually bring the MSI up out of S3?** The hardware timer
+  is armed and visible in `powercfg /waketimers`, but the transition has not
+  been watched yet. Verify at a window with margin.
 
 ## Things not to re-solve
 

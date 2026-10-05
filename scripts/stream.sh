@@ -21,11 +21,17 @@ ctl() {
 
 case "$ACTION" in
   start)
+    # Already up (someone at the desk, or a tracker session) is the common case
+    # when away from home, where wake-on-LAN cannot reach it at all.
+    if msi_awake; then
+      echo "MSI is already awake; skipping wake-on-LAN."
+    else
     ./wake-msi.sh >/dev/null || {
       echo "could not wake the MSI." >&2
       echo "Wake-on-LAN only works while this Mac is on the home LAN" >&2
       echo "(192.168.0.0/24). See docs/HANDOFF.md, 'away-from-home wake'." >&2
       exit 1; }
+    fi
     # A little longer than the stream, so the hold outlives it rather than the
     # machine dropping out mid-view. Bounded either way.
     ./keepawake-msi.sh start "$(( ${MINUTES%.*} + 3 ))" >/dev/null 2>&1
