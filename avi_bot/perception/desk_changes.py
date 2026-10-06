@@ -49,13 +49,17 @@ def snapshot(sightings, same_deg=SAME_DEG, min_conf=MIN_CONF,
              min_hits=MIN_HITS):
     """Cluster one scan's sightings into objects.
 
-    `sightings` is [(label, yaw, wrist, conf), ...] -- directions already
-    worked out by the map's geometry. Returns [{label, yaw, wrist, hits,
-    conf}, ...]. An object seen once in a whole scan is left out: one box in
-    thirty stops is more likely a flicker than a thing.
+    `sightings` is [(label, yaw, wrist, conf[, (x, y)]), ...] -- directions
+    already worked out by the map's geometry, and optionally where the box's
+    bottom edge meets the desk (world.on_plane, lens heights). Returns
+    [{label, yaw, wrist, hits, conf[, x, y]}, ...]. An object seen once in a
+    whole scan is left out: one box in thirty stops is more likely a flicker
+    than a thing.
     """
     clusters = []
-    for label, yaw, wrist, conf in sightings:
+    for s in sightings:
+        label, yaw, wrist, conf = s[:4]
+        xy = s[4] if len(s) > 4 else None
         if conf < min_conf:
             continue
         for c in clusters:
@@ -66,14 +70,30 @@ def snapshot(sightings, same_deg=SAME_DEG, min_conf=MIN_CONF,
                 c["wrist"] = (c["wrist"] * n + wrist) / (n + 1)
                 c["hits"] = n + 1
                 c["conf"] = max(c["conf"], conf)
+                if xy is not None:
+                    c["xys"].append(xy)
                 break
         else:
             clusters.append({"label": label, "yaw": float(yaw),
                              "wrist": float(wrist), "hits": 1,
-                             "conf": float(conf)})
-    return [dict(c, yaw=round(c["yaw"], 1), wrist=round(c["wrist"], 1),
+                             "conf": float(conf),
+                             "xys": [xy] if xy is not None else []})
+    out = []
+    for c in clusters:
+        if c["hits"] < min_hits:
+            continue
+        xys = c.pop("xys")
+        o = dict(c, yaw=round(c["yaw"], 1), wrist=round(c["wrist"], 1),
                  conf=round(c["conf"], 3))
-            for c in clusters if c["hits"] >= min_hits]
+        if xys:
+            # The MEDIAN: one box whose bottom edge was cut by a desk item
+            # in front of it lands far behind, and a mean would follow it.
+            xs = sorted(p[0] for p in xys)
+            ys = sorted(p[1] for p in xys)
+            o["x"], o["y"] = (round(xs[len(xs) // 2], 2),
+                              round(ys[len(ys) // 2], 2))
+        out.append(o)
+    return out
 
 
 def covered(direction, stops, half_width):

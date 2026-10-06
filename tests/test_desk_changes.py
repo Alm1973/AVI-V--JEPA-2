@@ -128,3 +128,16 @@ class NeverAcrossAChangeInTheInstrument(unittest.TestCase):
         log = dc.DeskLog(path, version=1)
         self.addCleanup(log.close)
         self.assertEqual(log.last()[0], 1)
+
+
+class DeskPositions(unittest.TestCase):
+    def test_positions_ride_along_and_take_the_median(self):
+        rows = [("pen", 34 + 0.5 * i, 139, 0.6, (2.0 + 0.01 * i, -1.4))
+                for i in range(4)] + [("pen", 35, 139, 0.6, (6.0, -1.4))]
+        snap = dc.snapshot(rows)
+        self.assertEqual(len(snap), 1)
+        self.assertAlmostEqual(snap[0]["x"], 2.02, delta=0.02)
+
+    def test_old_four_field_sightings_still_work(self):
+        snap = dc.snapshot(seen("laptop", 94, 153))
+        self.assertNotIn("x", snap[0])

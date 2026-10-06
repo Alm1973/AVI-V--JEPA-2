@@ -331,6 +331,23 @@ class RoomMap:
         self.anchors[name] = (float(yaw), float(wrist))
 
     # --- using -----------------------------------------------------------
+    def last_seen(self, label, now=None):
+        """When the place where_is() would answer with was last seen, or
+        None. A confirmed place is a verified, multi-view sighting, so this
+        is a real "I saw it at", not a guess."""
+        now = self.clock() if now is None else now
+        label = canonical_label(label)
+        best, best_w = None, 0.0
+        for place in self.places:
+            if place.label != label or not place.confirmed:
+                continue
+            w = place.decayed(now)
+            if w > best_w:
+                best, best_w = place, w
+        if best is None or best_w < MIN_WEIGHT:
+            return None
+        return best.last_at
+
     def where_is(self, label, now=None):
         """The best believed direction for a label, or None.
 

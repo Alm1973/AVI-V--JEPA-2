@@ -103,6 +103,38 @@ class View:
         return (self.width / 2.0 + self.focal * float(d @ right) / z,
                 self.height / 2.0 - self.focal * float(d @ up) / z)
 
+    def on_plane(self, px, py, yaw, wrist, offset_over_height=0.0):
+        """Where this pixel's ray meets the desk, in units of the lens's
+        height above the desk; None if the ray does not point down.
+
+        Returns (x, y): x forward along base_yaw = centre, y to the right,
+        origin on the base axis. Use the BOTTOM-centre of a box -- where the
+        object touches the desk -- not its centre: a laptop's box centre is
+        halfway up its screen and would land metres too far.
+
+        The lens is not on the base axis: it sits `offset_over_height`
+        (lens offset / lens height, measured ~0.35 by [horizon]) out along
+        the arm, i.e. along the camera's own azimuth on TALL's shape. Both
+        lengths are unknown on their own, so everything here is in units of
+        the height; one ruler measurement makes it metres.
+        """
+        d = self.ray(px, py, yaw, wrist)
+        if d[2] >= -1e-6:
+            return None
+        phi = math.radians(self.camera(yaw, wrist)[0])
+        t = 1.0 / -float(d[2])
+        return (float(offset_over_height * math.cos(phi) + t * d[0]),
+                float(offset_over_height * math.sin(phi) + t * d[1]))
+
+    def plane_pixel(self, xy, yaw, wrist, offset_over_height=0.0):
+        """Inverse of on_plane: where a desk point (in lens heights) lands in
+        the picture, or None if behind the camera."""
+        phi = math.radians(self.camera(yaw, wrist)[0])
+        cam = np.array([offset_over_height * math.cos(phi),
+                        offset_over_height * math.sin(phi), 0.0])
+        v = np.array([xy[0], xy[1], -1.0]) - cam
+        return self.pixel(v / np.linalg.norm(v), yaw, wrist)
+
     def aim(self, azimuth, elevation):
         """(base_yaw, wrist) that puts a world direction at frame centre.
         Exact: on this shape the optical axis IS (azimuth, pitch)."""

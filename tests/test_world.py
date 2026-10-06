@@ -164,3 +164,30 @@ class TheMapUsesIt(unittest.TestCase):
         self.assertEqual(m.direction_of(640, 360, 90, 140), (90.0, 140.0))
         self.assertEqual(self.rm.RoomMap.from_dict(m.to_dict()).geometry,
                          "flat")
+
+
+class OnTheDesk(unittest.TestCase):
+    """Desk positions in units of the lens height above the desk."""
+
+    def test_a_desk_point_comes_back_from_any_view(self):
+        spot = (2.0, -1.4)                       # ~the pens, in lens heights
+        for yaw, wrist in ((47, 133), (61, 141), (74, 125)):
+            p = VIEW.plane_pixel(spot, yaw, wrist, 0.35)
+            self.assertIsNotNone(p)
+            got = VIEW.on_plane(p[0], p[1], yaw, wrist, 0.35)
+            self.assertAlmostEqual(got[0], spot[0], places=6)
+            self.assertAlmostEqual(got[1], spot[1], places=6)
+
+    def test_ignoring_the_offset_moves_things_by_views(self):
+        """Without the lens offset, one desk point seen from two azimuths
+        lands in two places -- the parallax the direction map still has."""
+        spot = (2.0, -1.4)
+        got = []
+        for yaw, wrist in ((47, 133), (74, 125)):
+            p = VIEW.plane_pixel(spot, yaw, wrist, 0.35)
+            got.append(VIEW.on_plane(p[0], p[1], yaw, wrist, 0.0))
+        gap = math.dist(got[0], got[1])
+        self.assertGreater(gap, 0.1)
+
+    def test_level_or_above_is_not_on_the_desk(self):
+        self.assertIsNone(VIEW.on_plane(640, 360, 90, 165))

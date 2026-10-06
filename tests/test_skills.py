@@ -498,13 +498,25 @@ class FindCarriesTheMapsShape(unittest.TestCase):
         self.assertEqual((aim["shoulder"], aim["elbow"]), (78.4, 88.0))
 
     def test_map_only_works_with_no_database(self):
-        """The dashboard owns the arm and the map but not the sightings DB."""
+        """The dashboard owns the arm and the map but not the sightings DB.
+        A map place seen yesterday is a direction, not a sighting today."""
         m, clock = self.a_map()
+        clock.t += 86400 + 3600              # yesterday, still in the map
         f = find_mod.Finder(None, 75.2, roommap=m, clock=clock)
         text, yaw, found = f.find("pen")
         self.assertIsNotNone(yaw)
-        self.assertFalse(found, "a map entry is not a sighting today")
+        self.assertFalse(found, "a map entry from yesterday is not today")
         self.assertIn("Haven't seen it today", text)
+
+    def test_a_map_place_seen_today_is_a_sighting(self):
+        """The dashboard said "Haven't seen it today" about a laptop it had
+        surveyed minutes before: the map's sightings were never consulted."""
+        m, clock = self.a_map()
+        clock.t += 600
+        f = find_mod.Finder(None, 75.2, roommap=m, clock=clock)
+        text, yaw, found = f.find("pen")
+        self.assertTrue(found)
+        self.assertNotIn("Haven't", text)
 
     def test_no_map_and_no_database_is_an_honest_unknown(self):
         f = find_mod.Finder(None, 75.2, roommap=None, clock=Clock())

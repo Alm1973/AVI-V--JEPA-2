@@ -58,6 +58,7 @@ from avi_bot.perception import desk_changes as desk_mod           # noqa: E402
 from avi_bot.perception import dome as dome_mod                   # noqa: E402
 from avi_bot.perception import horizon as horizon_mod             # noqa: E402
 from avi_bot.perception import world as world_mod                 # noqa: E402
+from avi_bot.perception import spatial as spatial_mod             # noqa: E402
 from avi_bot.motion import backlash as backlash_mod               # noqa: E402
 from avi_bot.perception import presence as presence_mod           # noqa: E402
 from avi_bot.skills import breaks as breaks_mod                   # noqa: E402
@@ -1355,6 +1356,15 @@ def make_handler(st):
             elif self.path == "/desk_scan":
                 self._json(desk_scan(arm, latest,
                                      min_conf=float(body.get("min_conf", 0.30))))
+            elif self.path == "/desk_layout":
+                ts, objects = arm.desk.last()
+                placed = [o for o in (objects or []) if "x" in o]
+                self._json({"scanned_at": ts, "units": "lens heights above "
+                            "the desk (unmeasured: relative only)",
+                            "viewpoint": "AVI's, from its base",
+                            "objects": spatial_mod.layout(placed),
+                            "unplaced": [o["label"] for o in (objects or [])
+                                         if "x" not in o]})
             elif self.path == "/desk_history":
                 self._json({"changes": arm.desk.history(
                     label=body.get("label"), limit=int(body.get("limit", 50)))})
@@ -1796,9 +1806,21 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                 if not _clipped(d, frame):
                     dy, dw = arm.roommap.direction_of(d["cx"], d["cy"],
                                                       yaw, wrist)
-                    sightings.append((roommap_mod.canonical_label(d["label"]),
-                                      round(dy, 2), round(dw, 2),
-                                      round(float(d["conf"]), 3)))
+                    row = (roommap_mod.canonical_label(d["label"]),
+                           round(dy, 2), round(dw, 2),
+                           round(float(d["conf"]), 3))
+                    # Where the box's BOTTOM edge meets the desk, in lens
+                    # heights -- the object's foot, not its middle.
+                    view = arm.roommap.view
+                    if view is not None:
+                        xy = view.on_plane(
+                            d["cx"], d["cy"] + d["h"] / 2.0, yaw, wrist,
+                            float(arm.config.raw.get("horizon", {}).get(
+                                "offset_over_height", 0.0)))
+                        if xy is not None:
+                            row = row + ((round(xy[0], 3),
+                                          round(xy[1], 3)),)
+                    sightings.append(row)
                 try:
                     arm.roommap.observe(
                         d["label"], d["cx"], d["cy"], yaw, wrist,
@@ -1886,6 +1908,16 @@ def find_object(arm, name, look=True):
                         roommap=arm.roommap)
     text, _, _ = f.find(name)
     aim = f.aim(name)
+    where = None
+    try:
+        _, objects = arm.desk.last()
+        placed = [o for o in (objects or []) if "x" in o]
+        where = spatial_mod.describe(roommap_mod.canonical_label(name),
+                                     placed)
+    except Exception as exc:                     # a layout is a bonus
+        log(f"find: no layout ({exc!r})")
+    if where:
+        text = f"{text} {where}"
     moved = False
     if look and aim and aim.get("confident"):
         for joint in ("shoulder", "elbow", "base_yaw", "wrist"):

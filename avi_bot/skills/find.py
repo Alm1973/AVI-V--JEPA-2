@@ -221,8 +221,16 @@ class Finder:
         """The most recent verified sighting, or None."""
         if self.db is None:
             # Map-only: the dashboard owns the arm and the room map but not
-            # the observer's sightings database.
-            return None
+            # the observer's sightings database. The map's own last sighting
+            # is still a real one -- without this, the dashboard answered
+            # "Haven't seen it today" about a laptop surveyed minutes before.
+            if self.roommap is None or not hasattr(self.roommap, "last_seen"):
+                return None
+            ts = self.roommap.last_seen(name)
+            if ts is None or (within_s is not None
+                              and ts < self.clock() - within_s):
+                return None
+            return {"ts": ts, "zone": None, "source": "map"}
         want = canonical(name)
         cutoff = 0.0
         if within_s is not None:
@@ -254,6 +262,9 @@ class Finder:
             return "Haven't seen it today.", None, False
         when = time.strftime("%-I:%M", time.localtime(seen["ts"])) \
             if hasattr(time, "strftime") else ""
-        zone = seen.get("zone") or "the desk"
+        zone = seen.get("zone")
+        if not zone and aim and aim.get("near"):
+            zone = f"near {aim['near']}"
+        zone = zone or "the desk"
         yaw = aim["base_yaw"] if aim and aim.get("confident") else None
         return f"{zone.capitalize()}, around {when}.", yaw, True
