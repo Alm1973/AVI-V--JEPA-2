@@ -1230,7 +1230,9 @@ def make_handler(st):
                     settle=float(body.get("settle", 0.8)),
                     approach=float(body.get("approach", 12.0)),
                     yaw_scale=float(body.get("yaw_scale", 4.0)),
-                    magnitudes=body.get("magnitudes")))
+                    magnitudes=body.get("magnitudes"),
+                    start_el=(None if body.get("start_el") is None
+                              else float(body["start_el"]))))
             elif self.path == "/probe_depth":
                 self._json(probe_depth(
                     arm, latest,
@@ -1836,7 +1838,7 @@ def sweep_dome(arm, latest, el_step=4.0, el_start=0.0, el_limit=None,
 
 def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
                prefer=None, frames=5, magnitudes=None, yaw_scale=4.0,
-               approach=12.0):
+               approach=12.0, start_el=None):
     """Learn the dome's joint-to-direction map from the arm's own motion.
 
     What Shaurya asked for: establish a dome with TALL at the top, then move
@@ -1867,7 +1869,20 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
                 "taught": sorted(taught)}
 
     start = arm.snapshot()
-    if prefer in taught:
+    if start_el is not None:
+        # Start ON THE DOME: TALL's shoulder and elbow, wrist at the given
+        # elevation below the pole. Added because by early afternoon nothing
+        # cleared 0.35 at HOME any more, while every survey from TALL's shape
+        # saw the laptop at 0.89-0.93 around wrist 166 -- the measurement
+        # should start where the robot can actually see something.
+        g = arm.config.dome
+        d0 = dome_mod.Dome(
+            taught, gains={k: float(g.get(k, dome_mod.DEFAULT_GAINS[k]))
+                           for k in ("base_yaw", "shoulder", "elbow", "wrist")},
+            limits={j: arm.config.soft_limits(j) for j in poses.JOINTS})
+        arm.set_pose(d0.pose_at(0.0, float(start_el)))
+        time.sleep(settle * 2)
+    elif prefer in taught:
         arm.set_pose(taught[prefer])
         time.sleep(settle)
 
