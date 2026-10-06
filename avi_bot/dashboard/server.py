@@ -1532,6 +1532,9 @@ def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
 
     out = {"landmark": label, "step": step, "magnitudes": mags,
            "samples": len(samples), "fit": d.fit,
+           "residuals": d.residuals,
+           "diagnosis": {j: d.diagnose(j)
+                         for j in ("base_yaw", "shoulder", "elbow", "wrist")},
            "lost": lost, "gains_before": before_gains,
            "learned": {k: round(v, 4) for k, v in learned.items()},
            "still_assumed": d.unknown(),

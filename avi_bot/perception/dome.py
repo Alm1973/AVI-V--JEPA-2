@@ -226,6 +226,13 @@ class Dome:
         w, h = frame
         fov_x, fov_y = fov
         rows_el, rhs_el, rows_az, rhs_az = [], [], [], []
+        # Kept per sample so a bad fit can be DIAGNOSED rather than only
+        # flagged. Three different causes look identical in an r2 alone:
+        # sensor noise scatters residuals randomly, a nonlinearity bends them
+        # with magnitude, and BACKLASH splits them by direction of travel --
+        # and the base joint carries the most load, so it is the likeliest to
+        # have it. Only the third is fixable by approaching from one side.
+        self.residuals = []
         for before, after, dx, dy in samples:
             d = {j: float(after[j]) - float(before[j])
                  for j in ("base_yaw",) + tuple(PITCH_SIGNS)}
@@ -234,6 +241,11 @@ class Dome:
             rhs_az.append(-(dx / w) * fov_x)
             rows_el.append([self.signs[j] * d[j] for j in PITCH_SIGNS])
             rhs_el.append((dy / h) * fov_y)
+            moved = [j for j in d if abs(d[j]) > 1e-6]
+            self.residuals.append({
+                "joint": moved[0] if len(moved) == 1 else "+".join(moved),
+                "delta": round(sum(d[j] for j in moved), 3) if moved else 0.0,
+                "dx": round(dx, 1), "dy": round(dy, 1)})
 
         got, self.fit = {}, {}
         used_az = [(a, b) for a, b in zip(rows_az, rhs_az) if abs(a) > 1e-6]
@@ -264,7 +276,42 @@ class Dome:
         for k, v in got.items():
             self.gains[k] = v
             self.learned.add(k)
+        self._attach_residuals(fov, frame)
         return got
+
+    def _fit_pitch(self, rows, rhs):
+        """Least squares for the three pitch gains, via _rss's solver.
+
+        Only solved when the samples actually separate the joints: if every
+        sample moved shoulder and elbow together, their individual gains are
+        not identifiable and fitting them returns an arbitrary split of one
+        real number. Refusing is the honest outcome.
+        """
+        names = list(PITCH_SIGNS)
+        coef = self._solve(rows, rhs)
+        return {} if coef is None else dict(zip(names, coef))
+
+    @staticmethod
+    def _solve(xs, ys):
+        """Coefficients of y = sum(b_k * x_k), or None if not identifiable."""
+        k = len(xs[0])
+        A = [[sum(r[i] * r[j] for r in xs) for j in range(k)] for i in range(k)]
+        b = [sum(r[i] * y for r, y in zip(xs, ys)) for i in range(k)]
+        M = [A[i][:] + [b[i]] for i in range(k)]
+        for c in range(k):
+            pv = max(range(c, k), key=lambda r: abs(M[r][c]))
+            if abs(M[pv][c]) < 1e-9:
+                return None
+            M[c], M[pv] = M[pv], M[c]
+            for r in range(c + 1, k):
+                f = M[r][c] / M[c][c]
+                for j in range(c, k + 1):
+                    M[r][j] -= f * M[c][j]
+        coef = [0.0] * k
+        for c in reversed(range(k)):
+            coef[c] = (M[c][k] - sum(M[c][j] * coef[j]
+                                     for j in range(c + 1, k))) / M[c][c]
+        return coef
 
     @staticmethod
     def _quality(rows, rhs, coeffs):
@@ -272,9 +319,8 @@ class Dome:
 
         Reported because a gain without it is indistinguishable from noise. A
         two-point fit always passes through both points and so always looks
-        perfect, which is exactly how base_yaw came back as 0.21, 0.24, 0.51
-        and 0.68 from the same arm -- a 3x spread read out as four
-        measurements.
+        perfect, which is how base_yaw came back as 0.21, 0.24, 0.51 and 0.68
+        from the same arm -- a 3x spread read out as four measurements.
         """
         pred = [sum(c * x for c, x in zip(coeffs, row)) for row in rows]
         resid = [y - p for y, p in zip(rhs, pred)]
@@ -288,35 +334,103 @@ class Dome:
                 "trustworthy": bool(n >= 4 and ss > 1e-12
                                     and (1.0 - rss / ss) > 0.9)}
 
-    def _fit_pitch(self, rows, rhs):
-        """Least squares for the three pitch gains. Normal equations by hand.
+    def _attach_residuals(self, fov, frame):
+        """Predicted-minus-observed per sample, in degrees of view."""
+        fov_x, fov_y = fov
+        w, h = frame
+        for r in self.residuals:
+            j, delta = r["joint"], r["delta"]
+            if j == "base_yaw":
+                want = -(self.gains["base_yaw"] * delta / fov_x) * w
+                r["predicted_px"] = round(want, 1)
+                r["resid_px"] = round(r["dx"] - want, 1)
+            elif j in PITCH_SIGNS:
+                want = (self.signs[j] * self.gains[j] * delta / fov_y) * h
+                r["predicted_px"] = round(want, 1)
+                r["resid_px"] = round(r["dy"] - want, 1)
 
-        Only solved when the samples actually separate the joints: if every
-        sample moved shoulder and elbow together, their individual gains are
-        not identifiable and fitting them returns an arbitrary split of one
-        real number. Refusing is the honest outcome.
+    @classmethod
+    def _rss(cls, xs, ys):
+        """Residual sum of squares for the best y = sum(b_k * x_k)."""
+        coef = cls._solve(xs, ys)
+        if coef is None:
+            return None
+        return sum((y - sum(c * x for c, x in zip(coef, r))) ** 2
+                   for r, y in zip(xs, ys))
+
+    def diagnose(self, joint):
+        """Why a joint's fit is poor: noise, nonlinearity, or backlash.
+
+        By NESTED MODEL COMPARISON, not by eyeballing residuals. The first
+        version grouped residuals by sign, and it failed its own test for a
+        reason worth keeping: fitting y = b*s with no extra term lets a
+        direction-dependent offset leak straight into b, which flattens the
+        very grouping being looked for. Backlash hides inside the gain.
+
+        So three models are fitted and compared by how much variance each
+        extra term explains:
+
+            linear      y = b*s
+            backlash    y = b*s + c*sign(s)      a fixed offset by direction
+            nonlinear   y = b*s + d*s*|s|        an error growing with size
+
+        Backlash is the one worth separating. It is not a modelling error --
+        the joint genuinely rests in a different place depending on which way
+        it arrived -- and the cure is to approach every target from one side,
+        not to fit a better curve. The base joint carries the most load, so it
+        is the likeliest to have it.
         """
-        names = list(PITCH_SIGNS)
-        n = len(names)
-        A = [[sum(r[i] * r[j] for r in rows) for j in range(n)]
-             for i in range(n)]
-        b = [sum(r[i] * y for r, y in zip(rows, rhs)) for i in range(n)]
-        # Gaussian elimination with partial pivoting, plus a singularity check.
-        M = [row[:] + [b[i]] for i, row in enumerate(A)]
-        for c in range(n):
-            p = max(range(c, n), key=lambda r: abs(M[r][c]))
-            if abs(M[p][c]) < 1e-9:
-                return {}            # not identifiable from these samples
-            M[c], M[p] = M[p], M[c]
-            for r in range(c + 1, n):
-                f = M[r][c] / M[c][c]
-                for k in range(c, n + 1):
-                    M[r][k] -= f * M[c][k]
-        x = [0.0] * n
-        for c in reversed(range(n)):
-            x[c] = (M[c][n] - sum(M[c][k] * x[k]
-                                  for k in range(c + 1, n))) / M[c][c]
-        return dict(zip(names, x))
+        rows = [r for r in self.residuals
+                if r["joint"] == joint and "predicted_px" in r]
+        if len(rows) < 4:
+            return {"verdict": "too few samples to diagnose", "n": len(rows)}
+        axis = "dx" if joint == "base_yaw" else "dy"
+        ss = [r["delta"] for r in rows]
+        ys = [r[axis] for r in rows]
+        if not (any(x > 0 for x in ss) and any(x < 0 for x in ss)):
+            return {"verdict": "only one direction of travel sampled",
+                    "n": len(rows)}
+        mean = sum(ys) / len(ys)
+        total = sum((y - mean) ** 2 for y in ys)
+        lin = self._rss([[x] for x in ss], ys)
+        back = self._rss([[x, 1.0 if x > 0 else -1.0] for x in ss], ys)
+        nl = self._rss([[x, x * abs(x)] for x in ss], ys)
+        if lin is None or total <= 1e-12:
+            return {"verdict": "degenerate fit", "n": len(rows)}
+
+        # Normalised by what the LINEAR model failed to explain, not by total
+        # variance. Over +-8 degrees the signal spans ~122 px, so a real 25 px
+        # backlash is under 3% of total variance and reads as "clean" -- while
+        # being 100% of the part a single gain cannot account for, which is
+        # the question actually being asked.
+        def share(rss):
+            return 0.0 if rss is None or lin <= 1e-12 else max(
+                0.0, min(1.0, (lin - rss) / lin))
+
+        rms_px = (lin / len(rows)) ** 0.5
+        s_back, s_nl = share(back), share(nl)
+        out = {"n": len(rows), "rms_px": round(rms_px, 2),
+               "unexplained_by_linear": round(lin / total, 4),
+               "backlash_explains": round(s_back, 3),
+               "nonlinearity_explains": round(s_nl, 3)}
+        # Clean is an ABSOLUTE judgement. A few pixels of residual is clean
+        # however it is distributed, and box-centre jitter alone is a few px.
+        if rms_px < 4.0:
+            out["verdict"] = "CLEAN: a single gain fits this joint"
+        elif s_back >= s_nl and s_back > 0.5:
+            out["verdict"] = ("BACKLASH: a direction-dependent offset explains "
+                              f"{s_back:.0%} of what one gain cannot. The joint "
+                              "rests differently depending on which way it "
+                              "arrived -- approach every target from one side.")
+        elif s_nl > 0.5:
+            out["verdict"] = ("NONLINEAR: the error grows with the size of the "
+                              f"move, explaining {s_nl:.0%} of the shortfall. "
+                              "One gain cannot cover the whole range.")
+        else:
+            out["verdict"] = (f"NOISE: {rms_px:.0f} px of scatter that neither "
+                              "direction nor size explains. Average more "
+                              "samples.")
+        return out
 
     def unknown(self):
         """Gains and signs still taken on faith, with why it matters."""

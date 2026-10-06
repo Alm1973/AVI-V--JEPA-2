@@ -404,3 +404,80 @@ class ItReportsHowWellItFitted(unittest.TestCase):
         self.assertEqual(d.fit["base_yaw"]["n"], 6)
         self.assertEqual(d.fit["pitch"]["n"], 18)
         self.assertTrue(d.fit["base_yaw"]["trustworthy"])
+
+
+class ItDiagnosesWhyAFitIsPoor(unittest.TestCase):
+    """An r2 says a fit is bad. It does not say what to do about it.
+
+    Three causes look identical in an r2: noise scatters residuals randomly,
+    a nonlinearity bends them with the size of the move, and BACKLASH splits
+    them by direction of travel. Only the last is fixable by approaching every
+    target from one side, and the base joint carries the most load, so it is
+    the likeliest to have it.
+    """
+
+    FOV = (52.0, 31.0)
+    FRAME = (1280, 720)
+
+    def run_with(self, corrupt, joint="base_yaw", gain=0.62):
+        d = a_dome()
+        w, h = self.FRAME
+        samples = []
+        for m in (2.0, 4.0, 6.0, 8.0):
+            for step in (+m, -m):
+                before = dict(POSES["HOME"])
+                after = dict(before, **{joint: before[joint] + step})
+                dx = -(gain * step / self.FOV[0]) * w
+                samples.append((before, after, dx + corrupt(step), 0.0))
+        d.learn(samples, frame=self.FRAME, fov=self.FOV, min_samples=3)
+        return d.diagnose(joint)
+
+    def test_backlash_is_named(self):
+        """A fixed offset whose sign follows the direction of travel."""
+        got = self.run_with(lambda s: 25.0 if s > 0 else -25.0)
+        self.assertIn("BACKLASH", got["verdict"])
+        self.assertGreater(got["backlash_explains"], 0.2)
+
+    def test_a_nonlinearity_is_named(self):
+        """An error that grows with the size of the move."""
+        got = self.run_with(lambda s: 0.9 * s * abs(s))
+        self.assertIn("NONLINEAR", got["verdict"])
+        self.assertGreater(got["nonlinearity_explains"], 0.2)
+
+    def test_plain_noise_is_named(self):
+        import random
+        rng = random.Random(7)
+        got = self.run_with(lambda s: rng.gauss(0, 18.0))
+        self.assertIn("NOISE", got["verdict"])
+
+    def test_a_clean_joint_is_called_clean(self):
+        got = self.run_with(lambda s: 0.0)
+        self.assertIn("CLEAN", got["verdict"])
+        self.assertLess(got["unexplained_by_linear"], 0.01)
+
+    def test_backlash_hides_inside_the_gain_if_you_only_look_at_residuals(self):
+        """Why the first version of this failed its own test: with no extra
+        term, a direction-dependent offset is absorbed into b, so the residual
+        grouping it creates is largely cancelled."""
+        d = a_dome()
+        w, h = self.FRAME
+        ss = [s for m in (2.0, 4.0, 6.0, 8.0) for s in (+m, -m)]
+        k = 0.62 * w / self.FOV[0]
+        ys = [-k * s + (25.0 if s > 0 else -25.0) for s in ss]
+        lin = d._rss([[s] for s in ss], ys)
+        back = d._rss([[s, 1.0 if s > 0 else -1.0] for s in ss], ys)
+        self.assertLess(back, lin * 1e-6, "the offset term should fit exactly")
+
+    def test_it_refuses_to_diagnose_too_little_data(self):
+        d = a_dome()
+        d.residuals = [{"joint": "base_yaw", "delta": 2.0, "dx": 1.0,
+                        "predicted_px": 1.0}]
+        self.assertIn("too few", d.diagnose("base_yaw")["verdict"])
+
+    def test_one_direction_only_cannot_show_backlash(self):
+        """Backlash is invisible if you never come back the other way."""
+        d = a_dome()
+        d.residuals = [{"joint": "base_yaw", "delta": m, "dx": -10.0 * m,
+                        "predicted_px": -10.0 * m}
+                       for m in (2.0, 4.0, 6.0, 8.0)]
+        self.assertIn("one direction", d.diagnose("base_yaw")["verdict"])
