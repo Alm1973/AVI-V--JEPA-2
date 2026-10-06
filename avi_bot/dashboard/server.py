@@ -153,6 +153,8 @@ class Arm:
         # draw before changing a confidence floor.
         self.track_hits = 0
         self.track_misses = 0
+        self.last_trust = None
+        self.last_light = None
         # Live-tunable, so a value can be changed and watched without a push
         # and a restart. Chasing a confidence floor through a deploy cycle each
         # time is the slow way to find it.
@@ -162,7 +164,7 @@ class Arm:
         # common case because the arm is usually holding still.
         self.tune = {"min_conf": 0.35, "gain": att_mod.GAIN,
                      "period": 0.4, "deadband": att_mod.DEADBAND_FRAC,
-                     "trust_conf": 0.75}
+                     "trust_conf": 0.0}
         # Off while poses are being set -- motion nobody asked for makes a
         # slider impossible to land -- and ON while idling, where they are the
         # whole difference between a robot that is alive and one that is
@@ -252,8 +254,17 @@ class Arm:
                     live = found
                 else:
                     self.rejector.classify(found, yaw, w)
-                    live = [c for c in found if self.rejector.accept(
-                        c, min_conf_unknown=float(self.tune["trust_conf"]))]
+                    # Brightness-aware, because a fixed threshold is wrong
+                    # somewhere: tuned for the dark it misses him in daylight,
+                    # tuned for daylight it hallucinates him at night.
+                    # tune["trust_conf"] is a manual override when > 0.
+                    manual = float(self.tune.get("trust_conf") or 0.0)
+                    lit = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean()
+                    trust = manual or parallax.trust_for_light(lit)
+                    self.last_trust = round(trust, 2)
+                    self.last_light = round(float(lit), 1)
+                    live = [c for c in found
+                            if self.rejector.accept(c, min_conf_unknown=trust)]
                 p = None
                 for c in live:
                     # Continuity is real evidence -- a person does not
@@ -267,7 +278,9 @@ class Arm:
                 if p:
                     self.track_hits += 1
                     self.last_person = {"conf": round(p["conf"], 2),
-                                        "cx": round(p["cx"]), "w": w}
+                                        "cx": round(p["cx"]),
+                                        "cy": round(p.get("cy", 0)),
+                                        "w": w, "h": h}
                     self.attention.offer("face", p["cx"], p["cy"], w, h,
                                          label="person", conf=p["conf"])
                 else:
@@ -778,6 +791,8 @@ def make_handler(st):
                 "parallax_why": arm.rejector.describe(),
                 "parallax_rejected": arm.rejector.rejected,
                 "parallax_accepted": arm.rejector.accepted,
+                "trust": arm.last_trust,
+                "light": arm.last_light,
                 "track_label": arm.track_label,
                 "mood_events": ["praise", "scold", "arrived", "left",
                                 "task_ok", "task_failed", "new_object",

@@ -63,6 +63,40 @@ ATTACHED = "attached"     # did not move: part of the arm
 UNKNOWN = "unknown"       # not enough pan to say
 
 
+# How much to trust a candidate parallax could not judge, as a function of how
+# well lit the frame is. MEASURED 2026-10-06, same four poses, empty room:
+#
+#   dark  (frame mean ~30)   worst false 'person'  0.61-0.72
+#   light (frame mean 120+)  worst false 'person'  0.31
+#
+# and Shaurya himself reads 0.75-0.90 in both. So the overlap that caused all
+# of yesterday's trouble -- a 0.75 floor finding nothing, a 0.70 floor locking
+# onto the arm -- is substantially a LOW-LIGHT artifact. In daylight there is a
+# clean gap and a lower threshold is both safe and much more sensitive.
+#
+# A fixed threshold therefore has to be wrong somewhere: tuned for the dark it
+# misses him in daylight, tuned for daylight it hallucinates him at night.
+TRUST_BY_LIGHT = (
+    (80.0, 0.65),    # frame mean above this: well lit, worst false ~0.31
+    (50.0, 0.75),    # dim
+    (0.0, 0.85),     # dark: only a strong detection, or parallax, is believable
+)
+
+
+def trust_for_light(mean_level):
+    """The confidence an unjudged candidate needs, given frame brightness.
+
+    None (brightness unknown) gets the strictest value, because an unmeasured
+    frame is not evidence of a well-lit one.
+    """
+    if mean_level is None:
+        return TRUST_BY_LIGHT[-1][1]
+    for floor, trust in TRUST_BY_LIGHT:
+        if float(mean_level) >= floor:
+            return trust
+    return TRUST_BY_LIGHT[-1][1]
+
+
 class Track:
     __slots__ = ("id", "cx", "yaw", "at", "votes", "note", "seen")
 

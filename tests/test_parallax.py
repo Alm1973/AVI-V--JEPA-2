@@ -166,3 +166,48 @@ class Housekeeping(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TrustFollowsTheLight(unittest.TestCase):
+    """A fixed threshold is wrong somewhere.
+
+    Measured 2026-10-06 across four poses in an empty room: the worst false
+    'person' was 0.61-0.72 in the dark and 0.31 in daylight, while Shaurya
+    reads 0.75-0.90 in both. So the overlap behind all of yesterday's trouble
+    is substantially a low-light artifact, and one number cannot serve both.
+    """
+
+    def test_daylight_is_permissive(self):
+        self.assertEqual(px.trust_for_light(125.0), 0.65)
+
+    def test_darkness_is_strict(self):
+        self.assertEqual(px.trust_for_light(25.0), 0.85)
+
+    def test_it_is_monotonic(self):
+        levels = [0, 10, 30, 49, 50, 79, 80, 120, 255]
+        trusts = [px.trust_for_light(l) for l in levels]
+        self.assertEqual(trusts, sorted(trusts, reverse=True),
+                         f"not monotonic in light: {list(zip(levels, trusts))}")
+
+    def test_unknown_brightness_gets_the_strictest(self):
+        """An unmeasured frame is not evidence of a well-lit one."""
+        self.assertEqual(px.trust_for_light(None),
+                         max(px.trust_for_light(x) for x in (0, 50, 80, 200)))
+
+    def test_the_measured_false_positives_are_excluded(self):
+        """The numbers that motivated this: 0.72 in the dark, 0.31 in light."""
+        self.assertGreater(px.trust_for_light(30.0), 0.72)
+        self.assertGreater(px.trust_for_light(125.0), 0.31)
+
+    def test_he_is_still_accepted_in_both(self):
+        """0.75 is his worst measured reading; it must pass at every level."""
+        for level in (25.0, 55.0, 125.0):
+            self.assertLessEqual(px.trust_for_light(level), 0.85)
+        # In daylight his typical 0.82 must clear the bar comfortably.
+        self.assertLess(px.trust_for_light(125.0), 0.82)
+
+    def test_a_dark_frame_would_have_rejected_last_nights_false_positive(self):
+        r, t = fresh()
+        d = {"cx": 632, "conf": 0.68, "parallax": UNKNOWN}
+        self.assertFalse(r.accept(d, min_conf_unknown=px.trust_for_light(30.0)))
+        self.assertTrue(r.accept(d, min_conf_unknown=px.trust_for_light(125.0)))
