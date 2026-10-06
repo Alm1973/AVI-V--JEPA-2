@@ -34,6 +34,9 @@ from .skills import (apps as apps_mod, calendar as cal_mod,
                      timers as timers_mod, weather as weather_mod)
 
 
+from avi_bot.motion import backlash as backlash_mod             # noqa: E402
+
+
 class Avi:
     """The whole robot, minus the threads that already exist."""
 
@@ -47,6 +50,7 @@ class Avi:
         # of it is guarded, so the brain runs with no hardware at all.
         self.arm = arm
         self.mood = mood
+        self._sleep = time.sleep          # tests replace it; motion waits
 
         self.store = memdb.Store(db_path, clock=clock)
         self.policy = speech.SpeechPolicy()
@@ -172,7 +176,7 @@ class Avi:
             for joint in ("shoulder", "elbow"):
                 if aim.get(joint) is not None:
                     self._safe(lambda j=joint: self.arm.set(j, aim[j]))
-            self._safe(lambda: self.arm.set("base_yaw", aim["base_yaw"]))
+            self._safe(lambda: self._yaw_to(aim["base_yaw"]))
             if aim.get("wrist") is not None:
                 self._safe(lambda: self.arm.set("wrist", aim["wrist"]))
         return text, {"yaw": yaw, "found": found,
@@ -201,6 +205,18 @@ class Avi:
     def _play(self, name):
         self._safe(lambda: self.arm.play(name))
         return None, {"gesture": name}
+
+    def _yaw_to(self, target):
+        """base_yaw to `target`, last move upward: it has 12-24 degrees of
+        backlash, so a target reached going down is off by up to that."""
+        lo, _ = self.arm.config.soft_limits("base_yaw")
+        here = self.arm.snapshot().get("base_yaw")
+        cmds = backlash_mod.plan(here, target, lo)
+        for i, cmd in enumerate(cmds):
+            self.arm.set("base_yaw", cmd)
+            if i < len(cmds) - 1:
+                self._sleep(backlash_mod.travel_s(here, cmd))
+                here = cmd
 
     def _safe(self, fn):
         """Hardware calls never take the brain down. The arm has its own

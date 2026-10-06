@@ -523,16 +523,33 @@ class FindCarriesTheMapsShape(unittest.TestCase):
         class Arm:
             roommap = m
             db = None
-            config = type("C", (), {"camera": {"yaw_deg_per_frame": 75.2,
-                                               "wrist_deg_per_frame": 24.3}})()
+            config = type("C", (), {
+                "camera": {"yaw_deg_per_frame": 75.2,
+                           "wrist_deg_per_frame": 24.3},
+                "soft_limits": staticmethod(lambda j: (20.0, 160.0))})()
+
+            def __init__(self):
+                self.at = {"base_yaw": 150.0}
+
+            def snapshot(self):
+                return dict(self.at)
 
             def set(self, joint, deg):
                 calls.append(joint)
+                moves.append((joint, deg))
+                self.at[joint] = deg
 
+        moves = []
         avi = main_mod.Avi(arm=Arm(), send=lambda *a: None, env={},
                            clock=clock)
+        avi._sleep = lambda s: None
         self.addCleanup(avi.close)
         avi._find("pen")
         self.assertEqual(calls[:2], ["shoulder", "elbow"], calls)
         self.assertIn("base_yaw", calls)
         self.assertLess(calls.index("elbow"), calls.index("base_yaw"))
+        # Coming DOWN from 150, the last yaw move must still be upward:
+        # base_yaw has 12-24 degrees of backlash.
+        yaws = [d for j, d in moves if j == "base_yaw"]
+        self.assertEqual(len(yaws), 2, yaws)
+        self.assertLess(yaws[0], yaws[1])

@@ -279,6 +279,13 @@ yaw_deg_per_frame = 83.9   # MEASURED 2026-10-05, replaces a wrong 29.0
 # not at a narrow lens -- which is the open question just above. Treat it as a
 # strong inference, not a measurement: it leans on the datasheet FOV, which
 # nobody here has measured.
+#
+# REFUTED 2026-10-06 by POST /probe_horizon (see [horizon]). base_yaw turns
+# 0.95x its command, not 0.55x. The low slide was CAMERA PITCH: a base turn
+# slides the picture by cos(e) and rolls it by sin(e), and the roll, which
+# needs no FOV and carries no parallax, puts the gain at 0.95. 52/83.9 = 0.62
+# is cos(52 deg); the dome's 0.7492 is cos(41 deg). Backlash larger than the
+# run-ups used (12-24 deg) shrank it further.
 wrist_deg_per_frame = 32.2   # MEASURED 2026-10-05
 wrist_measured = true
 
@@ -374,3 +381,36 @@ wrist_sign    = 1
 # base_yaw 0.7492 implies yaw_deg_per_frame 52/0.7492 = 69.4, against [camera]'s
 # 83.9 and three other methods that span 0.62 to 0.84. Yaw is the least settled
 # constant on this arm; [camera] is left as recorded.
+
+
+[horizon]
+# Which way is LEVEL, measured 2026-10-06 by POST /probe_horizon with no ruler.
+# At 14 wrist tilts on TALL's shape the base turned 8 deg twice and the
+# pictures were registered (ORB + RANSAC similarity). A base turn about its
+# axis rolls the image by g*sin(e) and slides it by g*cos(e)*px_per_deg, where
+# e is the view's elevation above the plane perpendicular to the base axis.
+# Fitting the ROLL across tilts (26 measurements, rms 0.066) gives level, the
+# wrist's gain and the base's gain; 95% intervals from a bootstrap over tilts.
+#
+# Valid on TALL's shape (shoulder 78.4, elbow 88.0) only. Another shape has a
+# different pitch offset; one roll measurement at it gives it.
+measured = true
+measured_on = "2026-10-06"
+shape = "TALL"
+level_wrist = 160.3   # [155.0, 164.0] -- TALL (176) looks ~16 deg ABOVE level
+wrist_gain  = 1.03    # [0.93, 1.09] -- the dome's independent 1.0148 agrees
+yaw_gain    = 0.95    # [0.89, 0.98] -- the 1.8x "under-travel" was pitch
+# Linear convention, from slide against roll in the near-level views. Trades
+# off against yaw_gain (slide = g cos(e) P), so it is no better than ~+-3 deg;
+# the datasheet's 52 sits at the edge of that.
+fov_deg = 48.6
+# Wrist ~44 on this shape looks at the robot's own base: the picture neither
+# rolls nor slides when the base turns, because the scene turns with it.
+self_view_wrist = 44.0
+# Looking down at the desk, things slide 0.3-0.4 deg per deg FASTER than the
+# far room at level: parallax from the lens sitting off the base axis. Faster
+# means the camera is in FRONT of the axis, looking outward. The ratio is
+# offset / height-above-the-desk; one ruler measurement of either makes it
+# metric.
+camera_faces = "outward"
+offset_over_height = 0.35

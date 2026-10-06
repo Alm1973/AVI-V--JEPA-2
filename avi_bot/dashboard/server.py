@@ -55,6 +55,8 @@ from avi_bot.perception import parallax                           # noqa: E402
 from avi_bot.perception import depth as depth_mod                 # noqa: E402
 from avi_bot.perception import desk_changes as desk_mod           # noqa: E402
 from avi_bot.perception import dome as dome_mod                   # noqa: E402
+from avi_bot.perception import horizon as horizon_mod             # noqa: E402
+from avi_bot.motion import backlash as backlash_mod               # noqa: E402
 from avi_bot.perception import presence as presence_mod           # noqa: E402
 from avi_bot.skills import breaks as breaks_mod                   # noqa: E402
 from avi_bot.skills import find as find_mod                       # noqa: E402
@@ -1380,12 +1382,18 @@ def make_handler(st):
                     magnitudes=body.get("magnitudes"),
                     start_el=(None if body.get("start_el") is None
                               else float(body["start_el"]))))
+            elif self.path == "/probe_horizon":
+                self._json(probe_horizon(
+                    arm, latest, delta=float(body.get("delta", 8.0)),
+                    wrists=body.get("wrists"),
+                    approach=float(body.get("approach", 24.0))))
             elif self.path == "/probe_depth":
                 self._json(probe_depth(
                     arm, latest,
-                    swing=float(body.get("swing", 24.0)),
-                    steps=int(body.get("steps", 7)),
-                    min_conf=float(body.get("min_conf", 0.35))))
+                    swing=float(body.get("swing", 40.0)),
+                    steps=int(body.get("steps", 9)),
+                    min_conf=float(body.get("min_conf", 0.35)),
+                    frames=int(body.get("frames", 5))))
             elif self.path in ("/probe_parallax", "/probe_static"):
                 self._json(probe_parallax(
                     arm, latest, swing=float(body.get("swing", 15.0)),
@@ -1559,6 +1567,29 @@ EDGE_PX = 6
 REPORT_FLOOR = 0.10
 
 
+def _yaw_to(arm, target, settle):
+    """Put base_yaw at `target`, last move upward (motion/backlash.py)."""
+    lo, _ = arm.config.soft_limits("base_yaw")
+    here = arm.snapshot().get("base_yaw")
+    cmds = backlash_mod.plan(here, target, lo)
+    for i, cmd in enumerate(cmds):
+        arm.set("base_yaw", cmd)
+        if i < len(cmds) - 1:
+            time.sleep(max(settle * 0.6, backlash_mod.travel_s(here, cmd)))
+            here = cmd
+
+
+def _clipped(d, frame):
+    """Is this box cut off by the frame edge? A clipped box's centre is not
+    the object's centre, and it slides at the wrong rate as the object
+    leaves the frame."""
+    fh, fw = frame.shape[:2]
+    return (d["cx"] - d["w"] / 2 <= EDGE_PX
+            or d["cx"] + d["w"] / 2 >= fw - EDGE_PX
+            or d["cy"] - d["h"] / 2 <= EDGE_PX
+            or d["cy"] + d["h"] / 2 >= fh - EDGE_PX)
+
+
 def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                frames=2, pose=None, el_step=12.0, az_step=16.0,
                el_limit=60.0, el_start=12.0):
@@ -1656,7 +1687,7 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
     # read as "cup" on one scan cannot pass for something new.
     sightings, visited_stops = [], []
     for yaw, wrist in stops:
-        arm.set("base_yaw", yaw)
+        _yaw_to(arm, yaw, settle)
         arm.set("wrist", wrist)
         time.sleep(settle)
         looked = {"yaw": yaw, "wrist": wrist, "frames": 0,
@@ -1685,12 +1716,7 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                 # into pairs 13-16 degrees apart that way. Those boxes stay
                 # out of the snapshot; an object is still caught from the
                 # stops that see it whole.
-                fh, fw = frame.shape[:2]
-                clipped = (d["cx"] - d["w"] / 2 <= EDGE_PX
-                           or d["cx"] + d["w"] / 2 >= fw - EDGE_PX
-                           or d["cy"] - d["h"] / 2 <= EDGE_PX
-                           or d["cy"] + d["h"] / 2 >= fh - EDGE_PX)
-                if not clipped:
+                if not _clipped(d, frame):
                     dy, dw = arm.roommap.direction_of(d["cx"], d["cy"],
                                                       yaw, wrist)
                     sightings.append((roommap_mod.canonical_label(d["label"]),
@@ -1785,7 +1811,11 @@ def find_object(arm, name, look=True):
     moved = False
     if look and aim and aim.get("confident"):
         for joint in ("shoulder", "elbow", "base_yaw", "wrist"):
-            if aim.get(joint) is not None:
+            if aim.get(joint) is None:
+                continue
+            if joint == "base_yaw":
+                _yaw_to(arm, aim[joint], 1.0)
+            else:
                 arm.set(joint, aim[joint])
         moved = True
     log(f"find {name!r}: {text} moved={moved}")
@@ -2283,8 +2313,9 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
     return out
 
 
-def probe_depth(arm, latest, swing=24.0, steps=7, settle=1.6,
-                min_conf=0.35, frames=2):
+def probe_depth(arm, latest, swing=40.0, steps=9, settle=1.6,
+                min_conf=0.35, frames=5,
+                approach=backlash_mod.YAW_BACKLASH_DEG):
     """Pan once, track everything, and report range per object.
 
     Also settles the open question in config/joints.toml [kinematics]. The
@@ -2300,6 +2331,7 @@ def probe_depth(arm, latest, swing=24.0, steps=7, settle=1.6,
     needs the kinematics to be measured: the ORDERING is calibration-free,
     which is why it is reported even when ranges cannot be.
     """
+    import numpy as np
     if arm.detector is None:
         from detector import DeskDetector
         arm.detector = DeskDetector()
@@ -2316,23 +2348,37 @@ def probe_depth(arm, latest, swing=24.0, steps=7, settle=1.6,
     fov = arm.config.camera.get("fov_deg") or 52.0
     tracks, seen_at = {}, {}
     yaws = [a + (b - a) * i / (steps - 1) for i in range(steps)]
+    # Arrive at the first stop from BELOW, like every later one. base_yaw's
+    # backlash is asymmetric (build_dome measured it); a first sample that
+    # came from the other side is offset by the backlash, not by parallax.
+    arm.set("base_yaw", max(lo, a - approach))
+    time.sleep(settle)
     for yaw in yaws:
         arm.set("base_yaw", yaw)
         time.sleep(settle)
+        per = {}
         for frame in _look(latest, frames):
+            best = {}
             for d in arm.detector.everything(frame, min_conf=min_conf):
                 if d["label"] == "person":
                     continue        # people move; a moving point has no range
-                # One detection per label per stop. Two boxes of the same
-                # class at one stop cannot be told apart without a tracker,
-                # and guessing the correspondence is how a nonlinear fit --
-                # and a wrong depth -- gets made.
-                if seen_at.get(d["label"]) == yaw:
-                    continue
-                seen_at[d["label"]] = yaw
-                tracks.setdefault(
-                    d["label"], depth_mod.Track(d["label"], fov)).add(
-                        yaw, d["cx"])
+                if _clipped(d, frame):
+                    continue        # its centre slides at the wrong rate
+                # One box per label per frame, the strongest. Two boxes of
+                # the same class cannot be told apart without a tracker, and
+                # guessing the correspondence is how a wrong depth gets made.
+                if d["conf"] > best.get(d["label"], {"conf": -1})["conf"]:
+                    best[d["label"]] = d
+            for k, d in best.items():
+                per.setdefault(k, []).append(d["cx"])
+        for k, xs in per.items():
+            if 2 * len(xs) < frames:
+                continue            # in under half the frames: a flicker
+            # The MEDIAN over frames: a box centre scatters 12-21 px between
+            # frames, which is the same size as the parallax being measured.
+            seen_at.setdefault(k, []).append(yaw)
+            tracks.setdefault(k, depth_mod.Track(k, fov)).add(
+                yaw, float(np.median(xs)))
     arm.set_pose(start)
 
     out = {"swing": round(b - a, 1), "stops": steps, "fov_deg": fov,
@@ -2372,6 +2418,97 @@ def probe_depth(arm, latest, swing=24.0, steps=7, settle=1.6,
         out["why_no_ranges"] = kin.get("why", "camera_radius_m is 0")
     log(f"probe_depth: {len(tracks)} tracks, spread "
         f"{out.get('rate_spread')}, {out.get('reading', '')[:60]}")
+    return out
+
+
+def probe_horizon(arm, latest, wrists=None, delta=8.0, approach=24.0,
+                  settle=1.6, centre=90.0):
+    """Which way is level, the base's true gain, and the lens's true FOV.
+
+    At each wrist tilt on TALL's shape, turn the base by `delta` twice and
+    register the pictures: a base turn rolls the image by g sin(e) and slides
+    it by g cos(e). See perception/horizon.py. Every stop is approached from
+    below (base_yaw backlash), and each tilt measures two halves so the
+    disagreement between them is visible as the noise floor.
+    """
+    taught = load_taught() or {}
+    if dome_mod.POLE not in taught:
+        return {"error": f"{dome_mod.POLE} is not taught"}
+    start = arm.snapshot()
+    wlo, whi = arm.config.soft_limits("wrist")
+    ylo, yhi = arm.config.soft_limits("base_yaw")
+    if wrists is None:
+        top = min(whi, taught[dome_mod.POLE]["wrist"])
+        wrists = [top - 12.0 * i for i in range(14) if top - 12.0 * i >= wlo]
+    a, b, c = centre - delta, centre, centre + delta
+    if a - approach < ylo or c > yhi:
+        return {"error": f"yaw stops {a}..{c} fall outside {ylo}..{yhi}"}
+    arm.set("shoulder", taught[dome_mod.POLE]["shoulder"])
+    arm.set("elbow", taught[dome_mod.POLE]["elbow"])
+    levels = []
+    try:
+        for w in wrists:
+            arm.set("base_yaw", a - approach)
+            pre = w - approach if w - approach >= wlo else min(whi, w + approach)
+            arm.set("wrist", pre)
+            time.sleep(settle * 0.6)
+            arm.set("wrist", w)
+            time.sleep(settle * 0.6)
+            shots = []
+            for yaw in (a, b, c):
+                arm.set("base_yaw", yaw)
+                time.sleep(settle)
+                got = list(_look(latest, 3))
+                shots.append(got[-1] if got else None)
+            row = {"wrist": round(w, 1), "halves": []}
+            for x, y in ((0, 1), (1, 2)):
+                if shots[x] is None or shots[y] is None:
+                    row["halves"].append({"error": "no picture"})
+                    continue
+                try:
+                    r = horizon_mod.register(shots[x], shots[y])
+                    row["halves"].append(
+                        {"roll": round(r["roll_deg"] / delta, 4),
+                         "slide": round(r["dx_px"] / delta, 2),
+                         "rise": round(r["dy_px"] / delta, 2),
+                         "scale": round(r["scale"], 4),
+                         "inliers": r["inliers"]})
+                except horizon_mod.NotMeasurable as exc:
+                    row["halves"].append({"error": str(exc)})
+            ok = [h for h in row["halves"] if "roll" in h]
+            if len(ok) == 2:
+                row["roll"] = round((ok[0]["roll"] + ok[1]["roll"]) / 2, 4)
+                row["slide"] = round((ok[0]["slide"] + ok[1]["slide"]) / 2, 2)
+                row["disagree"] = round(abs(ok[0]["roll"] - ok[1]["roll"]), 4)
+            levels.append(row)
+            log(f"probe_horizon: wrist {w:.0f} roll {row.get('roll')} "
+                f"slide {row.get('slide')}")
+    finally:
+        arm.set_pose(start)
+
+    out = {"delta": delta, "centre_yaw": centre, "levels": levels}
+    good = [r for r in levels if "roll" in r
+            and r["disagree"] <= horizon_mod.MAX_HALF_DISAGREE]
+    out["used"] = [r["wrist"] for r in good]
+    try:
+        ws = [r["wrist"] for r in good]
+        rolls = [r["roll"] for r in good]
+        free = horizon_mod.fit_roll(ws, rolls, k_grid=[0.70 + 0.01 * i
+                                                       for i in range(61)])
+        fixed = horizon_mod.fit_roll(
+            ws, rolls, k=float(arm.config.dome.get("wrist", 1.0)))
+        out["fit"], out["fit_dome_k"] = free, fixed
+        P, prms = horizon_mod.px_per_deg(ws, [r["slide"] for r in good], free)
+        width = shots[0].shape[1] if shots and shots[0] is not None else 1280
+        out["px_per_deg"] = round(P, 2)
+        out["fov_deg"] = round(width / P, 1)
+        out["slide_rms_px"] = round(prms, 2)
+        out["reading"] = (
+            f"base_yaw turns {free['g']:.2f}x its command; the view is level "
+            f"at wrist {free['w_level']:.0f} on TALL's shape; lens FOV "
+            f"{width / P:.1f} deg (config assumes 52)")
+    except horizon_mod.NotMeasurable as exc:
+        out["error"] = str(exc)
     return out
 
 
