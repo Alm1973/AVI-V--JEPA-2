@@ -57,6 +57,42 @@ class Coherence(unittest.TestCase):
         self.assertGreater(r["n_far"], 50)
 
 
+class StaticScene(unittest.TestCase):
+    """A low d has two causes that demand opposite responses.
+
+    Either the representation is blind, or nothing happened. Measured
+    2026-10-05 overnight: random pairs were 0.988 alike across 4.8 hours,
+    which is a dark empty room, not a bad encoder. The tool has to say which.
+    """
+
+    def test_an_unchanging_scene_is_flagged_static(self):
+        rng = np.random.default_rng(0)
+        base = rng.normal(size=64) * 5.0
+        X = np.array([base + rng.normal(size=64) * 0.01 for _ in range(400)],
+                     dtype=np.float32)
+        ts = np.arange(len(X)) * 15.0
+        r = lp.temporal_coherence(X, ts, rng=rng)
+        self.assertTrue(r["static_scene"], r)
+        self.assertLess(r["scene_spread"], 0.05)
+
+    def test_a_varied_scene_is_not_flagged_static(self):
+        X, _ = drifting()
+        ts = np.arange(len(X)) * 15.0
+        r = lp.temporal_coherence(X, ts, rng=np.random.default_rng(0))
+        self.assertFalse(r["static_scene"], r)
+        self.assertGreater(r["scene_spread"], 0.05)
+
+    def test_noise_is_varied_but_has_no_structure(self):
+        """The two diagnoses are independent: plenty of variation, no
+        temporal structure. That one really is a blind representation."""
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(600, 64)).astype(np.float32)
+        ts = np.arange(600) * 15.0
+        r = lp.temporal_coherence(X, ts, rng=rng)
+        self.assertFalse(r["static_scene"], r)
+        self.assertLess(abs(r["d"]), 0.2)
+
+
 class MI(unittest.TestCase):
     def test_mi_is_zero_for_independent_labels(self):
         rng = np.random.default_rng(0)

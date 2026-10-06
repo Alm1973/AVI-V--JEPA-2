@@ -96,8 +96,17 @@ def temporal_coherence(X, ts, near_s=120.0, rng=None, pairs=4000):
         return None
     near, far = np.array(near), np.array(far)
     pooled = np.sqrt((near.var() + far.var()) / 2.0)
+    # How much the scene varied AT ALL. This has to be reported next to d,
+    # because a low d has two completely different causes and they demand
+    # opposite responses: either the representation is blind, or nothing
+    # happened. Measured 2026-10-05 overnight, far_mean was 0.988 -- random
+    # pairs 99% alike across 4.8 hours -- which is a dark empty room, not a
+    # bad encoder. Reporting only "weak" invites exactly the wrong conclusion.
+    spread = 1.0 - float(far.mean())
     return {"near_mean": round(float(near.mean()), 4),
             "far_mean": round(float(far.mean()), 4),
+            "scene_spread": round(spread, 4),
+            "static_scene": bool(spread < 0.05),
             "n_near": len(near), "n_far": len(far),
             # Cohen's d: how many standard deviations apart. Reported instead
             # of a p-value because with thousands of pairs everything is
@@ -186,10 +195,17 @@ def main():
         for k, v in tc.items():
             print(f"   {k}: {v}")
         d = tc["d"]
-        verdict = ("STRUCTURE" if d and d > 0.5 else
-                   "weak" if d and d > 0.2 else "NO STRUCTURE")
-        print(f"   -> {verdict} (d>0.5 is a clear yes, d<0.2 means the "
-              f"representation is not tracking the room)")
+        if tc["static_scene"]:
+            print(f"   -> INCONCLUSIVE: the scene barely varied "
+                  f"(random pairs {tc['far_mean']:.3f} alike, spread "
+                  f"{tc['scene_spread']:.3f}). There was nothing to track, so "
+                  f"d={d} says nothing about the representation. Re-run over a "
+                  f"period with activity in it.")
+        else:
+            verdict = ("STRUCTURE" if d and d > 0.5 else
+                       "weak" if d and d > 0.2 else "NO STRUCTURE")
+            print(f"   -> {verdict} (d>0.5 is a clear yes, d<0.2 means the "
+                  f"representation is not tracking the room)")
 
     Xn = unit(X)
     lab, _, inertia = kmeans(Xn, args.k, rng)
@@ -197,6 +213,15 @@ def main():
     print(f"\n   k={args.k} cluster sizes: {sizes.tolist()}")
 
     print("\n2. ROUTINE  (does cluster carry information about hour of day?)")
+    # Within ONE continuous session, hour-of-day IS the time index, so this
+    # cannot tell a daily routine from slow drift -- auto-exposure, a warming
+    # sensor, light creeping across a wall. It only becomes a statement about
+    # routine once the same hours recur on different days.
+    days = len({int(t // 86400) for t in meta["ts"]})
+    if days < 2:
+        print(f"   NOTE: {days} day of data. Hour-of-day is indistinguishable "
+              f"from elapsed time here, so a high score below means the "
+              f"latents DRIFT, not that a routine was found. Needs 2+ days.")
     # Coarse buckets: 24 hours over a few hundred samples is too sparse to
     # estimate MI, and the question is really about parts of the day.
     bucket = meta["hour"] // 3
