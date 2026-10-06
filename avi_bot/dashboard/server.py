@@ -155,6 +155,18 @@ class Arm:
         self.track_misses = 0
         self.last_trust = None
         self.last_light = None
+        # Latent logging lives HERE rather than in its own process, because
+        # the camera serves one consumer at a time and the two jobs were
+        # taking turns: checking on the robot meant pausing the learning, and
+        # collecting meant no POV page. Measured 2026-10-06 with YOLO already
+        # resident: 5.38 GB of 6.44 free, and V-JEPA 2 ViT-L needs 0.74, so
+        # they fit together and the turn-taking was never necessary.
+        self.latents = threading.Event()
+        self.latent_encoder = None
+        self.latent_db = None
+        self.latent_count = 0
+        self.latent_ms = None
+        self.latent_error = None
         # Live-tunable, so a value can be changed and watched without a push
         # and a restart. Chasing a confidence floor through a deploy cycle each
         # time is the slow way to find it.
@@ -292,6 +304,76 @@ class Arm:
                 time.sleep(1.0)
             time.sleep(period)
 
+    def latent_loop(self, latest, deadline, period=15.0):
+        """One V-JEPA latent every `period` seconds, while enabled.
+
+        Its own thread for the same reason the detector has one: the encoder
+        takes a few hundred milliseconds and must never delay a P frame inside
+        the firmware's watchdog.
+
+        Stores VECTORS, never frames. A failure here disables the loop and
+        records why rather than retrying every period -- a missing model would
+        otherwise fill the log and the GPU with the same error forever.
+        """
+        import cv2
+        import numpy as np
+        from datetime import datetime
+        while not self.stop.is_set() and time.time() < deadline:
+            if not self.latents.is_set() or self.latent_error:
+                time.sleep(1.0)
+                continue
+            started = time.time()
+            try:
+                if self.latent_encoder is None:
+                    self.note("loading V-JEPA 2 for latent logging ...")
+                    import latent_log
+                    self.latent_db = latent_log.open_db(
+                        latent_log.PROFILES["dev"])
+                    self.latent_encoder = latent_log.Encoder()
+                    self.note("latents: recording")
+                # A clip from the stream the dashboard already has, rather
+                # than a second camera handle -- there is only one camera.
+                frames, seq = [], -1
+                gray = None
+                for _ in range(latent_log.CLIP_FRAMES):
+                    jpeg, seq = latest.get_after(seq, timeout=2.0)
+                    if not jpeg:
+                        break
+                    bgr = cv2.imdecode(np.frombuffer(jpeg, np.uint8),
+                                       cv2.IMREAD_COLOR)
+                    if bgr is None:
+                        break
+                    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                    frames.append(cv2.resize(
+                        cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
+                        (latent_log.CLIP_SIZE, latent_log.CLIP_SIZE),
+                        interpolation=cv2.INTER_AREA))
+                if len(frames) < latent_log.CLIP_FRAMES or gray is None:
+                    time.sleep(1.0)
+                    continue
+                vec, ms = self.latent_encoder(frames)
+                now = time.time()
+                lt = datetime.fromtimestamp(now)
+                self.latent_db.execute(
+                    "INSERT INTO latents (ts, local_time, hour, weekday,"
+                    " changed, light_mean, light_sd, encode_ms, model, pool,"
+                    " dim, vec) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (now, lt.strftime("%Y-%m-%d %H:%M:%S"), lt.hour,
+                     lt.weekday(), 0, round(float(gray.mean()), 1),
+                     round(float(gray.std()), 1), round(ms, 1),
+                     self.latent_encoder.model_id,
+                     self.latent_encoder.pool, int(vec.shape[0]),
+                     vec.astype("float16").tobytes()))
+                self.latent_db.commit()
+                self.latent_count += 1
+                self.latent_ms = round(ms, 1)
+            except Exception as exc:
+                self.latent_error = f"{type(exc).__name__}: {exc}"[:160]
+                self.note(f"latents off: {self.latent_error}")
+            left = period - (time.time() - started)
+            if left > 0:
+                time.sleep(left)
+
     def follow(self):
         """One steering step. Called from the arm loop."""
         if not self.tracking.is_set():
@@ -427,6 +509,101 @@ class Arm:
             time.sleep(max(0.0, period - (time.time() - now)))
         log("arm loop ended")
 
+
+POV = b"""<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AVI POV</title>
+<style>
+  :root { --bg:#0e1116; --fg:#e6e8eb; --dim:#8b949e; --ok:#3fb950;
+          --warn:#d29922; --bad:#f85149; }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  header { display:flex; align-items:baseline; gap:12px; padding:10px 16px;
+           border-bottom:1px solid #222831 }
+  h1 { font-size:15px; margin:0; letter-spacing:.04em }
+  #age { color:var(--dim); font-size:12px }
+  main { padding:16px; max-width:900px; margin:0 auto }
+  .shot { width:100%; border-radius:8px; background:#000; display:block;
+          aspect-ratio:16/9; object-fit:contain }
+  .grid { display:grid; gap:8px; margin-top:14px;
+          grid-template-columns:repeat(auto-fit,minmax(130px,1fr)) }
+  .cell { background:#161b22; border:1px solid #222831; border-radius:6px;
+          padding:8px 10px }
+  .k { color:var(--dim); font-size:11px; text-transform:uppercase;
+       letter-spacing:.06em }
+  .v { font-size:16px; margin-top:2px }
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+  #joints { margin-top:14px; font-size:13px; color:var(--dim) }
+  #joints b { color:var(--fg); font-weight:500 }
+  footer { padding:10px 16px; color:var(--dim); font-size:12px }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) { --bg:#f6f8fa; --fg:#1f2328;
+      --dim:#59636e; }
+    :root:not([data-theme="dark"]) .cell { background:#fff;
+      border-color:#d1d9e0 }
+    :root:not([data-theme="dark"]) header { border-color:#d1d9e0 }
+  }
+</style></head><body>
+<header><h1>AVI \\u00b7 POV</h1><span id="age">connecting\\u2026</span></header>
+<main>
+  <img class="shot" id="shot" alt="camera view">
+  <div class="grid" id="grid"></div>
+  <div id="joints"></div>
+</main>
+<footer>live from the MSI over the tailnet. no frame is stored.</footer>
+<script>
+var shot = document.getElementById("shot");
+shot.src = "/stream.mjpg";
+function cell(k, v, cls) {
+  return '<div class="cell"><div class="k">' + k + '</div><div class="v ' +
+         (cls || "") + '">' + v + '</div></div>';
+}
+function light(n) {
+  if (n === null || n === undefined) return ["?", "warn"];
+  if (n < 30) return [n + " dark", "warn"];
+  return [n + "", "ok"];
+}
+function tick() {
+  fetch("/state", {cache: "no-store"}).then(function (r) { return r.json(); })
+  .then(function (s) {
+    document.getElementById("age").textContent =
+      "build " + s.build + " \\u00b7 updated " + new Date().toLocaleTimeString();
+    var hits = s.track_hits || 0, miss = s.track_misses || 0;
+    var rate = (hits + miss) ? Math.round(100 * hits / (hits + miss)) : null;
+    var lit = light(s.light);
+    var g = "";
+    g += cell("tracking", s.tracking ? "on" : "off",
+              s.tracking ? "ok" : "dim");
+    g += cell("sees you", s.person ? ("yes " + s.person.conf) : "no",
+              s.person ? "ok" : "");
+    g += cell("hit rate", rate === null ? "\\u2014" : rate + "%",
+              rate === null ? "" : (rate > 50 ? "ok" : "warn"));
+    g += cell("light", lit[0], lit[1]);
+    g += cell("trust floor", s.trust === null || s.trust === undefined
+              ? "\\u2014" : s.trust, "");
+    g += cell("error", s.track_error ? (s.track_error[0] + "\\u00b0") : "\\u2014",
+              s.track_error && Math.abs(s.track_error[0]) < 5 ? "ok" : "");
+    g += cell("mood", (s.mood && s.mood.emotion) || "\\u2014", "");
+    g += cell("busy", s.busy ? "moving" : "still", "");
+    g += cell("latents", s.latent_error ? "error"
+              : (s.latents ? (s.latent_count + " rec") : "off"),
+              s.latent_error ? "bad" : (s.latents ? "ok" : ""));
+    document.getElementById("grid").innerHTML = g;
+    document.getElementById("joints").innerHTML = (s.joints || []).map(
+      function (j) { return j.name + " <b>" + j.deg.toFixed(1) +
+                     "\\u00b0</b>"; }).join(" \\u00b7 ");
+  })
+  .catch(function () {
+    document.getElementById("age").textContent = "no answer from the robot";
+  });
+}
+tick();
+setInterval(tick, 2000);
+</script>
+</body></html>
+"""
 
 PAGE = b"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport"
@@ -725,6 +902,7 @@ refresh();
 
 BUILD = hashlib.md5(PAGE).hexdigest()[:7]
 PAGE_OUT = PAGE.replace(b"__BUILD__", BUILD.encode())
+POV_OUT = POV.replace(b"__BUILD__", BUILD.encode())
 
 
 def make_handler(st):
@@ -793,6 +971,10 @@ def make_handler(st):
                 "parallax_accepted": arm.rejector.accepted,
                 "trust": arm.last_trust,
                 "light": arm.last_light,
+                "latents": arm.latents.is_set(),
+                "latent_count": arm.latent_count,
+                "latent_ms": arm.latent_ms,
+                "latent_error": arm.latent_error,
                 "track_label": arm.track_label,
                 "mood_events": ["praise", "scold", "arrived", "left",
                                 "task_ok", "task_failed", "new_object",
@@ -812,6 +994,18 @@ def make_handler(st):
                 self._json(self._state())
             elif self.path == "/stream.mjpg":
                 self.stream()
+            elif self.path in ("/pov", "/pov.html"):
+                # A deliberately tiny page: the camera's view plus the few
+                # numbers that say whether the robot is alive. Exists because
+                # the full dashboard is a control surface -- forty controls
+                # and a mood panel -- and checking on the robot from a phone
+                # at school is a different job from driving it.
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(POV_OUT)))
+                self.send_header("Cache-Control", "no-store, must-revalidate")
+                self.end_headers()
+                self.wfile.write(POV_OUT)
             else:
                 self.send_error(404)
 
@@ -913,6 +1107,14 @@ def make_handler(st):
                 arm.attention.drop("face")
                 arm.note(f"tracking target: {arm.track_label or 'person'}")
                 self._json({"ok": True, "track_label": arm.track_label})
+            elif self.path == "/latents":
+                want = bool(body.get("on", not arm.latents.is_set()))
+                arm.latents.set() if want else arm.latents.clear()
+                if want:
+                    arm.latent_error = None      # let a retry be possible
+                arm.note("latents on" if want else "latents off")
+                self._json({"ok": True, "latents": want,
+                            "count": arm.latent_count})
             elif self.path == "/tracking":
                 want = bool(body.get("on", not arm.tracking.is_set()))
                 arm.tracking.set() if want else arm.tracking.clear()
@@ -1250,6 +1452,8 @@ def main():
                      daemon=True).start()
     threading.Thread(target=arm.run, daemon=True).start()
     threading.Thread(target=arm.track_loop, args=(latest, deadline),
+                     daemon=True).start()
+    threading.Thread(target=arm.latent_loop, args=(latest, deadline),
                      daemon=True).start()
 
     srv = ThreadingHTTPServer((host, args.port), make_handler({
