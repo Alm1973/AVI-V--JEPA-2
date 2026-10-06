@@ -588,3 +588,61 @@ thirds.
 - Latents still recording into `latents-dev.db`, ~7 h left on the task.
 - Dashboard still on the OLD code; a restart reopens COM5 and centres both
   servos, so it waits for him to be present.
+
+## The dome (his frame, 2026-10-06 afternoon)
+
+`avi_bot/perception/dome.py`. Look directions get a coordinate system anchored
+to a pose he taught: **elevation = angular distance below TALL, azimuth =
+rotation around it.**
+
+**TALL is the top because the arm cannot look higher.** Its wrist is 176.0 and
+the wrist's soft limit is 176.0 -- the pole is on the edge of reachability.
+
+**Elevation is a signed SUM of the three pitch joints**, because shoulder,
+elbow and wrist all rotate the camera about the same axis and orientation adds
+along a serial chain. Each gain should be near +-1; the wrist's measured 0.96
+agrees. base_yaw's 0.62 does not, which is the SAME anomaly depth.py found --
+now reached twice by independent routes. Something is wrong with that constant.
+
+**The signs were inferred, then checked, and the check is the evidence.** One
+of four sign combinations puts TALL top and REST bottom, and it also lands the
+three desk poses within 4 degrees of each other:
+
+    TALL 0.0   ATTENTIVE -39.1   OBSERVE -40.7   HOME -43.1   LOW -64.6
+
+Taught by hand on different days, no model in mind. A test asserts no other
+combination does this.
+
+**Two hard limits worth remembering:**
+- REST is at -269.6 degrees, which is not a direction. The arm is folded back
+  on itself there and the linear model is simply wrong. The dome refuses past
+  MAX_ELEVATION rather than returning arithmetic.
+- **The dome is ~87 degrees wide, not 360.** base_yaw spans 140 degrees of
+  command x 0.62 gain = +-43 degrees of azimuth. Covering a room needs the
+  BASE physically repositioned. No joint sequence will do it. This bounds
+  every sweep plan, and 360 is the natural wrong assumption.
+
+**Redundancy is resolved toward taught shapes.** Three pitch joints serve one
+degree of elevation, so a direction has infinitely many solutions; the one
+nearest a pose he taught is chosen, so the arm holds postures he picked rather
+than contorting.
+
+**POST /build_dome trains it from motion.** Each joint moves ALONE by 5 degrees
+while a landmark is tracked; the pixel slide is that joint's effect on the look
+direction. One at a time is required, not convenient: joints that always move
+together have unidentifiable gains, and `_fit_pitch` refuses an arbitrary split
+rather than inventing one. **shoulder and elbow have never been measured on
+hardware** -- `unknown()` names them as assumptions until they have been.
+
+Dome gains are CALIBRATION, so they carry over launch day. A measurement about
+the hardware, not about him.
+
+**Blocked on him being present**: /build_dome needs the dashboard restarted
+onto the new code (reopens COM5, centres both servos) and it swings shoulder
+and elbow, which no probe has moved before.
+
+### Next: re-express roommap on the dome
+roommap stores raw (yaw, wrist) and is only valid at one shoulder/elbow -- it
+refuses to mix shapes. The dome handles all four joints, so a place stored as a
+dome direction survives a change of shape. That is the real 3D map, and it is
+the natural next piece once the gains are measured.
