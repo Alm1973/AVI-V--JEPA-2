@@ -1311,16 +1311,42 @@ def make_handler(st):
     return Handler
 
 
-def _frame(latest):
+def _frame(latest, after=-1):
+    """One decoded frame, and the sequence number it came from.
+
+    `after` is what makes repeated calls return DIFFERENT images. Passing -1
+    asks for whatever is current, which returns immediately and hands back the
+    same frame every time if called in a loop.
+
+    That was not hypothetical. A survey asking for three frames per stop
+    logged `laptop:0.89, laptop:0.89, laptop:0.89` -- identical to two
+    decimals, because it was one frame decoded three times. Worse, the
+    median-of-nine added to build_dome to beat 12-21 px of box jitter was
+    taking the median of nine copies of one frame, so it reduced nothing and
+    the gains stayed exactly as noisy as before the fix.
+
+    Callers that want N independent looks must thread the returned sequence
+    back in. _look() does that.
+    """
     import cv2
     import numpy as np
     for _ in range(40):
-        jpeg, _ = latest.get_after(-1, timeout=2.0)
+        jpeg, seq = latest.get_after(after, timeout=2.0)
         if jpeg:
             f = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
             if f is not None:
-                return f
-    return None
+                return f, seq
+    return None, after
+
+
+def _look(latest, n):
+    """Yield up to `n` genuinely distinct frames, newest sequence onwards."""
+    seq = -1
+    for _ in range(int(n)):
+        frame, seq = _frame(latest, after=seq)
+        if frame is None:
+            return
+        yield frame
 
 
 def detect_debug(arm, latest, min_conf=0.05):
@@ -1334,7 +1360,7 @@ def detect_debug(arm, latest, min_conf=0.05):
     if arm.detector is None:
         from detector import DeskDetector
         arm.detector = DeskDetector()
-    frame = _frame(latest)
+    frame, _ = _frame(latest)
     if frame is None:
         return {"error": "no picture"}
     found = arm.detector.everything(frame, min_conf=min_conf)
@@ -1449,9 +1475,6 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
         looked = {"yaw": yaw, "wrist": wrist, "frames": 0,
                   "kept": [], "below_floor": [], "people": 0}
         for _ in range(frames):
-            frame = _frame(latest)
-            if frame is None:
-                continue
             visited += 1
             looked["frames"] += 1
             # Detect well BELOW the recording floor so near-misses are visible.
@@ -1546,7 +1569,7 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
 
     def best_landmark():
         """The strongest non-person box, and where it is."""
-        frame = _frame(latest)
+        frame, _ = _frame(latest)
         if frame is None:
             return None
         got = [d for d in arm.detector.everything(frame, min_conf=min_conf)
@@ -1593,10 +1616,7 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
         Gaussian noise, and one of those drags a mean a long way.
         """
         xs, ys = [], []
-        for _ in range(frames):
-            frame = _frame(latest)
-            if frame is None:
-                continue
+        for frame in _look(latest, frames):
             for d in arm.detector.everything(frame, min_conf=min_conf):
                 if d["label"] == label:
                     xs.append(d["cx"])
@@ -1737,10 +1757,7 @@ def probe_depth(arm, latest, swing=24.0, steps=7, settle=1.6,
     for yaw in yaws:
         arm.set("base_yaw", yaw)
         time.sleep(settle)
-        for _ in range(frames):
-            frame = _frame(latest)
-            if frame is None:
-                continue
+        for frame in _look(latest, frames):
             for d in arm.detector.everything(frame, min_conf=min_conf):
                 if d["label"] == "person":
                     continue        # people move; a moving point has no range
@@ -1824,10 +1841,7 @@ def probe_parallax(arm, latest, swing=15.0, settle=1.8, min_conf=0.35,
     for yaw in stops:
         arm.set("base_yaw", yaw)
         time.sleep(settle)
-        for _ in range(frames):
-            frame = _frame(latest)
-            if frame is None:
-                continue
+        for frame in _look(latest, frames):
             w = frame.shape[1]
             found = arm.detector.people(frame, min_conf=min_conf)
             arm.rejector.classify(found, yaw, w)
@@ -1883,7 +1897,7 @@ def probe_axis(arm, latest, joint="wrist", axis="cy", step=6.0, n=5,
     # cannot be mistaken for the first one moving.
     arm.set(joint, angles[len(angles) // 2])
     time.sleep(1.8)
-    frame = _frame(latest)
+    frame, _ = _frame(latest)
     if frame is None:
         arm.set_pose(start)
         return {"error": "no picture"}
@@ -1899,7 +1913,7 @@ def probe_axis(arm, latest, joint="wrist", axis="cy", step=6.0, n=5,
     for a in angles:
         arm.set(joint, a)
         time.sleep(1.8)
-        frame = _frame(latest)
+        frame, _ = _frame(latest)
         if frame is None:
             continue
         cands = [d for d in arm.detector.everything(frame, min_conf=min_conf)
