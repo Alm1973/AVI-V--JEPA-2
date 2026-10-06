@@ -111,10 +111,27 @@ class Calendar:
         self.ics_text = ics_text
         self.url = url
         self.tz = tz or dt.timezone(dt.timedelta(hours=-7))   # Phoenix, no DST
-        self.clock = clock or (lambda: dt.datetime.now(self.tz))
+        self._now = clock or (lambda: dt.datetime.now(self.tz))
         self.fetch = fetch
         self._reminded = set()
         self._rundown_date = None
+
+    def clock(self):
+        """Now, as an aware datetime -- whatever the injected clock returns.
+
+        A float epoch is accepted and converted. This matters more than it
+        looks: every other clock in AVI (store, timers, focus, modes) returns
+        epoch seconds, this one wanted a datetime, and the mismatch is why
+        main.py constructed the calendar with no clock at all. The calendar
+        then read real time while the rest of Avi read the injected clock, so
+        one object ran on two timelines -- which left a test failing for one
+        minute a day, and no calendar behaviour reachable through Avi pinnable
+        to a time at all.
+        """
+        now = self._now()
+        if isinstance(now, (int, float)):
+            return dt.datetime.fromtimestamp(now, tz=self.tz)
+        return now
 
     def _text(self):
         if self.ics_text is not None:

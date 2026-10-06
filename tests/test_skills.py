@@ -290,3 +290,182 @@ class Find(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def production_schema():
+    """The real SCHEMA string out of assistant/memory.py.
+
+    Read with ast rather than imported: memory.py imports `settings`, which
+    only exists on the MSI. Read rather than retyped, because a fixture that
+    declares its own idea of the table is what hid three bugs at once here --
+    the fixture above has a `cx` column that production has never had, so a
+    finder reading `cx` passed every test and returned None forever on the
+    robot.
+    """
+    import ast as _ast
+    src = (Path(__file__).resolve().parents[1]
+           / "assistant" / "memory.py").read_text()
+    for node in _ast.walk(_ast.parse(src)):
+        if (isinstance(node, _ast.Assign)
+                and any(isinstance(t, _ast.Name) and t.id == "SCHEMA"
+                        for t in node.targets)):
+            return _ast.literal_eval(node.value)
+    raise AssertionError("assistant/memory.py has no SCHEMA")
+
+
+class FindAgainstTheRealSchema(unittest.TestCase):
+    """The same skill, against the table production actually creates.
+
+    Everything here failed before the fix. Production stores x, y, w, h as
+    FRACTIONS of the frame and has no cx, so `seen.get("cx")` was always None
+    and AVI never once turned to look at what it found -- the half of the
+    acceptance test that makes this a robot skill rather than a SELECT.
+    """
+
+    def setUp(self):
+        self.clock = Clock()
+        self.db = sqlite3.connect(":memory:")
+        self.db.row_factory = sqlite3.Row
+        self.db.executescript(production_schema())
+        self.addCleanup(self.db.close)
+
+    def obs(self):
+        cur = self.db.execute(
+            "INSERT INTO observations (ts, local_time, local_date, weekday,"
+            " trigger, activity, activity_raw, activity_p, probs, vlm_calls,"
+            " latency_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (self.clock(), "t", "2026-10-06", 1, "heartbeat", "working",
+             "working", 0.9, "{}", 0, 1.0))
+        return cur.lastrowid
+
+    def seed(self, label, x, w=0.1, y=0.45, h=0.1, ago=60.0, zone="middle"):
+        """x is the LEFT edge as a fraction, exactly as the observer writes."""
+        self.db.execute(
+            "INSERT INTO sightings (observation_id, ts, label, det_conf,"
+            " vlm_margin, x, y, w, h, zone) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (self.obs(), self.clock() - ago, label, 0.8, 0.5, x, y, w, h, zone))
+        self.db.commit()
+
+    def finder(self, **kw):
+        kw.setdefault("centre_yaw", 60.0)        # OBSERVE, as retaught
+        kw.setdefault("centre_wrist", 147.9)
+        return find_mod.Finder(self.db, yaw_deg_per_frame=83.9,
+                               frame_width=1280, clock=self.clock, **kw)
+
+    def test_a_sighting_yields_a_yaw_at_all(self):
+        """The regression: this was None for every object, always."""
+        self.seed("mug", x=0.70, w=0.10)
+        _, yaw, found = self.finder().find("mug")
+        self.assertTrue(found)
+        self.assertIsNotNone(yaw, "no yaw from the real schema")
+
+    def test_the_centre_is_the_box_centre_not_its_left_edge(self):
+        self.seed("mug", x=0.70, w=0.10)          # centre at 0.75
+        _, yaw, _ = self.finder().find("mug")
+        # 0.75 of the frame is +0.25 from the middle; raising yaw moves a
+        # landmark LEFT, so something right of centre needs MORE yaw.
+        self.assertAlmostEqual(yaw, 60.0 + 0.25 * 83.9, places=2)
+
+    def test_dead_centre_needs_no_turn(self):
+        self.seed("laptop", x=0.45, w=0.10)       # centre at 0.50
+        _, yaw, _ = self.finder().find("laptop")
+        self.assertAlmostEqual(yaw, 60.0, places=6)
+
+    def test_the_centre_pose_is_observes_not_ninety(self):
+        """OBSERVE was retaught from 90 to 60. A default of 90 would put every
+        answer a third of a frame out while the sentence stayed right."""
+        self.seed("mug", x=0.45, w=0.10)
+        _, yaw, _ = self.finder().find("mug")
+        self.assertAlmostEqual(yaw, 60.0, places=6)
+        self.assertNotAlmostEqual(yaw, 90.0, places=1)
+
+    def test_an_unknown_pose_refuses_to_guess(self):
+        """A frame position is not a direction unless you know where the
+        camera was pointing. Saying so beats pointing at the wrong wall."""
+        self.seed("mug", x=0.70, w=0.10)
+        f = find_mod.Finder(self.db, 83.9, frame_width=1280,
+                            clock=self.clock)        # no centre_yaw
+        text, yaw, found = f.find("mug")
+        self.assertTrue(found, "it still knows WHEN it saw the mug")
+        self.assertIsNone(yaw)
+        aim = f.aim("mug")
+        self.assertFalse(aim["confident"])
+        self.assertIn("pose", aim["why"])
+
+    def test_a_wrist_comes_out_too(self):
+        self.seed("mug", x=0.45, w=0.10, y=0.70, h=0.10)
+        aim = self.finder().aim("mug")
+        self.assertIsNotNone(aim["wrist"])
+        self.assertGreater(aim["wrist"], 147.9, "below centre needs more wrist")
+
+
+class FindPrefersTheRoomMap(unittest.TestCase):
+    """The map stores an ABSOLUTE direction, so it does not depend on
+    remembering which way the camera was facing."""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.db = sqlite3.connect(":memory:")
+        self.db.row_factory = sqlite3.Row
+        self.db.executescript(production_schema())
+        self.addCleanup(self.db.close)
+
+    def a_map(self):
+        from avi_bot.perception import roommap as rm
+        m = rm.RoomMap(83.9, 32.2, (1280, 720), clock=self.clock)
+        m.anchor("TALL", 100.0, 150.0)
+        # Two separate viewpoints, so the place is confirmed.
+        m.observe("mug", 640, 360, 95.0, 150.0, conf=0.8)
+        m.observe("mug", 540, 360, 101.6, 150.0, conf=0.8)
+        return m
+
+    def seed_frame_sighting(self):
+        cur = self.db.execute(
+            "INSERT INTO observations (ts, local_time, local_date, weekday,"
+            " trigger, activity, activity_raw, activity_p, probs, vlm_calls,"
+            " latency_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (self.clock(), "t", "2026-10-06", 1, "heartbeat", "working",
+             "working", 0.9, "{}", 0, 1.0))
+        self.db.execute(
+            "INSERT INTO sightings (observation_id, ts, label, det_conf,"
+            " vlm_margin, x, y, w, h, zone) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (cur.lastrowid, self.clock() - 10, "mug", 0.8, 0.5, 0.0, 0.4,
+             0.05, 0.05, "left"))
+        self.db.commit()
+
+    def finder(self, roommap):
+        return find_mod.Finder(self.db, 83.9, frame_width=1280,
+                               clock=self.clock, centre_yaw=60.0,
+                               centre_wrist=147.9, roommap=roommap)
+
+    def test_the_map_answers_when_it_knows(self):
+        aim = self.finder(self.a_map()).aim("mug")
+        self.assertEqual(aim["source"], "map")
+        self.assertTrue(aim["confident"])
+        self.assertAlmostEqual(aim["base_yaw"], 95.0, delta=2.0)
+        self.assertEqual(aim["near"], "TALL")
+
+    def test_the_map_wins_over_a_stored_frame_position(self):
+        self.seed_frame_sighting()
+        aim = self.finder(self.a_map()).aim("mug")
+        self.assertEqual(aim["source"], "map")
+
+    def test_an_object_in_neither_place_is_not_invented(self):
+        self.assertIsNone(self.finder(self.a_map()).aim("ocarina"))
+
+    def test_find_agrees_with_roommap_geometry(self):
+        """One geometry, one place for a sign error to live.
+
+        find.yaw_for and RoomMap.direction_of convert the same thing. If they
+        ever disagree, the sentence and the arm disagree, which is the exact
+        failure that cost a day on base_yaw.
+        """
+        from avi_bot.perception import roommap as rm
+        m = rm.RoomMap(83.9, 32.2, (1280, 720), clock=self.clock)
+        f = self.finder(None)
+        for cx, cy in ((0, 0), (320, 180), (640, 360), (1000, 500),
+                       (1279, 719)):
+            with self.subTest(cx=cx, cy=cy):
+                want_yaw, want_wrist = m.direction_of(cx, cy, 60.0, 147.9)
+                self.assertAlmostEqual(f.yaw_for(cx), want_yaw, places=6)
+                self.assertAlmostEqual(f.wrist_for(cy), want_wrist, places=6)

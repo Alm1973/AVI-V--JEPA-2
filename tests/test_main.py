@@ -18,7 +18,17 @@ ICS = (Path(__file__).resolve().parents[1] /
 
 
 class Clock:
-    def __init__(self, t=1_760_000_000.0):
+    # 2026-10-06 07:00 America/Phoenix, which is a date the ICS fixture
+    # actually covers. The default used to be an arbitrary 2025 timestamp, and
+    # that only worked because the calendar was reading real time instead of
+    # this clock: test_the_schedule_comes_from_the_fixture asked for "today"
+    # and got the real today, which happened to be the fixture's 2026-10-06.
+    # It would have failed on any other day of the year.
+    #
+    # 07:00 is also chosen to sit clear of every reminder window in the
+    # fixture -- 08:00, 10:00, 14:00 and 18:30 -- so a tick() in an unrelated
+    # test is not interrupted by a calendar warning.
+    def __init__(self, t=1_791_295_200.0):
         self.t = t
 
     def __call__(self):
@@ -186,3 +196,57 @@ class ArmFailuresDoNotReachTheBrain(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OneTimeline(unittest.TestCase):
+    """Avi must not run on two clocks at once.
+
+    The calendar was built without `clock=`, so it read real time while timers,
+    focus and modes read the injected one. The visible symptom was a test that
+    failed only in the ten minutes before the fixture's 10:00 Chemistry -- a
+    one-minute window, once a day, on a machine nobody was watching. The
+    invisible one is worse: no calendar behaviour reachable through Avi could
+    be pinned to a time, so none of it was really under test.
+    """
+
+    def test_the_calendar_uses_avis_clock(self):
+        clock = Clock()
+        avi = build(clock=clock)
+        self.addCleanup(avi.close)
+        # The calendar returns an aware datetime where the rest of AVI
+        # returns epoch seconds, so compare the instant, not the type.
+        self.assertAlmostEqual(avi.calendar.clock().timestamp(), clock(),
+                               places=3,
+                               msg="the calendar is reading a different clock")
+
+    def test_every_clocked_part_agrees(self):
+        clock = Clock()
+        avi = build(clock=clock)
+        self.addCleanup(avi.close)
+        for name in ("timers", "focus", "modes", "calendar"):
+            part = getattr(avi, name, None)
+            got = getattr(part, "clock", None)
+            if callable(got):
+                with self.subTest(name):
+                    now = got()
+                    now = now.timestamp() if hasattr(now, "timestamp") else now
+                    self.assertAlmostEqual(
+                        now, clock(), places=3,
+                        msg=f"{name} is on a different timeline")
+
+    def test_the_default_clock_lands_on_a_day_the_fixture_covers(self):
+        """If the pinned clock and the fixture's dates ever drift apart,
+        "today" silently becomes an empty day and every schedule test starts
+        passing or failing by calendar coincidence rather than by behaviour."""
+        avi = build(clock=Clock())
+        self.addCleanup(avi.close)
+        self.assertTrue(avi.calendar.events("today"),
+                        "the ICS fixture has no events on the pinned date")
+
+    def test_a_pinned_clock_gives_a_stable_tick(self):
+        """The regression itself: tick() must not depend on the wall clock."""
+        clock = Clock()
+        avi = build(clock=clock)
+        self.addCleanup(avi.close)
+        self.assertIsNone(avi.tick())
+        self.assertIsNone(avi.tick())

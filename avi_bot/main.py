@@ -25,6 +25,7 @@ from . import numbers, scheduler as sched_mod                   # noqa: F401
 from .brain import context as context_mod
 from .brain import providers, router as router_mod, speech, tools
 from .memory import db as memdb
+from .motion import poses as poses_mod
 from .skills import (apps as apps_mod, calendar as cal_mod,
                      find as find_mod, focus as focus_mod,
                      lamp as lamp_mod, media as media_mod,
@@ -66,7 +67,14 @@ class Avi:
         self.modes = modes_mod.Modes(clock=clock, policy=self.policy,
                                      on_pose=self._pose,
                                      on_logging=self._set_logging)
-        self.calendar = cal_mod.Calendar(ics_text=ics_text, url=calendar_url)
+        # clock=clock is not cosmetic. Without it the calendar read real time
+        # while every other part of Avi read the injected clock, so one object
+        # ran on two timelines: a pinned test at 2025-10-09 would get calendar
+        # warnings for the real 2026-10-06, and test_a_due_timer_surfaces
+        # failed only during the ten minutes before the fixture's 10:00
+        # Chemistry -- a one-minute window, once a day.
+        self.calendar = cal_mod.Calendar(ics_text=ics_text, url=calendar_url,
+                                         clock=clock)
         self.lamp = lamp_mod.Lamp(host=lamp_host)
         self.media = media_mod.Media()
         self.apps = (apps_mod.Apps(path=apps_path) if apps_path
@@ -134,14 +142,35 @@ class Avi:
                 else f"{hour}:{lt.tm_min:02d}") + ".", None
 
     def _find(self, name):
+        """Answer where something is, and look at it when that is knowable.
+
+        The centre angles are NOT optional and NOT defaulted. The logger
+        records object positions only from OBSERVE, so a stored image position
+        means nothing without OBSERVE's own angles -- and OBSERVE moved from
+        base_yaw 90 to 60 when it was retaught, which would have put every
+        answer a third of a frame out had the old default survived.
+        """
         if self.arm is None or not hasattr(self.arm, "db"):
             return "I can't see the desk right now.", None
-        finder = find_mod.Finder(self.arm.db,
-                                 self.arm.config.camera["yaw_deg_per_frame"])
+        cam = self.arm.config.camera
+        observe = poses_mod.POSES.get("OBSERVE") or {}
+        finder = find_mod.Finder(
+            self.arm.db, cam["yaw_deg_per_frame"],
+            wrist_deg_per_frame=cam.get("wrist_deg_per_frame", 32.2),
+            centre_yaw=observe.get("base_yaw"),
+            centre_wrist=observe.get("wrist"),
+            roommap=getattr(self.arm, "roommap", None))
         text, yaw, found = finder.find(name)
-        if found and yaw is not None:
-            self._safe(lambda: self.arm.set("base_yaw", yaw))
-        return text, {"yaw": yaw, "found": found}
+        aim = finder.aim(name)
+        # Only a direction the finder vouches for drives the arm. Pointing
+        # confidently at the wrong wall is worse than not turning.
+        if aim and aim.get("confident"):
+            self._safe(lambda: self.arm.set("base_yaw", aim["base_yaw"]))
+            if aim.get("wrist") is not None:
+                self._safe(lambda: self.arm.set("wrist", aim["wrist"]))
+        return text, {"yaw": yaw, "found": found,
+                      "source": (aim or {}).get("source"),
+                      "confident": bool(aim and aim.get("confident"))}
 
     def _pose(self, name):
         self._safe(lambda: self.arm.recall(name))
