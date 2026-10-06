@@ -326,3 +326,81 @@ class AgainstTheRealConfig(unittest.TestCase):
         for name in ("OBSERVE", "ATTENTIVE", "HOME", "LOW"):
             with self.subTest(name):
                 self.assertGreater(d.elevation_of(poses_mod.POSES[name]), 0.0)
+
+
+class ItReportsHowWellItFitted(unittest.TestCase):
+    """A gain without a residual is indistinguishable from noise.
+
+    Two samples per joint is a fit through two points: it cannot fail and it
+    cannot be checked. On the real arm that produced base_yaw gains of 0.21,
+    0.24, 0.51 and 0.68 on four runs -- a 3x spread read out as four
+    measurements, every one of them looking clean.
+    """
+
+    def samples(self, gains, mags=(2.0, 4.0, 6.0), jitter=0.0, seed=0,
+                frame=(1280, 720), fov=(52.0, 31.0)):
+        import random
+        rng = random.Random(seed)
+        w, h = frame
+        out = []
+        for joint in ("base_yaw", "shoulder", "elbow", "wrist"):
+            for m in mags:
+                for step in (+m, -m):
+                    before = dict(POSES["HOME"])
+                    after = dict(before, **{joint: before[joint] + step})
+                    if joint == "base_yaw":
+                        dx = -(gains["base_yaw"] * step / fov[0]) * w
+                        dy = 0.0
+                    else:
+                        dx = 0.0
+                        dy = (dome_mod.PITCH_SIGNS[joint] * gains[joint]
+                              * step / fov[1]) * h
+                    if jitter:
+                        dx += rng.gauss(0, jitter)
+                        dy += rng.gauss(0, jitter)
+                    out.append((before, after, dx, dy))
+        return out
+
+    def test_clean_data_fits_and_says_so(self):
+        truth = dict(dome_mod.DEFAULT_GAINS)
+        d = a_dome()
+        d.learn(self.samples(truth))
+        self.assertTrue(d.fit["base_yaw"]["trustworthy"])
+        self.assertTrue(d.fit["pitch"]["trustworthy"])
+        self.assertGreater(d.fit["base_yaw"]["r2"], 0.99)
+
+    def test_two_points_per_joint_is_refused_outright(self):
+        """The structural flaw, and the real bug behind base_yaw's 3x spread.
+
+        The guard was `len(rows_az) >= min_samples`, but rows_az held every
+        sample while the fit used only the two that moved base_yaw -- so a
+        two-point fit passed a three-sample check. Counting only the samples
+        that moved the joint makes it refuse instead.
+        """
+        d = a_dome()
+        got = d.learn(self.samples(dome_mod.DEFAULT_GAINS, mags=(2.0,)))
+        self.assertNotIn("base_yaw", got)
+        self.assertNotIn("base_yaw", d.fit)
+
+    def test_a_base_yaw_sample_does_not_pollute_the_pitch_fit(self):
+        """Its pitch row is all zeros, so it can never be explained -- and on
+        real hardware its dy is not zero either."""
+        d = a_dome()
+        d.learn(self.samples(dome_mod.DEFAULT_GAINS))
+        # 3 pitch joints x 3 magnitudes x 2 signs, with base_yaw's 6 excluded.
+        self.assertEqual(d.fit["pitch"]["n"], 18)
+
+    def test_noise_shows_up_in_the_residual(self):
+        """The whole point: a gain fitted through scatter must look different
+        from one fitted through a line."""
+        d = a_dome()
+        d.learn(self.samples(dome_mod.DEFAULT_GAINS, jitter=90.0, seed=5))
+        self.assertFalse(d.fit["base_yaw"]["trustworthy"])
+        self.assertGreater(d.fit["base_yaw"]["rms_deg"], 1.0)
+
+    def test_more_magnitudes_give_more_samples_to_judge(self):
+        d = a_dome()
+        d.learn(self.samples(dome_mod.DEFAULT_GAINS, mags=(2.0, 4.0, 6.0)))
+        self.assertEqual(d.fit["base_yaw"]["n"], 6)
+        self.assertEqual(d.fit["pitch"]["n"], 18)
+        self.assertTrue(d.fit["base_yaw"]["trustworthy"])

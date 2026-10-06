@@ -75,6 +75,7 @@ class Dome:
         self.signs = dict(PITCH_SIGNS, **(signs or {}))
         self.limits = dict(limits or {})
         self.learned = set()
+        self.fit = {}
 
     # --- the frame -------------------------------------------------------
     def _pitch(self, joints):
@@ -234,18 +235,58 @@ class Dome:
             rows_el.append([self.signs[j] * d[j] for j in PITCH_SIGNS])
             rhs_el.append((dy / h) * fov_y)
 
-        got = {}
-        if len(rows_az) >= min_samples and any(abs(x) > 1e-6 for x in rows_az):
-            num = sum(a * b for a, b in zip(rows_az, rhs_az))
-            den = sum(a * a for a in rows_az)
+        got, self.fit = {}, {}
+        used_az = [(a, b) for a, b in zip(rows_az, rhs_az) if abs(a) > 1e-6]
+        if len(used_az) >= min_samples:
+            num = sum(a * b for a, b in used_az)
+            den = sum(a * a for a, _ in used_az)
             if den > 1e-9:
-                got["base_yaw"] = num / den
-        if len(rows_el) >= min_samples:
-            got.update(self._fit_pitch(rows_el, rhs_el))
+                g = num / den
+                got["base_yaw"] = g
+                self.fit["base_yaw"] = self._quality(
+                    [[a] for a, _ in used_az], [b for _, b in used_az], [g])
+        # Only rows where a pitch joint actually moved. A base_yaw-only sample
+        # has an all-zero pitch row, so it can never be explained and only
+        # drags the residual around -- and on real hardware its dy is not even
+        # zero. The same mistake on the azimuth side was the actual cause of
+        # base_yaw's 3x spread: the guard counted all eight samples while the
+        # fit used the two that had moved it.
+        used_el = [(row, y) for row, y in zip(rows_el, rhs_el)
+                   if any(abs(v) > 1e-6 for v in row)]
+        if len(used_el) >= min_samples:
+            rows_el = [r for r, _ in used_el]
+            rhs_el = [y for _, y in used_el]
+            pitch = self._fit_pitch(rows_el, rhs_el)
+            got.update(pitch)
+            if pitch:
+                self.fit["pitch"] = self._quality(
+                    rows_el, rhs_el, [pitch[j] for j in PITCH_SIGNS])
         for k, v in got.items():
             self.gains[k] = v
             self.learned.add(k)
         return got
+
+    @staticmethod
+    def _quality(rows, rhs, coeffs):
+        """How much of the signal the fit actually explains.
+
+        Reported because a gain without it is indistinguishable from noise. A
+        two-point fit always passes through both points and so always looks
+        perfect, which is exactly how base_yaw came back as 0.21, 0.24, 0.51
+        and 0.68 from the same arm -- a 3x spread read out as four
+        measurements.
+        """
+        pred = [sum(c * x for c, x in zip(coeffs, row)) for row in rows]
+        resid = [y - p for y, p in zip(rhs, pred)]
+        n = len(rhs)
+        mean = sum(rhs) / n
+        ss = sum((y - mean) ** 2 for y in rhs)
+        rss = sum(r * r for r in resid)
+        return {"n": n,
+                "rms_deg": round((rss / n) ** 0.5, 3),
+                "r2": round(1.0 - rss / ss, 4) if ss > 1e-12 else None,
+                "trustworthy": bool(n >= 4 and ss > 1e-12
+                                    and (1.0 - rss / ss) > 0.9)}
 
     def _fit_pitch(self, rows, rhs):
         """Least squares for the three pitch gains. Normal equations by hand.

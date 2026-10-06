@@ -1422,7 +1422,7 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
 
 
 def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
-               prefer="OBSERVE", frames=2):
+               prefer="OBSERVE", frames=2, magnitudes=None):
     """Learn the dome's joint-to-direction map from the arm's own motion.
 
     What Shaurya asked for: establish a dome with TALL at the top, then move
@@ -1491,11 +1491,16 @@ def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
                 "hint": "a laptop, a bottle or a mug works"}
     label = anchor_det["label"]
 
+    # SEVERAL magnitudes per joint, not one. Two samples per joint is a fit
+    # through two points: it cannot fail and it cannot be checked, which is
+    # how base_yaw came back as 0.21, 0.24, 0.51 and 0.68 from the same arm
+    # on four runs. More magnitudes give the residual something to say.
+    mags = [float(m) for m in (magnitudes or (step, step * 2, step * 3))]
     samples, lost = [], []
     for joint in ("base_yaw", "shoulder", "elbow", "wrist"):
         lo, hi = arm.config.soft_limits(joint)
         home = arm.snapshot()
-        for signed in (+step, -step):
+        for signed in [s for m in mags for s in (+m, -m)]:
             target = home[joint] + signed
             if not (lo <= target <= hi):
                 lost.append(f"{joint}{signed:+.0f}: outside {lo:.0f}..{hi:.0f}")
@@ -1525,7 +1530,8 @@ def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
     before_gains = dict(d.gains)
     learned = d.learn(samples)
 
-    out = {"landmark": label, "step": step, "samples": len(samples),
+    out = {"landmark": label, "step": step, "magnitudes": mags,
+           "samples": len(samples), "fit": d.fit,
            "lost": lost, "gains_before": before_gains,
            "learned": {k: round(v, 4) for k, v in learned.items()},
            "still_assumed": d.unknown(),
