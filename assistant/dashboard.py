@@ -1,6 +1,6 @@
 """Launcher for the dashboard, which lives in avi_bot/dashboard/server.py.
 
-It sits here because task-ctl.ps1 runs scheduled tasks out of avi\assistant\,
+It sits here because task-ctl.ps1 runs scheduled tasks out of avi/assistant/,
 and a one-line shim is less fragile than teaching the task runner a second
 directory layout.
 """

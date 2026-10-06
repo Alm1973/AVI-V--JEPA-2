@@ -1499,7 +1499,7 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
         time.sleep(settle)
         looked = {"yaw": yaw, "wrist": wrist, "frames": 0,
                   "kept": [], "below_floor": [], "people": 0}
-        for _ in range(frames):
+        for frame in _look(latest, frames):
             visited += 1
             looked["frames"] += 1
             # Detect well BELOW the recording floor so near-misses are visible.
