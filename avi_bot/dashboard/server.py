@@ -845,10 +845,15 @@ def make_handler(st):
             elif self.path == "/probe_static":
                 self._json(probe_static(
                     arm, latest, swing=float(body.get("swing", 7.0)),
-                    min_conf=float(body.get("min_conf", 0.45))))
-            elif self.path == "/probe_wrist":
-                self._json(probe_wrist(
-                    arm, latest, step=float(body.get("step", 6.0)),
+                    min_conf=float(body.get("min_conf", 0.45)),
+                    frames=int(body.get("frames", 4))))
+            elif self.path in ("/probe_wrist", "/probe_yaw"):
+                wrist = self.path == "/probe_wrist"
+                self._json(probe_axis(
+                    arm, latest,
+                    joint="wrist" if wrist else "base_yaw",
+                    axis="cy" if wrist else "cx",
+                    step=float(body.get("step", 6.0)),
                     n=int(body.get("n", 5)),
                     min_conf=float(body.get("min_conf", 0.25))))
             elif self.path == "/tracking":
@@ -935,7 +940,8 @@ def detect_debug(arm, latest, min_conf=0.05):
             "n": len(found), "found": found[:25]}
 
 
-def probe_static(arm, latest, swing=7.0, settle=1.8, min_conf=0.45):
+def probe_static(arm, latest, swing=7.0, settle=1.8, min_conf=0.45,
+                 frames=4):
     """Pan the base deliberately and learn which candidates do not move.
 
     The passive version only learns while the arm happens to be panning, and
@@ -962,14 +968,19 @@ def probe_static(arm, latest, swing=7.0, settle=1.8, min_conf=0.45):
     for yaw in stops:
         arm.set("base_yaw", yaw)
         time.sleep(settle)
-        frame = _frame(latest)
-        if frame is None:
-            continue
-        w = frame.shape[1]
-        for c in arm.detector.people(frame, min_conf=min_conf):
-            arm.rejector.observe(yaw, c["cx"], w)
-            seen.append({"yaw": round(yaw, 1), "cx": round(c["cx"]),
-                         "conf": round(c["conf"], 2)})
+        # Several frames per stop. A candidate sitting at the confidence
+        # floor flickers, and one frame per stop found it at only one of four
+        # yaw positions -- which leaves nothing to pair it against and so
+        # proves nothing either way.
+        for _ in range(frames):
+            frame = _frame(latest)
+            if frame is None:
+                continue
+            w = frame.shape[1]
+            for c in arm.detector.people(frame, min_conf=min_conf):
+                arm.rejector.observe(yaw, c["cx"], w)
+                seen.append({"yaw": round(yaw, 1), "cx": round(c["cx"]),
+                             "conf": round(c["conf"], 2)})
     arm.set_pose(start)
     log(f"probe_static: {len(seen)} sightings, {len(arm.rejector.zones)} static")
     return {"swing": swing, "sightings": seen,
@@ -977,12 +988,15 @@ def probe_static(arm, latest, swing=7.0, settle=1.8, min_conf=0.45):
             "why": arm.rejector.describe()}
 
 
-def probe_wrist(arm, latest, step=6.0, n=5, min_conf=0.25):
+def probe_axis(arm, latest, joint="wrist", axis="cy", step=6.0, n=5,
+               min_conf=0.25):
     """Measure wrist_deg_per_frame the way yaw was measured: off a DETECTION.
 
-    config/joints.toml carries wrist_deg_per_frame = 60.0 flagged
-    wrist_measured = false -- a conservative guess, which is why vertical
-    tracking crawls. This replaces it with a number.
+    `joint` is the joint to step and `axis` the box coordinate that should
+    move as a result: ("wrist", "cy") for vertical, ("base_yaw", "cx") for
+    horizontal. Both constants in [camera] come out of the same procedure,
+    which is the point -- yaw's 29.0 was measured a different way, and a
+    constant the parallax filter depends on deserves a second method.
 
     THE METHOD MATTERS. Four optical measurements of arm motion failed on
     2026-10-05: phase correlation twice (no peak, 0.00-0.07), dense Farneback
@@ -1000,19 +1014,19 @@ def probe_wrist(arm, latest, step=6.0, n=5, min_conf=0.25):
         from detector import DeskDetector
         arm.detector = DeskDetector()
     start = arm.snapshot()
-    lo, hi = arm.config.soft_limits("wrist")
-    here = start["wrist"]
+    lo, hi = arm.config.soft_limits(joint)
+    here = start[joint]
     half = step * (n - 1) / 2.0
     angles = [here - half + i * step for i in range(n)]
     angles = [a for a in angles if lo <= a <= hi]
     if len(angles) < 3:
         arm.set_pose(start)
-        return {"error": f"no room to sweep: wrist at {here} in {lo}..{hi}"}
+        return {"error": f"no room to sweep: {joint} at {here} in {lo}..{hi}"}
 
     # Lock onto one landmark. The desk's most confident object, chosen once at
     # the middle of the sweep, then followed by nearest-box so a second mug
     # cannot be mistaken for the first one moving.
-    arm.set("wrist", angles[len(angles) // 2])
+    arm.set(joint, angles[len(angles) // 2])
     time.sleep(1.8)
     frame = _frame(latest)
     if frame is None:
@@ -1028,7 +1042,7 @@ def probe_wrist(arm, latest, step=6.0, n=5, min_conf=0.25):
 
     pts, track = [], seed[0]
     for a in angles:
-        arm.set("wrist", a)
+        arm.set(joint, a)
         time.sleep(1.8)
         frame = _frame(latest)
         if frame is None:
@@ -1038,7 +1052,7 @@ def probe_wrist(arm, latest, step=6.0, n=5, min_conf=0.25):
         if not cands:
             continue
         track = min(cands, key=lambda d: abs(d["cx"] - track["cx"]))
-        pts.append((a, float(track["cy"])))
+        pts.append((a, float(track[axis])))
     arm.set_pose(start)
 
     if len(pts) < 3:
@@ -1057,7 +1071,9 @@ def probe_wrist(arm, latest, step=6.0, n=5, min_conf=0.25):
     syy = sum((y - my) ** 2 for _, y in pts)
     r2 = (sxy * sxy / (sxx * syy)) if syy else 0.0
     span = abs(slope) * (max(a for a, _ in pts) - min(a for a, _ in pts))
-    out = {"landmark": label, "points": [[round(a, 1), round(y)] for a, y in pts],
+    size = h if axis == "cy" else w
+    out = {"joint": joint, "axis": axis, "landmark": label,
+           "points": [[round(a, 1), round(y)] for a, y in pts],
            "slope_px_per_deg": round(slope, 2), "r2": round(r2, 3),
            "span_px": round(span), "frame": [w, h]}
     # 4 px is the measured scene noise; a span near it proves nothing, and a
@@ -1066,9 +1082,14 @@ def probe_wrist(arm, latest, step=6.0, n=5, min_conf=0.25):
         out["error"] = ("fit too weak to record: need span >= 40 px and "
                         "r2 >= 0.80")
         return out
-    out["wrist_deg_per_frame"] = round(abs(h / slope), 1)
-    out["sign"] = "up" if slope < 0 else "down"
-    log(f"probe_wrist: {out['wrist_deg_per_frame']} deg/frame "
+    out["deg_per_frame"] = round(abs(size / slope), 1)
+    if axis == "cy":
+        out["landmark_moves"] = "down" if slope > 0 else "up"
+        out["view_tilts"] = "up" if slope > 0 else "down"
+    else:
+        out["landmark_moves"] = "right" if slope > 0 else "left"
+        out["view_pans"] = "left" if slope > 0 else "right"
+    log(f"probe_axis {joint}/{axis}: {out['deg_per_frame']} deg/frame "
         f"off {label}, r2={r2:.3f}")
     return out
 

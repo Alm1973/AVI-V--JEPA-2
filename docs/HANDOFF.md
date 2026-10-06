@@ -132,6 +132,37 @@ they sit at max-diff 1–2 on a live stream. Compare raw 1280×720.
 **The C270's first ~5 frames are black with `ok=True`.** `open_camera()` loops
 until `frame.mean() >= 1.0`; keep that.
 
+### The wrist is 32.2°/frame, not 60 — and higher degrees look UP
+
+Measured 2026-10-05 by `POST /probe_wrist`, off a detected laptop rather than
+optical flow: wrist 125 → 143° moved it 95 → 494 px down a 720 px frame,
+slope 22.33 px/deg, **r² = 0.986**. 720 / 22.33 = **32.2°/frame**.
+
+The old 60.0 was a guess and nearly **double**. With gain 0.45 the vertical
+loop was correcting 0.84 of the real error per step, not 0.45 — close to
+hunting rather than slow. (I had this backwards earlier in the session and
+said the guess made vertical tracking *slow*; it made it twitchy.)
+
+**Direction, settled three ways:** higher wrist degrees tilt the view **UP**.
+The taught poses (REST, asleep, camera down = 30.5; OBSERVE = 136; TALL = 176),
+Shaurya asking for the *max* raised to 170+ so it could look up, and this
+probe. `config/joints.toml` carried a comment claiming the opposite — it is
+fixed. **Say which thing moves:** the landmark moves *down*, the view goes
+*up*. Conflating those is how the direction got stated backwards twice.
+
+### Probably: base_yaw under-travels its command by ~1.8×
+
+32.2°/frame vertically is about the C270's vertical field of view (a 52°
+horizontal FOV at 16:9 implies ~31°), so the wrist travels very nearly the
+degrees it is commanded. Yaw's 29°/frame against a ~52° horizontal FOV does
+not. Same camera both times, so the asymmetry points at **base_yaw
+under-travelling**, not a narrow lens — which answers the open question that
+has been sitting in this file.
+
+Treat it as a strong inference, **not a measurement**: it leans on a datasheet
+FOV nobody here has checked. It changes nothing for `look_at`, which is
+calibrated in commanded degrees per frame either way.
+
 ### Person detection: confidence cannot do this job, parallax can
 
 Two overlapping ranges, measured 2026-10-05: **Shaurya 0.75–0.89** and **the
@@ -185,9 +216,10 @@ Also open:
   room.
 - Weekend desk hours, for the observer schedule and wake timers.
 - Is the ~29°/frame figure a narrow field of view or the yaw under-travelling
-  what it is commanded? Confounded, and it does not matter for `look_at`, which
-  is calibrated in exactly those units. It WOULD matter for anything that needs
-  a real angle, so separate them before trusting yaw as a measurement.
+  what it is commanded? **Probably under-travel, ~1.8×** — see the wrist
+  measurement above, which acts as the control. Not settled: it rests on a
+  datasheet FOV. To close it, measure a known real angle (two marks a known
+  distance apart at a known range) rather than trusting the lens spec.
 
 ## 5. Owed by Shaurya
 

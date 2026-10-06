@@ -45,7 +45,12 @@ class DeskDetector:
         watching THAT candidate across a pan, and a candidate that loses on
         confidence this frame is exactly the one that needs watching.
         """
-        res = self.model.predict(frame, conf=self.conf, verbose=False)[0]
+        # The MODEL's own threshold has to come down too, or min_conf can
+        # only ever be raised: asking for 0.10 while predicting at
+        # settings.DETECTOR_CONF returns nothing below that and looks exactly
+        # like an empty room. Cost a probe run on 2026-10-05.
+        res = self.model.predict(frame, conf=min(self.conf, min_conf),
+                                 verbose=False)[0]
         out = []
         for b in res.boxes:
             if self.model.names[int(b.cls.item())] != "person":

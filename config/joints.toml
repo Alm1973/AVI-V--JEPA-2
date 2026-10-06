@@ -162,8 +162,19 @@ max_count = 580
 # out at 28 deg/s on a UBEC. A stall could brown out every other joint with it.
 # If the wrist buzzes or binds near either end, pull these back.
 #
-# Remember which way is up: LOWER logical degrees tilt the camera UP (measured
-# 65 up, 115 down), so the extra upward travel is at the soft_min end.
+# Which way is up: HIGHER logical degrees tilt the camera UP, so the extra
+# upward travel is at the soft_MAX end. This comment said the opposite for a
+# while and the earlier "measured 65 up, 115 down" was simply wrong. Three
+# independent things agree on the correction:
+#   - the taught poses: REST, which is asleep with the camera down, is 30.5,
+#     while OBSERVE is 136 and TALL is 176;
+#   - Shaurya asked for the MAX raised to 170+ specifically so it could look
+#     up, which is only coherent one way round;
+#   - probe_wrist, 2026-10-05: stepping the wrist 125 -> 143 moved a laptop
+#     DOWN the frame 95 -> 494 px, r2 = 0.986. A landmark moving down means
+#     the camera tilted up.
+# Keep the two apart when writing this down: the LANDMARK moves down, the VIEW
+# goes up. Conflating them is how it got stated backwards twice.
 soft_min  = 4.0
 soft_max  = 176.0
 # Driven as of 2026-10-05, with the sign still PROVISIONAL.
@@ -204,11 +215,28 @@ base_height_mm   = 55
 [camera]
 yaw_deg_per_frame = 29.0
 
-# The wrist's equivalent, for vertical tracking. NOT MEASURED THE SAME WAY and
-# deliberately conservative: the two optical attempts at it disagreed (78 and
-# 34 deg per frame height) and both used methods later shown unreliable on this
-# scene. A gain that is too small converges slowly; one that is too large
-# oscillates, which is the failure that is hard to tell from a wrong sign. Run
-# the same closed-loop check vertically and replace this.
-wrist_deg_per_frame = 60.0
-wrist_measured = false
+# The wrist's equivalent, for vertical tracking. MEASURED 2026-10-05 by
+# probe_wrist: stepping the wrist across 125..143 degrees moved a detected
+# laptop 95 -> 494 px down a 720 px frame, slope 22.33 px/deg, r2 = 0.986.
+# 720 / 22.33 = 32.2 degrees per frame height.
+#
+# The 60.0 that sat here before was a guess, and it was nearly DOUBLE. With
+# gain 0.45 that made the vertical loop correct 0.84 of the measured error
+# every step instead of 0.45 -- still convergent, but close to hunting rather
+# than slow, which is the opposite of what the guess was chosen to be safe
+# against.
+#
+# Of the two earlier optical attempts (78 and 34), the 34 was close; both came
+# from methods since shown unreliable on this scene, so neither counts as
+# having got there.
+#
+# NOTE this one IS about the size of the camera's vertical field of view (a
+# 52 deg horizontal FOV at 16:9 implies about 31 deg vertically), i.e. the
+# wrist travels very nearly the degrees it is commanded. Yaw's 29 against a
+# ~52 deg horizontal FOV does not. Same camera both times, so that asymmetry
+# points at base_yaw UNDER-TRAVELLING its command by roughly a factor of 1.8,
+# not at a narrow lens -- which is the open question just above. Treat it as a
+# strong inference, not a measurement: it leans on the datasheet FOV, which
+# nobody here has measured.
+wrist_deg_per_frame = 32.2   # MEASURED 2026-10-05
+wrist_measured = true
