@@ -429,3 +429,90 @@ avi-desk/
 
 `docs/remote-notes.md` is the measured evidence log, in date order, with the
 numbers behind every claim in §3.
+
+## 2026-10-06, late morning (remote, from school)
+
+### What the admin console problem was
+Not the Tailscale account. The school network resets connections to
+`login.tailscale.com` specifically -- `github.com` returns 200 from the same
+Mac -- and Tailscale's own health check says it cannot reach the coordination
+server. The tailnet keeps working because the MSI link was already established
+as a direct connection to the home IP before this network, so the data plane
+is up while the control plane is blocked. **Enable HTTPS Certificates from a
+phone with wifi off, or from home.** It cannot be done from school.
+
+### Deploy now goes over sftp (~100x faster)
+The base64-through-PowerShell transport sent ~6000 characters per SSH
+connection, about 14 s per file, and today it wedged completely: 13 files in
+three minutes, then nine minutes stalled mid-file. Earlier in the session the
+same transport produced `chunk 1 failed at offset 6000`.
+
+`scripts/sync.sh` replaces it: **78 files in 11 s, 78/78 byte-for-byte.** SFTP
+is a separate subsystem of the same sshd, so the whole bash -> ssh ->
+PowerShell quoting chain disappears, along with the 32767-character
+command-line limit. Neither of push-file.sh's two recorded dead ends applies to
+it, and home-relative paths keep the space in "MSI-User" out of every
+filename. Verification does not trust the transport's exit status: the manifest
+of expected sizes goes over the same connection and `sizecheck.ps1` compares it
+on the MSI through `-File`.
+
+`scripts/deploy.sh` still exists and still works; prefer sync.sh.
+
+### Three real bugs found by reading code rather than running it
+
+**The room map forgot the room every night.** Solving the decay for the purge
+threshold: `weight * 0.5**(age/6h) >= 0.35` means lifetime grows as
+`log2(weight)`, so every doubling of the evidence bought a flat six hours and
+nothing could ever become permanent. Worse, weight counted frames, so it
+measured how long the camera stared rather than how reliably a thing is there
+-- a mug in view ten minutes outscored a monitor seen on thirty separate days.
+Durability is now earned by SPACING: each visit more than `VISIT_GAP_S` apart
+multiplies the half-life. Glimpsed once, it fades by the next evening; in the
+same spot on five separate days, it survives a month away. `MAX_WEIGHT = 20`
+caps the position-average mass, which also fixes a thing seen a thousand times
+being unable to be seen to MOVE.
+
+**find() never once looked at what it found.** It read a `cx` column that
+production does not have (sightings store x/y/w/h as fractions), so the yaw was
+always None and `main._find` only turns the arm when it is not None. Behind
+that, `centre_yaw` defaulted to 90 while the logger only records from OBSERVE,
+which was retaught to 60 -- so fixing the first bug alone would have put every
+answer a third of a frame out. All of it survived because the test fixture
+declared its own sightings table WITH a cx column; the fixture now reads the
+real SCHEMA out of `assistant/memory.py` with ast.
+
+**Avi ran on two clocks.** The calendar was built with no `clock=`, because
+every other clock in AVI returns epoch seconds and Calendar's wanted an aware
+datetime. So it read real time while timers, focus and modes read the injected
+clock. `test_a_due_timer_surfaces_through_tick` failed for one minute a day
+(the ten minutes before the fixture's 10:00 Chemistry), and
+`test_the_schedule_comes_from_the_fixture` was passing *because* of the bug --
+the fixture is hard-dated 2026-10-06 and so is today. It would have failed on
+any other day of the year.
+
+### The survey is instrumented, not yet tuned
+"2 sightings across 6 stops" is the same output whether the detector faced an
+empty wall, saw the desk at 0.25 and lost it to the 0.30 floor, or saw only a
+person. Detection now runs down to `REPORT_FLOOR = 0.10` and `/survey` returns
+`per_stop` with what each stop kept, what fell below the floor, and how many
+people it skipped. Tune the grid after reading that, not before.
+
+### State right now
+- **567 tests pass** on the Mac, no hardware.
+- Dashboard up ~7.4 h remaining on its task; **latents recording** into
+  `latents-dev.db` (433 ms/encode, no errors). Tracking and idle are OFF.
+- `map_places: 0` -- the map is empty and will stay so until a survey runs
+  under the new code.
+- **The dashboard has NOT been restarted**, so it is still running the old
+  code. Restarting reopens COM5, which resets the Arduino and drives both
+  servos to centre, and nobody is at the desk. It needs Shaurya present.
+- The room map now follows the launch-day rule: `roommap-dev.json` by default,
+  `roommap.json` only when asked. `tests/test_launch_profiles.py` pins that
+  rule for both the map and the latents, which until now rested on two
+  unexamined default strings in unrelated files with nothing checking either.
+
+### Caveat on today's latent run
+The room is empty and static while he is at school, so high temporal coherence
+would be trivially achievable and the `static_scene` guard should flag it. What
+today yields is a **brightness-varied, no-activity baseline** -- useful as the
+null, not as a positive result. The real probe needs him at the desk.
