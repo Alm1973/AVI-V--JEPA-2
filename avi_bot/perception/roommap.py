@@ -41,11 +41,49 @@ import time
 # the laptop beside it.
 SAME_DEG = 10.0
 
-# Half-life for a sighting's weight. A mug moves; a monitor does not. Rather
-# than guess which, every sighting decays and a thing that keeps being seen
-# in one place keeps a strong position while a thing that moved fades from
-# where it used to be.
-HALF_LIFE_S = 6 * 3600.0
+# How fast a place is forgotten. A mug moves; a monitor does not. Rather than
+# guess which, every sighting decays and a thing that keeps being seen in one
+# place keeps a strong position while a thing that moved fades from where it
+# used to be.
+#
+# The half-life is NOT fixed, and this is the whole design. Under a single
+# flat half-life the lifetime of a place grows only as log2(weight), so each
+# DOUBLING of the evidence buys one more half-life -- about six hours. Nothing
+# can ever become permanent, however long it has sat there. Worse, weight
+# counts frames, and frames measure how long the camera happened to stare: a
+# mug in view for ten minutes at 5 fps outscores a monitor seen briefly on
+# thirty separate days, which is backwards.
+#
+# So durability is earned by SPACING instead (Ebbinghaus): each visit that is
+# genuinely separated in time multiplies the half-life. Something glimpsed
+# once fades overnight; something still in the same spot a week later is
+# furniture, and the map should treat it that way.
+BASE_HALF_LIFE_S = 12 * 3600.0
+
+# Sightings closer together than this are the same visit. Without a gap rule a
+# 5 fps logger would bank thousands of "visits" in a minute and call a passing
+# mug permanent.
+VISIT_GAP_S = 4 * 3600.0
+
+# What each extra visit multiplies the half-life by.
+SPACING = 3.0
+
+# Ceiling on a place's accumulated weight. Weight is the mass of the position
+# average, and an uncapped one has two bad effects: a thing seen a thousand
+# times can never be seen to MOVE, because a thousand stale frames outvote
+# every new one, and frame count leaks back into durability through the decay.
+# Capping it keeps the position responsive and keeps a long stare from being
+# mistaken for a long acquaintance.
+#
+# The value is set by the outlier it has to survive: one bad box moves the
+# average by its distance over MAX_WEIGHT+1, so 20 keeps a single wild
+# detection under half a degree while a dozen consistent sightings at a new
+# spot still carry the position most of the way there.
+MAX_WEIGHT = 20.0
+
+# Nothing is believed forever without being seen again. A year of silence is
+# long enough that the room has certainly changed.
+MAX_HALF_LIFE_S = 365 * 24 * 3600.0
 
 # Below this total weight an entry is not worth reporting.
 MIN_WEIGHT = 0.35
@@ -68,7 +106,8 @@ class Place:
     """One object's believed direction, as an angle pair."""
 
     __slots__ = ("label", "yaw", "wrist", "weight", "first_at", "last_at",
-                 "count", "best_conf", "px_size", "stops")
+                 "count", "best_conf", "px_size", "stops", "visits",
+                 "last_visit_at")
 
     def __init__(self, label, yaw, wrist, at, conf=0.0, px_size=None):
         self.label = label
@@ -81,10 +120,30 @@ class Place:
         self.best_conf = float(conf)
         self.px_size = px_size
         self.stops = set()
+        self.visits = 1
+        self.last_visit_at = float(at)
+
+    @property
+    def half_life(self):
+        """How long this place keeps half its weight, earned by revisiting.
+
+        One visit is the base. Every separated visit after that multiplies it,
+        so belief hardens with time rather than with frame count.
+        """
+        return min(MAX_HALF_LIFE_S,
+                   BASE_HALF_LIFE_S * (SPACING ** (self.visits - 1)))
 
     def decayed(self, now):
         age = max(0.0, now - self.last_at)
-        return self.weight * (0.5 ** (age / HALF_LIFE_S))
+        return self.weight * (0.5 ** (age / self.half_life))
+
+    def note_visit(self, at):
+        """Count a separated return. Returns True if this began a new visit."""
+        if at - self.last_visit_at < VISIT_GAP_S:
+            return False
+        self.visits += 1
+        self.last_visit_at = float(at)
+        return True
 
     @property
     def confirmed(self):
@@ -94,6 +153,7 @@ class Place:
     def __repr__(self):
         return (f"<Place {self.label} yaw={self.yaw:.1f} wrist={self.wrist:.1f} "
                 f"seen {self.count}x from {len(self.stops)} views "
+                f"over {self.visits} visits "
                 f"conf<={self.best_conf:.2f}"
                 f"{'' if self.confirmed else ' UNCONFIRMED'}>")
 
@@ -178,10 +238,11 @@ class RoomMap:
             total = old + 1.0
             place.yaw = (place.yaw * old + want[0]) / total
             place.wrist = (place.wrist * old + want[1]) / total
-            place.weight = total
+            place.weight = min(MAX_WEIGHT, total)
             place.last_at = at
             place.count += 1
             place.stops.add(viewpoint)
+            place.note_visit(at)
             place.best_conf = max(place.best_conf, float(conf))
             if px_size:
                 place.px_size = px_size
@@ -315,6 +376,8 @@ class RoomMap:
                             "count": p.count,
                             "best_conf": round(p.best_conf, 3),
                             "px_size": p.px_size,
+                            "visits": p.visits,
+                            "last_visit_at": p.last_visit_at,
                             "stops": [list(v) for v in sorted(p.stops)]}
                            for p in self.places]}
 
@@ -334,5 +397,8 @@ class RoomMap:
             place.last_at = row.get("last_at", place.first_at)
             place.count = row.get("count", 1)
             place.stops = {tuple(v) for v in (row.get("stops") or [])}
+            place.visits = int(row.get("visits", 1))
+            place.last_visit_at = float(
+                row.get("last_visit_at", place.last_at))
             m.places.append(place)
         return m

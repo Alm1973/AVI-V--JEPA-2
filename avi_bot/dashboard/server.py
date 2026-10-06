@@ -313,15 +313,45 @@ class Arm:
                 time.sleep(1.0)
             time.sleep(period)
 
-    ROOMMAP_PATH = os.path.join(os.environ.get("USERPROFILE", "."),
-                                "avi-remote", "roommap.json")
+    # The map is something AVI learned about the room, so it follows the same
+    # launch-day rule as the latents: dev work accumulates in its own file and
+    # launch day genuinely starts from nothing. Discovering his room is part of
+    # what he wants to watch happen, not something to restore from a backup.
+    ROOMMAP_PROFILES = {"dev": "roommap-dev.json", "live": "roommap.json"}
+
+    @classmethod
+    def roommap_path(cls, profile=None):
+        profile = profile or os.environ.get("AVI_PROFILE", "dev")
+        name = cls.ROOMMAP_PROFILES.get(profile)
+        if name is None:
+            raise ValueError(
+                f"unknown profile {profile!r}; "
+                f"have {sorted(cls.ROOMMAP_PROFILES)}")
+        return os.path.join(os.environ.get("USERPROFILE", "."),
+                            "avi-remote", name)
+
+    @property
+    def ROOMMAP_PATH(self):
+        return self.roommap_path()
 
     def load_roommap(self):
+        """Load the saved map. A missing file is normal; a broken one is not.
+
+        The two were one bare `except: pass`, which made "nothing learned yet"
+        and "the map on disk no longer parses" look identical from the
+        dashboard -- so a schema change could quietly empty the map and the
+        only symptom would be a robot that had forgotten the room.
+        """
+        path = self.ROOMMAP_PATH
+        if not os.path.exists(path):
+            return False          # no map yet is the normal first case
         try:
-            with open(self.ROOMMAP_PATH) as f:
+            with open(path) as f:
                 self.roommap = roommap_mod.RoomMap.from_dict(json.load(f))
-        except Exception:
-            pass          # no map yet is the normal first case
+            return True
+        except Exception as exc:
+            self.note(f"room map at {path} did not load, starting empty: {exc!r}")
+            return False
 
     def save_roommap(self):
         try:

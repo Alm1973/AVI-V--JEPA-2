@@ -147,7 +147,7 @@ class Forgetting(unittest.TestCase):
         m, clock = fresh()
         sight(m, "pen", 90.0, 140.0)
         self.assertIsNotNone(m.where_is("pen"))
-        clock.tick(rm.HALF_LIFE_S * 6)
+        clock.tick(rm.BASE_HALF_LIFE_S * 6)
         self.assertIsNone(m.where_is("pen"),
                           "still believed a day-old single sighting")
 
@@ -163,7 +163,7 @@ class Forgetting(unittest.TestCase):
     def test_forget_stale_shrinks_the_map(self):
         m, clock = fresh()
         m.observe("pen", 640, 360, 90.0, 140.0)
-        clock.tick(rm.HALF_LIFE_S * 8)
+        clock.tick(rm.BASE_HALF_LIFE_S * 8)
         self.assertEqual(m.forget_stale(), 1)
         self.assertEqual(m.places, [])
 
@@ -328,3 +328,112 @@ class ArmConfiguration(unittest.TestCase):
         back = rm.RoomMap.from_dict(m.to_dict(), clock=clock)
         self.assertEqual((back.shoulder, back.elbow), (84.0, 95.0))
         self.assertFalse(back.valid_for(29.5, 131.0))
+
+
+class EarnedDurability(unittest.TestCase):
+    """Durability comes from revisiting over time, not from frame count.
+
+    The bug these pin down was found by reading the clock: under one flat
+    half-life a place's lifetime grows as log2(weight), so every doubling of
+    the evidence bought a fixed six hours and nothing could ever become
+    permanent. A survey ran one evening and the whole map had expired by the
+    next morning, which is the opposite of a robot that grows.
+    """
+
+    def test_a_single_glimpse_fades_but_survives_the_night(self):
+        """Two angles on one evening should still be there in the morning --
+        that overnight loss is the bug -- and gone by the next evening."""
+        m, clock = fresh()
+        sight(m, "cup", 90.0, 140.0)
+        clock.tick(10 * 3600)
+        self.assertIsNotNone(m.where_is("cup"),
+                             "forgot the room overnight, which is the bug")
+        clock.tick(26 * 3600)
+        self.assertIsNone(m.where_is("cup"),
+                          "a thing seen once, a day and a half ago, is a guess")
+
+    def test_staring_does_not_buy_permanence(self):
+        """A thousand frames of a mug is a long stare, not a long acquaintance.
+
+        This is the regression test for the real defect: weight counted frames,
+        so ten minutes in view outscored thirty separate days.
+        """
+        m, clock = fresh()
+        for _ in range(1000):
+            m.observe("mug", 640, 360, 90.0, 140.0)
+            clock.tick(1)
+        place = m.places[0]
+        self.assertEqual(place.visits, 1, "one sitting is one visit")
+        self.assertEqual(place.half_life, rm.BASE_HALF_LIFE_S)
+        clock.tick(7 * 24 * 3600)
+        self.assertIsNone(m.where_is("mug"),
+                          "a thousand frames should not outlive a week away")
+
+    def test_separated_visits_harden_the_belief(self):
+        m, clock = fresh()
+        for _ in range(5):
+            sight(m, "monitor", 90.0, 140.0)
+            clock.tick(24 * 3600)
+        place = m.places[0]
+        self.assertEqual(place.visits, 5)
+        # Five visits multiply the base four times over.
+        self.assertAlmostEqual(place.half_life,
+                               rm.BASE_HALF_LIFE_S * rm.SPACING ** 4, places=3)
+        clock.tick(30 * 24 * 3600)
+        self.assertIsNotNone(m.where_is("monitor"),
+                             "furniture seen on five days survives a month away")
+
+    def test_the_same_sitting_is_one_visit(self):
+        m, clock = fresh()
+        m.observe("pen", 640, 360, 90.0, 140.0)
+        clock.tick(rm.VISIT_GAP_S - 60)
+        m.observe("pen", 640, 360, 90.0, 140.0)
+        self.assertEqual(m.places[0].visits, 1)
+        clock.tick(rm.VISIT_GAP_S + 60)
+        m.observe("pen", 640, 360, 90.0, 140.0)
+        self.assertEqual(m.places[0].visits, 2)
+
+    def test_half_life_is_capped(self):
+        m, clock = fresh()
+        for _ in range(40):
+            m.observe("wall", 640, 360, 90.0, 140.0)
+            clock.tick(rm.VISIT_GAP_S + 1)
+        self.assertEqual(m.places[0].half_life, rm.MAX_HALF_LIFE_S)
+
+    def test_visits_survive_a_restart(self):
+        """The dashboard restarts. If visits reset to 1 on load, every place
+        is demoted to a first glimpse and the earned durability is a lie."""
+        m, clock = fresh()
+        for _ in range(4):
+            sight(m, "lamp", 60.0, 150.0)
+            clock.tick(24 * 3600)
+        before = m.places[0]
+        back = rm.RoomMap.from_dict(m.to_dict(), clock=clock)
+        self.assertEqual(back.places[0].visits, before.visits)
+        self.assertEqual(back.places[0].half_life, before.half_life)
+
+
+class WeightIsBounded(unittest.TestCase):
+    def test_weight_stops_climbing(self):
+        m, _ = fresh()
+        for _ in range(500):
+            m.observe("mug", 640, 360, 90.0, 140.0)
+        self.assertLessEqual(m.places[0].weight, rm.MAX_WEIGHT)
+
+    def test_a_thing_that_moves_can_be_seen_to_move(self):
+        """With an uncapped average, a thousand stale frames outvote every new
+        sighting and the mug is believed to be where it no longer is."""
+        m, _ = fresh()
+        for _ in range(500):
+            m.observe("mug", 640, 360, 90.0, 140.0)
+        start = m.places[0].yaw
+        # Same object, now a few degrees away -- inside SAME_DEG, so it
+        # updates the existing place rather than making a new one.
+        truth = m.direction_of(740, 360, 90.0, 140.0)[0]
+        for _ in range(40):
+            m.observe("mug", 740, 360, 90.0, 140.0)
+        now = m.places[0].yaw
+        self.assertGreater(abs(now - start), 3.0,
+                           f"position barely budged ({now - start:.2f} deg)")
+        self.assertLess(abs(now - truth), 1.5,
+                        f"settled at {now:.2f}, the mug is at {truth:.2f}")
