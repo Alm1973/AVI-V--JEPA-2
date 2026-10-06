@@ -333,51 +333,44 @@ camera_faces = 0
 # because it corrects whatever error it observes.
 
 [dome]
-# Degrees of camera look-direction per degree of joint command. MEASURED
-# 2026-10-06 by POST /build_dome: the arm moved each joint alone while tracking
-# a laptop, and the pixel slide is that joint's effect on the view. Fitted
-# together, r2 = 0.990 for base_yaw (n=4) and 0.986 for the pitch joints (n=9),
-# both flagged trustworthy by the probe's own residual check.
+# Degrees of camera look-direction per degree of joint command, measured by
+# POST /build_dome: each joint moved alone while tracking a laptop, large steps,
+# every target approached from one side, starting on TALL's shape.
 #
-# TALL is the pole of the dome: its wrist is 176.0 and the wrist's soft limit
-# is 176.0, so the arm physically cannot look higher.
+# RE-MEASURED 2026-10-06 afternoon. The first set (base_yaw 0.6917, shoulder
+# 1.1538, elbow 1.7189, wrist 1.2734) was fitted on DUPLICATED FRAMES: _frame
+# handed back the same image on every call, so "the median of nine frames" was
+# the median of nine copies and averaged nothing. Those numbers are void.
 measured = true
 measured_on = "2026-10-06"
 landmark = "laptop"
+frames_per_observation = 7
 
-base_yaw = 0.6917
-shoulder = 1.1538
-elbow    = 1.7189
-wrist    = 1.2734
+base_yaw = 0.7492      # r2 0.962, n 6
+shoulder = 1.5426      # pitch fit r2 0.960, n 9 -- see note on shoulder/elbow
+elbow    = 1.1877
+wrist    = 1.0148
 
-# Pitch sign convention: shoulder and elbow lower the view, wrist raises it.
-# Of the four sign combinations only this one puts TALL at the top and REST at
-# the bottom.
 shoulder_sign = -1
 elbow_sign    = -1
 wrist_sign    = 1
 
-# WHAT THESE OVERTURN.
+# THE WRIST CROSS-VALIDATES. 31 deg vertical FOV / 1.0148 = 30.5 deg per frame,
+# against 32.2 from probe_wrist on 2026-10-05 and 33.9 measured directly on
+# 2026-10-06 (wrist 151.3 / 157.3 / 163.3 -> laptop cy 344 / 516 / 599). Three
+# methods within ~10%. The void duplicated-frame value implied 24.3 and was the
+# outlier. A gain of ~1.0 is also what the geometry predicts: the wrist axis
+# passes near the camera, so it only rotates the view, and orientation adds 1:1.
 #
-# 1. elbow is 1.72, not ~1. The dome model predicted +-1 for all three pitch
-#    joints, because orientation adds along a serial chain. The wrist obeys
-#    that (1.27, and 31/32.2 = 0.96 by an independent method). The elbow does
-#    not, and it is the dominant joint for elevation -- which is why a 5 degree
-#    elbow step threw the tracked laptop clean out of frame.
+# SHOULDER AND ELBOW ARE LOOSELY DETERMINED. Nine samples were lost to the
+# laptop leaving the frame, leaving about three per pitch joint, and the two
+# swapped places between runs (elbow 1.72 -> 1.19, shoulder 1.15 -> 1.54). An
+# earlier note here said "elbow is 1.72 and dominates elevation"; that came from
+# the void run and is RETRACTED. It matters less than it sounds: looking around
+# holds shoulder and elbow at TALL's values (the pole-shape design), so only
+# base_yaw and wrist enter the map, find and the sweeps -- and those two are
+# the ones measured well.
 #
-# 2. base_yaw 0.6917 implies yaw_deg_per_frame = 52/0.6917 = 75.2, against the
-#    83.9 recorded in [camera] above. 12% apart. 83.9 is NOT changed here: it
-#    is a measured value from a different method and the tracking loop is
-#    self-correcting either way, so this is recorded beside it rather than
-#    over it. Pick one deliberately, with a reason.
-#
-# 3. SMALL COMMANDS DO NOT MOVE THIS ARM. Measured px/deg against step size,
-#    approaching from a shared reference: 11.5 at 2 deg, 13.3 at 4, 17.8 at 8,
-#    19.1 at 16. A deadband curve. Worse, travel in the negative direction
-#    barely moved at all -- 2 and 4 degree commands produced 3 px, which is
-#    noise, and 8 degrees moved the view the wrong way.
-#
-#    Two consequences. Any probe must use LARGE steps and approach every target
-#    from one side (build_dome now overshoots and comes back). And the tracking
-#    loop's small corrections are under-delivered, which is a far better
-#    explanation of the wrist loop hunting +-5 degrees than mistuned gain.
+# base_yaw 0.7492 implies yaw_deg_per_frame 52/0.7492 = 69.4, against [camera]'s
+# 83.9 and three other methods that span 0.62 to 0.84. Yaw is the least settled
+# constant on this arm; [camera] is left as recorded.
