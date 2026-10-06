@@ -90,15 +90,35 @@ class SerialBackend(MotionBackend):
     """
     name = "serial"
 
-    def __init__(self, port, config, baud=115200, open_now=False):
+    def __init__(self, port, config, baud=115200, open_now=False,
+                 retry_s=3.0):
         self.port = port
         self.config = config
         self.baud = baud
         self.ser = None
+        # A USB serial handle can go bad while the device itself is perfectly
+        # fine -- a re-enumeration is enough. Measured on 2026-10-05: a write
+        # raised "WriteFile failed (PermissionError(13, 'The device does not
+        # recognize the command.'))" while Windows still listed "Arduino Uno
+        # (COM5)" as Status OK. The caller's loop had no handler, so one
+        # transient error killed it silently: the page stayed up, the firmware
+        # held position exactly as its watchdog should, and nothing moved
+        # again. Recovering belongs here, where every caller gets it.
+        self.healthy = False
+        self.last_error = None
+        self.reopens = 0
+        self.retry_s = float(retry_s)
+        self._next_retry = 0.0
+        # Reconnecting may only ever RE-open a port that was opened on purpose.
+        # Without this, send() on a never-opened backend would open COM5 by
+        # itself, which resets the Uno and moves the servos -- the exact
+        # surprise that CLAUDE.md says must never happen without a go-ahead.
+        self._was_opened = False
         if open_now:
             self.open()
 
     def open(self):
+        """Open the port. NOTE: this asserts DTR, which reboots the Uno."""
         import serial  # imported late: the Mac has no pyserial and needs none
         self.ser = serial.Serial(self.port, self.baud, timeout=0.3)
         # Opening the port asserts DTR, which reboots the Uno. The bootloader
@@ -109,6 +129,9 @@ class SerialBackend(MotionBackend):
             self.ser.reset_input_buffer()
         except Exception:
             pass
+        self._was_opened = True
+        self.healthy = True
+        self.last_error = None
         return self
 
     def _write(self, line):
@@ -116,8 +139,60 @@ class SerialBackend(MotionBackend):
             raise RuntimeError("serial port is not open; call open() first")
         self.ser.write((line + "\n").encode("ascii"))
 
+    def _reopen(self):
+        """Try to get the port back, no more often than retry_s.
+
+        Refuses outright if the port has never been opened: recovering a lost
+        connection is not the same thing as making one.
+        """
+        if not self._was_opened:
+            return False
+        now = time.time()
+        if now < self._next_retry:
+            return False
+        self._next_retry = now + self.retry_s
+        try:
+            if self.ser is not None:
+                self.ser.close()
+        except Exception:
+            pass
+        self.ser = None
+        try:
+            self.open()
+        except Exception as exc:
+            self.last_error = f"reopen failed: {exc}"
+            return False
+        self.reopens += 1
+        self.healthy = True
+        self.last_error = None
+        log.warning("serial port %s reopened (%d time(s) so far)",
+                    self.port, self.reopens)
+        return True
+
     def send(self, pose, t=None):
-        self._write("P " + " ".join(f"{pose[j]:.1f}" for j in poses.JOINTS))
+        """Send a target, surviving a port that has gone away.
+
+        Returns True if the frame went out. A dropped frame is harmless on its
+        own -- the host repeats the target continuously, and the firmware holds
+        position if it hears nothing for 500 ms.
+        """
+        if self.ser is None and not self._reopen():
+            return False
+        try:
+            self._write("P " + " ".join(f"{pose[j]:.1f}" for j in poses.JOINTS))
+            self.healthy = True
+            return True
+        except Exception as exc:
+            if self.healthy or self.last_error is None:
+                log.error("serial write failed, will reconnect: %s", exc)
+            self.healthy = False
+            self.last_error = str(exc)
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+            return False
 
     def home(self):
         self._write("H")

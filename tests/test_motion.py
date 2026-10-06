@@ -399,8 +399,41 @@ class TestBackends(unittest.TestCase):
         c = poses.load()
         b = backends.SerialBackend("COM5", c)
         self.assertIsNone(b.ser)
-        with self.assertRaises(RuntimeError):
-            b.send(poses.get_pose("HOME"))
+        self.assertFalse(b.healthy)
+
+    def test_sending_never_opens_a_port_that_was_never_opened(self):
+        """send() reconnects a port that has dropped, which must not become a
+        way of opening one for the first time: that resets the Uno and moves
+        the servos with nobody expecting it."""
+        c = poses.load()
+        b = backends.SerialBackend("COM5", c)
+        opened = []
+        b.open = lambda: opened.append(True)
+        self.assertFalse(b.send(poses.get_pose("HOME")))
+        self.assertEqual(opened, [], "send() tried to open the port itself")
+        self.assertIsNone(b.ser)
+
+    def test_a_dropped_write_is_reported_not_raised(self):
+        """The caller's loop must not die on one bad frame. A dropped frame is
+        harmless: the target is repeated continuously and the firmware holds
+        position if it hears nothing."""
+        c = poses.load()
+        b = backends.SerialBackend("COM5", c)
+        b._was_opened = True
+        b.healthy = True
+
+        class Boom:
+            def write(self, _):
+                raise OSError("WriteFile failed")
+
+            def close(self):
+                pass
+
+        b.ser = Boom()
+        self.assertFalse(b.send(poses.get_pose("HOME")))
+        self.assertFalse(b.healthy)
+        self.assertIn("WriteFile failed", b.last_error)
+        self.assertIsNone(b.ser, "a failed port should be dropped, not kept")
 
 
 if __name__ == "__main__":

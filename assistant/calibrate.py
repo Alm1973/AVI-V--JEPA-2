@@ -111,16 +111,37 @@ class Arm:
         with self.lock:
             return dict(self.target)
 
+    def link_status(self):
+        """'ok', or why the arm cannot be reached."""
+        be = self.backend
+        if not hasattr(be, "healthy"):
+            return "ok"                      # sim and dry-run cannot fail
+        if be.healthy:
+            return "ok"
+        return be.last_error or "serial link down"
+
     def run(self, hz=50.0):
+        """Repeat the current target forever.
+
+        Wrapped because this thread dying is invisible from outside: the page
+        stays up, the firmware holds position exactly as its watchdog should,
+        and the arm simply never moves again. That is what happened on
+        2026-10-05 when a serial write raised and nothing caught it.
+        """
         period = 1.0 / hz
         last = time.time()
         while not self.stop.is_set():
             now = time.time()
-            dt = max(1e-4, now - last)
-            last = now
-            out = self.limiter.apply(self.snapshot(), dt)
-            self.backend.send(out, now)
-            self.sent = out
+            try:
+                dt = max(1e-4, now - last)
+                last = now
+                out = self.limiter.apply(self.snapshot(), dt)
+                self.backend.send(out, now)
+                self.sent = out
+            except Exception as exc:
+                last = time.time()
+                log(f"arm loop error (continuing): {exc!r}")
+                time.sleep(0.5)
             time.sleep(max(0.0, period - (time.time() - now)))
         log("arm loop ended")
 
@@ -162,9 +183,13 @@ PAGE = b"""<!doctype html>
  .bar{display:flex;gap:8px;align-items:center;margin:12px 0 0;flex-wrap:wrap}
  code{color:#71717a;font-size:12px}
  #msg{min-height:18px;font-size:13px;color:#fbbf24}
+ #link{display:none;background:#7f1d1d;color:#fecaca;padding:7px 11px;
+       border-radius:8px;margin:0 0 10px;font-size:13px;font-weight:600}
+ #link.show{display:block}
 </style></head>
 <body>
  <h1>AVI pose teaching <span id="sub"></span></h1>
+ <div id="link"></div>
  <div class="cols">
   <div class="cam">
     <img src="/stream.mjpg" alt="camera">
@@ -277,8 +302,19 @@ async function refresh(){
   document.getElementById("sub").textContent =
     s.backend === "serial" ? "- live, moving the real arm"
                            : "- simulator, the arm is not moving";
-  document.getElementById("build").textContent = "build " + s.build;
+  document.getElementById("build").textContent =
+    "build " + s.build + (s.reopens ? "  reconnects: " + s.reopens : "");
+  showLink(s);
   tick(s.ends_in);
+}
+function showLink(s){
+  // A dead serial link looks exactly like working software from here: the page
+  // responds, the sliders move, and the arm does not. Say so plainly.
+  const el = document.getElementById("link");
+  const bad = s.link !== "ok";
+  el.classList.toggle("show", bad);
+  if (bad) el.textContent = "ARM NOT RESPONDING - " + s.link +
+    " (reconnecting automatically; the sliders are not reaching the servos)";
 }
 function tick(left){
   document.getElementById("dl").textContent =
@@ -294,6 +330,7 @@ setInterval(async () => {
     if (v && !(j.name in pending))
       v.textContent = j.deg.toFixed(1) + "\\u00b0 \\u00b7 " + j.count;
   }
+  showLink(s);
   tick(s.ends_in);
 }, 700);
 refresh();
@@ -338,6 +375,8 @@ def make_handler(st):
             sent = arm.sent
             return {
                 "backend": arm.backend.name,
+                "link": arm.link_status(),
+                "reopens": getattr(arm.backend, "reopens", 0),
                 "build": BUILD,
                 "ends_in": max(0.0, deadline - time.time()),
                 "joints": [{"name": j, "deg": sent[j],
