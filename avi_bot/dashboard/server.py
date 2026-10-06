@@ -1287,6 +1287,11 @@ def detect_debug(arm, latest, min_conf=0.05):
             "n": len(found), "found": found[:25]}
 
 
+# Detections this weak are still reported, never recorded. The point is to
+# tell "the wall is empty" apart from "the desk was there at 0.22".
+REPORT_FLOOR = 0.10
+
+
 def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                frames=2, pose="OBSERVE"):
     """Look around the room on purpose and write down what is where.
@@ -1331,20 +1336,38 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
 
     start = arm.snapshot()
     seen, visited = 0, 0
+    # What each stop actually saw, including what was thrown away. The first
+    # survey reported "2 sightings across 6 stops" and nothing else, which is
+    # the same output whether the detector saw an empty wall, saw the desk at
+    # 0.25 and lost it all to the floor, or saw only a person. Three different
+    # problems, one number, and no way to tune the grid without knowing which.
+    per_stop = []
     for yaw, wrist in stops:
         arm.set("base_yaw", yaw)
         arm.set("wrist", wrist)
         time.sleep(settle)
+        looked = {"yaw": yaw, "wrist": wrist, "frames": 0,
+                  "kept": [], "below_floor": [], "people": 0}
         for _ in range(frames):
             frame = _frame(latest)
             if frame is None:
                 continue
             visited += 1
-            for d in arm.detector.everything(frame, min_conf=min_conf):
+            looked["frames"] += 1
+            # Detect well BELOW the recording floor so near-misses are visible.
+            # Only what clears min_conf is written to the map.
+            for d in arm.detector.everything(
+                    frame, min_conf=min(min_conf, REPORT_FLOOR)):
                 if d["label"] == "person":
                     # People move. Mapping where a person was is mapping
                     # nothing, and would poison the one thing this map is for.
+                    looked["people"] += 1
                     continue
+                if d["conf"] < min_conf:
+                    looked["below_floor"].append(
+                        [d["label"], round(d["conf"], 2)])
+                    continue
+                looked["kept"].append([d["label"], round(d["conf"], 2)])
                 try:
                     arm.roommap.observe(
                         d["label"], d["cx"], d["cy"], yaw, wrist,
@@ -1355,15 +1378,23 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                     return {"error": str(exc),
                             "hint": "POST /forget_map to rebuild at this shape"}
                 seen += 1
+        per_stop.append(looked)
     arm.set_pose(start)
     arm.roommap.forget_stale()
     saved = arm.save_roommap()
     known = arm.roommap.known()
     unconfirmed = [p for p in arm.roommap.places if not p.confirmed]
+    near_misses = sum(len(st["below_floor"]) for st in per_stop)
+    blank = sum(1 for st in per_stop
+                if not st["kept"] and not st["below_floor"] and not st["people"])
     log(f"survey: {len(stops)} stops, {seen} sightings, "
-        f"{len(known)} confirmed, {len(unconfirmed)} seen once")
+        f"{len(known)} confirmed, {len(unconfirmed)} seen once; "
+        f"{blank} stops saw nothing at all, {near_misses} detections lost to "
+        f"the {min_conf} floor")
     return {"stops": len(stops), "frames": visited, "sightings": seen,
             "saved": saved, "levels": levels, "min_conf": min_conf,
+            "per_stop": per_stop, "blank_stops": blank,
+            "near_misses": near_misses, "report_floor": REPORT_FLOOR,
             "shape": {"shoulder": shape["shoulder"], "elbow": shape["elbow"]},
             "unconfirmed": len(unconfirmed),
             "known": [{"label": p.label, "yaw": round(p.yaw, 1),
