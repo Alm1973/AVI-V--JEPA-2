@@ -54,6 +54,7 @@ from avi_bot import env as env_mod                                # noqa: E402
 from avi_bot.perception import parallax                           # noqa: E402
 from avi_bot.perception import depth as depth_mod                 # noqa: E402
 from avi_bot.perception import dome as dome_mod                   # noqa: E402
+from avi_bot.skills import find as find_mod                       # noqa: E402
 from avi_bot.perception import roommap as roommap_mod             # noqa: E402
 
 # Keys from .env, once, at import. The dashboard is what runs on the MSI, so
@@ -1193,6 +1194,9 @@ def make_handler(st):
             elif self.path == "/detect_debug":
                 floor = float(body.get("min_conf", 0.05))
                 self._json(detect_debug(arm, latest, floor))
+            elif self.path == "/find":
+                self._json(find_object(arm, (body.get("name") or "").strip(),
+                                       look=bool(body.get("look", True))))
             elif self.path == "/sweep_report":
                 self._json(sweep_report(name=body.get("name", "sweep"),
                                         draws=int(body.get("draws", 999))))
@@ -1547,6 +1551,31 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                            p.yaw, p.wrist, (lo, hi), (wlo, whi)),
                        "near": arm.roommap.nearest_anchor(p.yaw, p.wrist)[0]}
                       for p, w in known]}
+
+
+def find_object(arm, name, look=True):
+    """Where is it, from the room map -- and turn to look.
+
+    The voice brain (avi_bot.main.Avi) is not wired to this process's arm in
+    production; nothing constructs it with one. So this is the path on which
+    "where's my pen" actually reaches the map built by the surveys. Map-only:
+    this process has no sightings database, so a thing the map does not know
+    is reported as unknown rather than guessed.
+    """
+    yaw_dpf, wrist_dpf = arm.frame_constants(arm.config)
+    f = find_mod.Finder(None, yaw_dpf, wrist_deg_per_frame=wrist_dpf,
+                        roommap=arm.roommap)
+    text, _, _ = f.find(name)
+    aim = f.aim(name)
+    moved = False
+    if look and aim and aim.get("confident"):
+        for joint in ("shoulder", "elbow", "base_yaw", "wrist"):
+            if aim.get(joint) is not None:
+                arm.set(joint, aim[joint])
+        moved = True
+    log(f"find {name!r}: {text} moved={moved}")
+    return {"say": text, "aim": aim, "moved": moved,
+            "known": [p.label for p, _ in arm.roommap.known()]}
 
 
 def sweep_report(name="sweep", draws=999):

@@ -469,3 +469,66 @@ class FindPrefersTheRoomMap(unittest.TestCase):
                 want_yaw, want_wrist = m.direction_of(cx, cy, 60.0, 147.9)
                 self.assertAlmostEqual(f.yaw_for(cx), want_yaw, places=6)
                 self.assertAlmostEqual(f.wrist_for(cy), want_wrist, places=6)
+
+
+class FindCarriesTheMapsShape(unittest.TestCase):
+    """A map direction is only a direction at the shoulder and elbow it was
+    surveyed at. The camera rides three links, so (yaw, wrist) from another
+    shape points somewhere else -- the same mistake that left OBSERVE staring
+    at a wall while sitting between two poses that saw the desk."""
+
+    def a_map(self, shoulder=78.4, elbow=88.0):
+        from avi_bot.perception import roommap as rm
+        clock = Clock()
+        m = rm.RoomMap(75.2, 24.3, (1280, 720), clock=clock,
+                       shoulder=shoulder, elbow=elbow)
+        m.observe("pen", 640, 360, 35.0, 150.0, conf=0.6)
+        m.observe("pen", 600, 360, 32.0, 150.0, conf=0.6)
+        return m, clock
+
+    def test_the_aim_includes_the_maps_shape(self):
+        m, clock = self.a_map()
+        f = find_mod.Finder(None, 75.2, roommap=m, clock=clock)
+        aim = f.aim("pen")
+        self.assertEqual(aim["source"], "map")
+        self.assertEqual((aim["shoulder"], aim["elbow"]), (78.4, 88.0))
+
+    def test_map_only_works_with_no_database(self):
+        """The dashboard owns the arm and the map but not the sightings DB."""
+        m, clock = self.a_map()
+        f = find_mod.Finder(None, 75.2, roommap=m, clock=clock)
+        text, yaw, found = f.find("pen")
+        self.assertIsNotNone(yaw)
+        self.assertFalse(found, "a map entry is not a sighting today")
+        self.assertIn("Haven't seen it today", text)
+
+    def test_no_map_and_no_database_is_an_honest_unknown(self):
+        f = find_mod.Finder(None, 75.2, roommap=None, clock=Clock())
+        self.assertIsNone(f.aim("pen"))
+        text, yaw, found = f.find("pen")
+        self.assertIsNone(yaw)
+        self.assertFalse(found)
+
+    def test_main_sets_the_shape_before_turning(self):
+        """Order matters: yaw and wrist first would sweep the camera across
+        the room in the wrong shape on the way."""
+        from avi_bot import main as main_mod
+        m, clock = self.a_map()
+        calls = []
+
+        class Arm:
+            roommap = m
+            db = None
+            config = type("C", (), {"camera": {"yaw_deg_per_frame": 75.2,
+                                               "wrist_deg_per_frame": 24.3}})()
+
+            def set(self, joint, deg):
+                calls.append(joint)
+
+        avi = main_mod.Avi(arm=Arm(), send=lambda *a: None, env={},
+                           clock=clock)
+        self.addCleanup(avi.close)
+        avi._find("pen")
+        self.assertEqual(calls[:2], ["shoulder", "elbow"], calls)
+        self.assertIn("base_yaw", calls)
+        self.assertLess(calls.index("elbow"), calls.index("base_yaw"))

@@ -156,9 +156,20 @@ class Finder:
                 near = None
                 if hasattr(self.roommap, "nearest_anchor"):
                     near = self.roommap.nearest_anchor(yaw, wrist)[0]
-                return {"base_yaw": yaw, "wrist": wrist, "source": "map",
-                        "confident": True, "weight": weight, "near": near,
-                        "label": label}
+                out = {"base_yaw": yaw, "wrist": wrist, "source": "map",
+                       "confident": True, "weight": weight, "near": near,
+                       "label": label}
+                # The map's (yaw, wrist) are only directions AT THE SHAPE IT
+                # WAS BUILT AT. The camera rides three links, so the same yaw
+                # and wrist from a different shoulder and elbow point
+                # somewhere else -- the bug that made OBSERVE see a wall while
+                # sitting between two poses that saw the desk. So the shape
+                # travels with the direction, and the caller must set it too.
+                sh = getattr(self.roommap, "shoulder", None)
+                el = getattr(self.roommap, "elbow", None)
+                if sh is not None and el is not None:
+                    out["shoulder"], out["elbow"] = float(sh), float(el)
+                return out
         return None
 
     def aim(self, name, within_s=86400):
@@ -204,6 +215,10 @@ class Finder:
 
     def last_seen(self, name, within_s=None):
         """The most recent verified sighting, or None."""
+        if self.db is None:
+            # Map-only: the dashboard owns the arm and the room map but not
+            # the observer's sightings database.
+            return None
         want = canonical(name)
         cutoff = 0.0
         if within_s is not None:

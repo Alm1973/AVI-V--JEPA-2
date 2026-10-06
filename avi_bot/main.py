@@ -166,6 +166,12 @@ class Avi:
         # Only a direction the finder vouches for drives the arm. Pointing
         # confidently at the wrong wall is worse than not turning.
         if aim and aim.get("confident"):
+            # Shape FIRST. A map direction is only true at the shoulder and
+            # elbow it was surveyed at, so turning yaw and wrist before the
+            # arm is in that shape points it somewhere else.
+            for joint in ("shoulder", "elbow"):
+                if aim.get(joint) is not None:
+                    self._safe(lambda j=joint: self.arm.set(j, aim[j]))
             self._safe(lambda: self.arm.set("base_yaw", aim["base_yaw"]))
             if aim.get("wrist") is not None:
                 self._safe(lambda: self.arm.set("wrist", aim["wrist"]))
