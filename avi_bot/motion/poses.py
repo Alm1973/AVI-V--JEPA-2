@@ -53,6 +53,17 @@ class JointConfig:
         return self.raw.get("camera", dict(self.CAMERA_UNSET))
 
     @property
+    def dome(self):
+        """Measured degrees of view per degree of joint, for dome.py.
+
+        Calibration, not learning: a fact about the hardware, so it carries
+        over launch day while anything learned about Shaurya does not.
+        """
+        got = dict(self.raw.get("dome", {}))
+        got.setdefault("measured", False)
+        return got
+
+    @property
     def kinematics(self):
         """Lengths and gains needed to turn angles into POSITIONS.
 
