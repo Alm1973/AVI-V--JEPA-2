@@ -1155,11 +1155,19 @@ def make_handler(st):
                 floor = float(body.get("min_conf", 0.05))
                 self._json(detect_debug(arm, latest, floor))
             elif self.path == "/build_dome":
+                # magnitudes, frames and settle were accepted in the body and
+                # then dropped on the floor, so several runs that looked like
+                # they swept 2/4/6/8 actually swept step x 1,2,3. A parameter
+                # that is read and ignored is worse than one that is absent.
                 self._json(build_dome(
                     arm, latest,
                     step=float(body.get("step", 5.0)),
                     min_conf=float(body.get("min_conf", 0.40)),
-                    prefer=body.get("prefer", "OBSERVE")))
+                    prefer=body.get("prefer", "OBSERVE"),
+                    frames=int(body.get("frames", 5)),
+                    settle=float(body.get("settle", 0.8)),
+                    yaw_scale=float(body.get("yaw_scale", 4.0)),
+                    magnitudes=body.get("magnitudes")))
             elif self.path == "/probe_depth":
                 self._json(probe_depth(
                     arm, latest,
@@ -1421,8 +1429,8 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                       for p, w in known]}
 
 
-def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
-               prefer="OBSERVE", frames=9, magnitudes=None):
+def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
+               prefer="OBSERVE", frames=5, magnitudes=None, yaw_scale=4.0):
     """Learn the dome's joint-to-direction map from the arm's own motion.
 
     What Shaurya asked for: establish a dome with TALL at the top, then move
@@ -1514,34 +1522,43 @@ def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
     # five times less than shoulder or elbow do, so the same step gives it a
     # far worse signal-to-noise ratio -- while it also has the most headroom
     # (20..160) to take a larger one without losing the landmark.
-    per_joint = {"base_yaw": [m * 4.0 for m in mags]}
+    per_joint = {"base_yaw": [m * yaw_scale for m in mags]}
     samples, lost = [], []
     for joint in ("base_yaw", "shoulder", "elbow", "wrist"):
         lo, hi = arm.config.soft_limits(joint)
         home = arm.snapshot()
+        at_home = None
         for signed in [s for m in per_joint.get(joint, mags)
                        for s in (+m, -m)]:
             target = home[joint] + signed
             if not (lo <= target <= hi):
                 lost.append(f"{joint}{signed:+.0f}: outside {lo:.0f}..{hi:.0f}")
                 continue
-            before_j = arm.snapshot()
-            at_before = find(label)
-            if at_before is None:
-                lost.append(f"{joint}{signed:+.0f}: lost {label} before moving")
-                continue
+            # The reference reading is taken ONCE per joint, at home, rather
+            # than before every sample. The arm used to be driven out and all
+            # the way back between samples, which paid two settles and two
+            # travels for one measurement.
+            if at_home is None:
+                arm.set(joint, home[joint])
+                time.sleep(settle)
+                at_home = find(label)
+                if at_home is None:
+                    lost.append(f"{joint}: lost {label} at the home reading")
+                    break
+            before_j = dict(home)
+            at_before = at_home
             arm.set(joint, target)
             time.sleep(settle)
             after_j = arm.snapshot()
             at_after = find(label)
-            arm.set(joint, home[joint])
-            time.sleep(settle)
             if at_after is None:
                 lost.append(f"{joint}{signed:+.0f}: {label} left the frame")
                 continue
             samples.append((before_j, after_j,
                             at_after[0] - at_before[0],
                             at_after[1] - at_before[1]))
+        arm.set(joint, home[joint])
+        time.sleep(settle)
     arm.set_pose(start)
 
     limits = {j: arm.config.soft_limits(j)
