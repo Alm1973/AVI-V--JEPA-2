@@ -1193,6 +1193,20 @@ def make_handler(st):
             elif self.path == "/detect_debug":
                 floor = float(body.get("min_conf", 0.05))
                 self._json(detect_debug(arm, latest, floor))
+            elif self.path == "/sweep_dome":
+                self._json(sweep_dome(
+                    arm, latest,
+                    el_step=float(body.get("el_step", 4.0)),
+                    el_start=float(body.get("el_start", 0.0)),
+                    el_limit=(None if body.get("el_limit") is None
+                              else float(body["el_limit"])),
+                    azimuths=body.get("azimuths") or (0.0,),
+                    dwell=float(body.get("dwell", 1.6)),
+                    creep=float(body.get("creep", 2.5)),
+                    settle_frames=int(body.get("settle_frames", 6)),
+                    clip_frames=(None if body.get("clip_frames") is None
+                                 else int(body["clip_frames"])),
+                    out=body.get("out", "sweep")))
             elif self.path == "/build_dome":
                 # magnitudes, frames and settle were accepted in the body and
                 # then dropped on the floor, so several runs that looked like
@@ -1528,6 +1542,210 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                            p.yaw, p.wrist, (lo, hi), (wlo, whi)),
                        "near": arm.roommap.nearest_anchor(p.yaw, p.wrist)[0]}
                       for p, w in known]}
+
+
+def sweep_dome(arm, latest, el_step=4.0, el_start=0.0, el_limit=None,
+               azimuths=(0.0,), dwell=1.6, creep=2.5, settle_frames=6,
+               clip_frames=None, out="sweep"):
+    """Walk every level of the hemisphere, encode a V-JEPA latent at each, and
+    PROVE the video actually swept.
+
+    Three things it does that matter.
+
+    SLOW, to keep motion blur out of the clips. The arm creeps to each level in
+    `creep` degree increments rather than one commanded jump, then waits
+    `dwell`, then discards `settle_frames` frames before any are kept. A clip
+    containing the tail of a movement is a smeared clip, and a world model
+    trained on smear learns smear.
+
+    LABELLED. Each latent is stored with the (azimuth, elevation) it was taken
+    at, so the latents have ground truth attached. That turns a pile of vectors
+    into a dataset: depth_probe can ask whether the representation can be
+    decoded back to where the camera was pointing, which is the actual test of
+    whether it encodes space or only texture.
+
+    VERIFIED, which is the part that needs doing because the obvious failure is
+    silent. _frame used to hand back the same image on every call -- a survey
+    asking three frames per stop logged laptop:0.89 three times, identical to
+    two decimals -- so a sweep could look complete while every level held the
+    same picture. Two numbers settle it per level:
+
+        between  mean |pixel| difference against the PREVIOUS level
+        within   same, between the first and last frame of this level's clip
+
+    A real sweep of stationary views has `between` much larger than `within`:
+    the view changed between levels and did not change during one. Both near
+    zero means the camera never moved. `within` as large as `between` means the
+    clips are catching the arm still moving, so slow it down further.
+    """
+    import cv2
+    import numpy as np
+    import latent_log
+
+    taught = load_taught() or {}
+    if dome_mod.POLE not in taught:
+        return {"error": f"{dome_mod.POLE} is not taught; the dome has no pole"}
+    g = arm.config.dome
+    if not g.get("measured"):
+        return {"error": "dome gains are unmeasured; run POST /build_dome "
+                         "first or the elevation labels are guesses"}
+    dome = dome_mod.Dome(
+        taught,
+        gains={k: float(g[k]) for k in
+               ("base_yaw", "shoulder", "elbow", "wrist")},
+        limits={j: arm.config.soft_limits(j) for j in poses.JOINTS})
+
+    n_frames = int(clip_frames or latent_log.CLIP_FRAMES)
+    start = arm.snapshot()
+    shape = dome.pole_shape()
+    arm.set("shoulder", shape["shoulder"])
+    arm.set("elbow", shape["elbow"])
+    time.sleep(dwell)
+
+    rungs = dome.ladder(step=float(el_step), start=float(el_start),
+                        limit=el_limit)
+    levels = [el for el, _ in rungs]
+    if not levels:
+        arm.set_pose(start)
+        return {"error": "no reachable levels between "
+                         f"{el_start} and {el_limit}"}
+
+    enc = arm.latent_encoder
+    if enc is None:
+        arm.note("sweep_dome: loading V-JEPA 2 ...")
+        try:
+            enc = arm.latent_encoder = latent_log.Encoder()
+        except Exception as exc:
+            arm.set_pose(start)
+            return {"error": f"could not load the encoder: {exc!r}"}
+
+    def creep_to(joint, target):
+        """Arrive in small increments, so nothing is moving when we look."""
+        here = arm.snapshot()[joint]
+        span = target - here
+        n = max(1, int(abs(span) / max(0.5, float(creep))))
+        for i in range(1, n + 1):
+            arm.set(joint, here + span * i / n)
+            time.sleep(0.12)
+        time.sleep(float(dwell))
+
+    rows, latents, prev_first = [], [], None
+    for az in [float(a) for a in azimuths]:
+        try:
+            creep_to("base_yaw", dome.pose_at(az, levels[0])["base_yaw"])
+        except dome_mod.OffDome as exc:
+            rows.append({"azimuth": az, "skipped": str(exc)})
+            continue
+        for el in levels:
+            try:
+                want = dome.pose_at(az, el)
+            except dome_mod.OffDome as exc:
+                rows.append({"azimuth": az, "elevation": el,
+                             "skipped": str(exc)})
+                continue
+            creep_to("wrist", want["wrist"])
+
+            # Throw away frames that may still hold the tail of the move.
+            seq = -1
+            for _ in range(int(settle_frames)):
+                _, seq = _frame(latest, after=seq)
+
+            frames, seqs, first, last = [], [], None, None
+            for _ in range(n_frames):
+                bgr, seq = _frame(latest, after=seq)
+                if bgr is None:
+                    break
+                seqs.append(seq)
+                g0 = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                if first is None:
+                    first = g0
+                last = g0
+                frames.append(cv2.resize(
+                    cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
+                    (latent_log.CLIP_SIZE, latent_log.CLIP_SIZE),
+                    interpolation=cv2.INTER_AREA))
+            if len(frames) < n_frames or first is None:
+                rows.append({"azimuth": az, "elevation": el,
+                             "skipped": f"only {len(frames)} frames arrived"})
+                continue
+
+            within = float(np.mean(np.abs(
+                first.astype(np.int16) - last.astype(np.int16))))
+            between = (None if prev_first is None else float(np.mean(np.abs(
+                first.astype(np.int16) - prev_first.astype(np.int16)))))
+            prev_first = first
+
+            # latent_log.Encoder is CALLED, and returns (vector, ms). The first
+            # draft of this called a .encode() that does not exist, which would
+            # have failed on the first level of the first sweep -- and only on
+            # the MSI, because this file cannot be imported on the Mac.
+            try:
+                vec, ms = enc(frames)
+            except Exception as exc:
+                arm.set_pose(start)
+                return {"error": f"encode failed at az {az} el {el}: {exc!r}",
+                        "rows": rows}
+            latents.append(np.asarray(vec, dtype=np.float32).ravel())
+            rows.append({
+                "azimuth": round(az, 1), "elevation": round(el, 1),
+                "wrist": round(want["wrist"], 1),
+                "base_yaw": round(want["base_yaw"], 1),
+                "frames": len(frames),
+                "distinct_seqs": len(set(seqs)),
+                "within": round(within, 2),
+                "between": None if between is None else round(between, 2),
+                "light": round(float(first.mean()), 1),
+                "sd": round(float(first.std()), 1),
+                "encode_ms": round(ms, 1)})
+    arm.set_pose(start)
+
+    got = [r for r in rows if "within" in r]
+    out_path = None
+    if latents:
+        import os
+        d = os.path.join(os.environ.get("USERPROFILE", "."), "avi-remote")
+        os.makedirs(d, exist_ok=True)
+        out_path = os.path.join(d, f"{out}-dev.npz")
+        np.savez_compressed(
+            out_path,
+            latents=np.vstack(latents),
+            azimuth=np.array([r["azimuth"] for r in got], dtype=np.float32),
+            elevation=np.array([r["elevation"] for r in got], dtype=np.float32))
+
+    res = {"levels": len(levels), "azimuths": list(azimuths),
+           "el_step": el_step, "measured": len(got), "saved": out_path,
+           "dim": int(latents[0].size) if latents else 0,
+           "clip_frames": n_frames, "rows": rows}
+
+    betweens = [r["between"] for r in got if r["between"] is not None]
+    withins = [r["within"] for r in got]
+    stale = [r for r in got if r["distinct_seqs"] < r["frames"]]
+    if betweens:
+        b = sum(betweens) / len(betweens)
+        w = sum(withins) / len(withins)
+        res["mean_between"] = round(b, 2)
+        res["mean_within"] = round(w, 2)
+        res["ratio"] = round(b / w, 2) if w > 0.01 else None
+        res["repeated_frames"] = len(stale)
+        if b < 1.0:
+            res["verdict"] = ("THE VIDEO DID NOT SWEEP. Consecutive levels "
+                              "are the same picture -- the arm did not move, "
+                              "or the stream is frozen.")
+        elif w > 0.6 * b:
+            res["verdict"] = ("SWEPT, BUT BLURRED. Frames change as much "
+                              "DURING a level as between levels, so the clips "
+                              "are catching the arm still moving. Raise dwell "
+                              "or settle_frames.")
+        elif stale:
+            res["verdict"] = (f"SWEPT, but {len(stale)} levels reused a frame; "
+                              "the stream is slower than the clip length.")
+        else:
+            res["verdict"] = ("THE VIDEO SWEPT. Each level is a distinct, "
+                              f"stationary view: between {b:.1f} vs within "
+                              f"{w:.1f}.")
+    log(f"sweep_dome: {len(got)}/{len(levels) * len(azimuths)} levels, "
+        f"{res.get('verdict', 'no verdict')[:60]}")
+    return res
 
 
 def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,

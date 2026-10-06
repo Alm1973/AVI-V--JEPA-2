@@ -118,3 +118,23 @@ class SeparateStores(unittest.TestCase):
                 found += [kw.value.value for kw in node.keywords
                           if kw.arg == "default"]
         self.assertEqual(found, ["dev"], "--profile does not default to dev")
+
+
+class TheEncoderIsCalledTheWayItIsDefined(unittest.TestCase):
+    """server.py cannot be imported on the Mac (cv2, torch), so a wrong call
+    into the encoder fails only on the MSI, on the first sweep level, with the
+    arm out of position. sweep_dome's first draft called `enc.encode(frames)`;
+    the Encoder defines `__call__` and no `encode`."""
+
+    def test_the_encoder_has_no_encode_method(self):
+        tree = ast.parse((ROOT / "assistant" / "latent_log.py").read_text())
+        enc = [n for n in ast.walk(tree)
+               if isinstance(n, ast.ClassDef) and n.name == "Encoder"][0]
+        methods = {f.name for f in enc.body if isinstance(f, ast.FunctionDef)}
+        self.assertIn("__call__", methods)
+        self.assertNotIn("encode", methods)
+
+    def test_nothing_in_the_dashboard_calls_encode(self):
+        src = (ROOT / "avi_bot" / "dashboard" / "server.py").read_text()
+        self.assertNotIn(".encode(frames)", src)
+        self.assertNotIn("enc.encode(", src)
