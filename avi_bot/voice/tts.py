@@ -7,8 +7,15 @@ Kokoro does not install there at all. That is a version wall, not a speed
 problem, and it is the reason this module picks a backend at runtime from
 what is actually importable instead of hard-coding one.
 
-Order: Kokoro (best, if a < 3.13 interpreter ever exists here), Piper (good,
-installs on 3.13), espeak-ng (ugly but nearly always present), then Silent.
+MEASURED on the MSI 2026-10-05, en_US-amy-medium at 22050 Hz, CPU only:
+**RTF 0.036-0.039 across 2 to 15 word lines**, i.e. about 26x faster than
+real time, 4.3 s to load the model once. So Piper is not a compromise and
+Kokoro is not needed: a twenty-word reply synthesises in under a quarter of a
+second, which is well inside the time it takes the arm to finish the gesture
+that goes with it.
+
+Order: Kokoro (if a < 3.13 interpreter ever exists here), Piper (measured
+above, the primary), then Silent.
 Silent is a real backend, not an error: a robot whose voice fails should go
 back to chirping, which it does well, rather than stop acknowledging him.
 

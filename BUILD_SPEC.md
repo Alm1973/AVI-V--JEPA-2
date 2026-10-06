@@ -456,7 +456,7 @@ avi-desk/
 | M1 | **Motion foundation:** firmware v2, motion engine, sim, dashboard, poses and gestures | every gesture runs in sim. On hardware (with his OK): no jump on startup; all 4 joints within limits; the watchdog holds; joint signs recorded | watching the first live run (camera or a phone video call is enough) |
 | M2 | **Personality core:** mood, attention, behaviors, beeps | a 30-min unattended sim run without the same behavior sequence repeating 3 times in a row; scripted events move mood as in the table; beep WAVs exported | no |
 | M3 | **Senses:** fold in the observer; person tracking (look at you); hearing with fixtures | WAV fixtures transcribe; the wake word fires on its fixture; look-at keeps a person box within ±5° of center in replay | plugging in the reSpeaker, speaker and hub when they arrive |
-| M4 | **Brain:** router, local intents, provider chain, tools, speech policy, Kokoro | at least 18 of 20 scripted utterances give the right tool calls; Groq blocked → fallback works; every reply follows the speech policy | no |
+| M4 | **Brain:** router, local intents, provider chain, tools, speech policy, ~~Kokoro~~ **Piper** | **DONE 2026-10-05.** 20/20 scripted utterances (bar was 18); provider failover and the pre-send budget guard tested; the speech policy is applied once to every route. Kokoro does not install on the MSI's Python 3.13 — Piper measured at RTF 0.039, 26× real time, so nothing is lost | no |
 | M5 | **Skills:** timers, reminders, calendar, focus, find, lamp, media, apps, weather, memory | each skill's test in section 9 passes | lamp test once home |
 | M6 | **Proactive + learning:** routines, gates, feedback | needs about 2 weeks of logs; beats "same as yesterday"; acceptance rate tracked | living with it |
 | M7 | **Polish:** custom "hey AVI", tuning, startup on wake, crash recovery | runs for a week without manual restarts | recording a few wake-word samples |
@@ -465,7 +465,7 @@ avi-desk/
 
 - **Camera and GPU access from SSH sessions on Windows:** unknown. Plan for the interactive scheduled task.
 - **Free tier limits change.** The provider chain plus local fallback keep it working, so re-check the limits when something breaks.
-- **Kokoro speed on this CPU:** unmeasured; Piper is the fallback.
+- ~~**Kokoro speed on this CPU:** unmeasured; Piper is the fallback.~~ **CLOSED 2026-10-05.** Kokoro will not install (needs Python < 3.13; the MSI venv is 3.13.13). Piper measured at **RTF 0.036–0.039** on CPU, 22050 Hz — 26× real time, so it is the primary rather than a fallback.
 - **Reading PCA9685 registers on boot:** unverified; it's a bench test before use.
 - **Small-model tool calling:** if `gpt-oss-20b` gets tool calls wrong, try `llama-3.3-70b-versatile` on Groq.
 - **Desk hours** are needed for wake timers and the observer schedule. Ask Shaurya.
