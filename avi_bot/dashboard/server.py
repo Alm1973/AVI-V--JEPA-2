@@ -259,7 +259,16 @@ class Arm:
     # boxes measured on 2026-10-06 were thin strips along the top edge of the
     # frame at high tilt -- one was 347x109, 15% of the frame height. Someone
     # sitting at the desk fills far more than that.
-    PERSON_MIN_CONF = 0.40
+    #
+    # And the EMPTY SEAT scores as a person. Measured the same afternoon, with
+    # him away, at the seat view: a static box at (979, ~390), 602 x ~660 px --
+    # over 90% of the frame -- at confidence 0.38 to 0.39, the same place every
+    # look. Almost certainly the chair. At a 0.40 floor it flickered across the
+    # line and was counted once within the first minute; two in a row would
+    # have been a fake arrival. 0.50 clears the empty seat with margin.
+    # STILL TO VALIDATE with him actually sitting there: a seated person should
+    # score well above this (0.6+ expected), and if not, this is wrong.
+    PERSON_MIN_CONF = 0.50
     PERSON_MIN_HEIGHT = 0.25
 
     def view_ok_for_presence(self):
