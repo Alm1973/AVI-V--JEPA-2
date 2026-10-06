@@ -1623,6 +1623,13 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
         arm.set("shoulder", shape_src["shoulder"])
         arm.set("elbow", shape_src["elbow"])
         time.sleep(settle)
+        # RE-READ the shape now that it has changed. It used to be captured
+        # above, before this branch moved shoulder and elbow to the pole's
+        # values, and every sighting was then filed under the old shape. It
+        # only worked because the /survey route happened to pass pose=TALL;
+        # desk_scan called this without a pose, got ATTENTIVE's shape, and the
+        # map rightly refused to mix the two.
+        shape = arm.snapshot()
         log(f"survey: dome grid on {dome.pole}'s shape, {len(stops)} stops, "
             f"elevation {el_start}..{el_limit} in {el_step}, azimuth step "
             f"{az_step}")
@@ -1723,8 +1730,8 @@ def desk_scan(arm, latest, min_conf=0.30, el_step=10.0, az_step=16.0,
     """
     here = arm.presence.here
     res = run_survey(arm, latest, min_conf=min_conf, settle=1.0, frames=3,
-                     el_step=el_step, az_step=az_step, el_start=el_start,
-                     el_limit=el_limit)
+                     pose=dome_mod.POLE, el_step=el_step, az_step=az_step,
+                     el_start=el_start, el_limit=el_limit)
     seat = (load_taught() or {}).get(arm.SEAT_VIEW)
     if seat:
         arm.set_pose(seat)
