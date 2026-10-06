@@ -50,7 +50,27 @@ at a few fps -> one latent per sample. **Frozen.** No fine-tuning, no
 gradients, ~600 MB in fp16. Pretrained on a million hours of video, which is
 exactly the knowledge he cannot collect himself.
 
-*Unverified on this machine. Benchmark before committing -- see risks.*
+**MEASURED on the MSI, 2026-10-05** -- risk 1 is closed. 16-frame clips at
+256 px, fp16, nothing else loaded:
+
+| model | median | peak VRAM | latent |
+|---|---|---|---|
+| VideoMAE-base | **23.7 ms** | 0.23 GB | 768 |
+| V-JEPA 2 ViT-L | **168 ms** | 0.74 GB | 1024 |
+
+The GPU reports 6.44 GB total and 5.31 GB still free with V-JEPA 2 resident.
+At one sample per second that is ~17% duty cycle, so **the real JEPA encoder
+is the one to use** -- VideoMAE is only the fallback if something else needs
+the headroom. No external hardware, no eGPU and no API is required, and the
+earlier worry that JEPA is simply too big for this laptop was wrong: frozen
+inference on the ViT-L variant is cheap.
+
+One loading bug to fix first: `MCG-NJU/videomae-base` reported
+`query/value/key.bias | MISSING -- newly initialized`, i.e. part of the
+attention was random rather than pretrained. Timing is unaffected (shapes are
+identical) but the features would be degraded. The clustering test in step 2
+would catch it; fix the checkpoint/class before trusting any VideoMAE
+embedding.
 
 ### Layer 2 -- a predictive model of HIM, trained on his own latents
 A small sequence model (GRU or tiny transformer, single-digit MB) trained to
@@ -111,10 +131,9 @@ first thing attempted.
 
 ## Risks, in order
 
-1. **The encoder may not fit the latency budget.** Benchmark V-JEPA 2 ViT-L
-   and VideoMAE-base on the MSI before anything else. If neither clears a
-   couple of hundred ms per sample, drop to per-frame DINOv2 features and
-   accept losing motion information.
+1. ~~**The encoder may not fit the latency budget.**~~ **CLOSED 2026-10-05.**
+   V-JEPA 2 ViT-L: 168 ms, 0.74 GB. Fits with 5.3 GB spare. The DINOv2
+   fallback is not needed.
 2. **Latents may not separate the states he cares about.** Testable
    immediately and cheaply: collect a few hours, cluster the latents, and
    check whether the clusters correspond to anything (at desk, away, typing).
@@ -126,7 +145,8 @@ first thing attempted.
 
 ## Order of work
 
-1. Benchmark the encoder on the MSI. Latency and VRAM. (risk 1)
+1. ~~Benchmark the encoder on the MSI.~~ **Done.** V-JEPA 2 ViT-L, 168 ms,
+   0.74 GB.
 2. Log latents for a few days and cluster them. Does the representation see
    his life at all? (risk 2) **Stop here if the answer is no.**
 3. Layer 2, the predictor. Nightly training, measure held-out prediction error
