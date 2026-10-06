@@ -646,3 +646,75 @@ roommap stores raw (yaw, wrist) and is only valid at one shoulder/elbow -- it
 refuses to mix shapes. The dome handles all four joints, so a place stored as a
 dome direction survives a change of shape. That is the real 3D map, and it is
 the natural next piece once the gains are measured.
+
+## 2026-10-06 afternoon: TALL as the pole, and the map finally works
+
+He asked for this and it repaired the design rather than patching it.
+
+### The dome model was wrong across shapes, and TALL's shape fixes it
+The three-pitch-joint elevation model predicts where the camera POINTS and
+ignores where it IS. On a serial arm shoulder and elbow move the lens a long
+way. Two measurements proved it: OBSERVE sits between HOME and ATTENTIVE in
+pitch sum yet sees something completely different, and once the gains were
+measured the pose ordering stopped matching his own names (ATTENTIVE "slightly
+raised" came out BELOW LOW "down and small"). **The 4-degree clustering I
+called evidence was an artefact of assuming every pitch gain was +-1.**
+
+Holding shoulder and elbow at the POLE's values removes the problem. The camera
+then turns in place: base_yaw pans, the wrist tilts, nothing translates -- the
+one regime where the dome is exact. And the wrist alone spans **219 degrees**
+of elevation from TALL, more than a hemisphere, so shoulder and elbow were
+never needed for looking around.
+
+`dome.pose_at(az, el)`, `ladder(step)`, `grid(el, az)`.
+
+### Measured gains (config [dome], 2026-10-06)
+    base_yaw 0.6917   shoulder 1.1538   elbow 1.7189   wrist 1.2734
+r2 0.990 / 0.986, both trustworthy by the probe's own residual check.
+**elbow is 1.72, not ~1** -- it dominates elevation, which is why a 5 degree
+elbow step threw the tracked laptop out of frame.
+
+### SMALL COMMANDS DO NOT MOVE THIS ARM (he said it before the data did)
+px/deg against step size: 11.5 at 2 deg, 13.3 at 4, 17.8 at 8, 19.1 at 16.
+Negative travel was worse -- 2 and 4 degree commands gave 3 px, which is noise,
+and 8 degrees moved the view the WRONG WAY. Fixed by approaching every target
+from one side (overshoot, come back).
+**This is a better explanation of the wrist loop hunting +-5 degrees than
+mistuned gain is**: the loop's small corrections are under-delivered.
+
+### OBSERVE is retired as the logging pose; it faced a blank wall
+Daylight sweep of every taught pose: TALL sd 65.5 laptop 0.94 / ATTENTIVE sd
+62.9 three objects / HOME sd 63.2 laptop 0.70 / **OBSERVE sd 15.5 NOTHING at
+any base_yaw from 60 to 110** / LOW sd 13.0 nothing / REST sd 47.0 nothing.
+OBSERVE was the one pose that could not see the desk and it was the pose the
+whole logging pipeline read from. I broke it earlier by retaching base_yaw
+90->60. Now named once as `poses.OBSERVE_POSE`; surveys run from TALL's shape.
+
+### The survey works now
+    before:  6 stops,  2 sightings, 0 confirmed
+    after:  30 stops, 44 sightings, 7 confirmed, seen-once 13 -> 5
+    laptop: 12 sightings from 5 distinct viewpoints, conf 0.89
+
+### Two wrong turns, recorded so they are not retried
+1. One laptop mapped as two places 20 deg apart. I blamed the vertical
+   constant and swapped 32.2 for the dome-derived 24.3. **The gap stayed at
+   20.2 and the pen doubled too.** The real cause: a large box's centre stays
+   near frame centre across several tilt rows, so each row files it at its own
+   elevation. Fixed by scaling the merge threshold with the object's apparent
+   size -- you cannot localise a thing more precisely than its own width. The
+   constant swap stays on its own merits, not on the argument I gave.
+2. depth.py and dome.py each had their own pixel-to-angle conversion, which is
+   the exact failure find.py's docstring warns about, committed hours after
+   writing that warning. Now `optics.py`, with which-to-use-when: linear is
+   the convention the measured deg-per-frame constants were fitted with;
+   pinhole is the physics and depth needs it, because the 0.72 degree gap
+   between them is the same size as the parallax it measures.
+
+### Still open
+- laptop has 3 places: one is 89 deg away (probably a genuinely different
+  screen), one is 26.6 deg below the main place (a true duplicate; the size
+  threshold computes 23.5, just short). Not tuned further on purpose.
+- yaw_deg_per_frame: 83.9 in [camera] vs 75.2 from the dome gains. Both kept,
+  side by side. Pick one deliberately.
+- Still owed: **camera_radius_m** (base axis to lens) and **which way the lens
+  faces**, for metric depth.
