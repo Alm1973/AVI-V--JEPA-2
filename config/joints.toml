@@ -148,8 +148,20 @@ channel   = 3
 min_count = 140
 center_count = 380
 max_count = 580
-soft_min  = 30.0
-soft_max  = 150.0
+# Widened 2026-10-05 at Shaurya's request: 30..150 only reached counts 220..513
+# of the 140..580 he actually calibrated, so the camera could not tilt as far up
+# as the mechanics allow. 12..168 reaches 172..553, which keeps a small margin
+# inside his settled endpoints rather than driving to them.
+#
+# The margin matters more than it looks: a servo held against a mechanical stop
+# stalls at maximum current, and this arm is already current-limited -- it tops
+# out at 28 deg/s on a UBEC. A stall could brown out every other joint with it.
+# If the wrist buzzes or binds near either end, pull these back.
+#
+# Remember which way is up: LOWER logical degrees tilt the camera UP (measured
+# 65 up, 115 down), so the extra upward travel is at the soft_min end.
+soft_min  = 12.0
+soft_max  = 168.0
 # Driven as of 2026-10-05, with the sign still PROVISIONAL.
 #
 # This is the camera's own tilt, and the camera at its calibrated centre points
