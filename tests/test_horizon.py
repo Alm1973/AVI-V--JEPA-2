@@ -95,5 +95,26 @@ class WhatThe083Was(unittest.TestCase):
         self.assertAlmostEqual(W / got, 52.0, delta=0.01)
 
 
+class Stuck(unittest.TestCase):
+    def reg(self, dx=0.0, dy=0.0, roll=0.0):
+        return {"dx_px": dx, "dy_px": dy, "roll_deg": roll, "inliers": 300}
+
+    def test_an_unchanged_picture_after_a_big_turn_is_stuck(self):
+        """The survey: 13 deg commanded, pen at 716,262 every time."""
+        self.assertTrue(hz.stuck(self.reg(dx=0.5, dy=0.3), 13.3))
+
+    def test_a_real_turn_is_not(self):
+        self.assertFalse(hz.stuck(self.reg(dx=-300.0), 13.3))
+
+    def test_looking_straight_down_a_turn_is_mostly_roll(self):
+        self.assertFalse(hz.stuck(self.reg(dx=-3.0, roll=-12.0), 13.3))
+
+    def test_a_blank_view_is_unknown_not_stuck(self):
+        self.assertFalse(hz.stuck(None, 13.3))
+
+    def test_a_small_command_is_not_judged(self):
+        self.assertFalse(hz.stuck(self.reg(), 2.0))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1714,18 +1714,54 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
     # snapshots what this survey actually saw. Labels canonicalised so a mug
     # read as "cup" on one scan cannot pass for something new.
     sightings, visited_stops = [], []
+    # The previous stop's picture, to check the arm actually moved: base_yaw
+    # once went silent mid-survey and eight stops filed one picture under
+    # eight yaws. A turn that changes nothing is not trusted; two in a row
+    # end the survey.
+    prev, stuck_run, stuck_total = None, 0, 0
     for yaw, wrist in stops:
         settled = _yaw_to(arm, yaw, settle)
         arm.set("wrist", wrist)
         time.sleep(settle)
+        frames_here = list(_look(latest, frames))
+        moved_ok = True
+        # Only judged once the slack is taken up: a turn still eating the
+        # backlash legitimately barely moves the picture.
+        if (settled and prev is not None and frames_here and prev[1] == wrist
+                and abs(yaw - prev[0]) >= horizon_mod.STUCK_MIN_TURN_DEG):
+            try:
+                reg = horizon_mod.register(prev[2], frames_here[-1])
+            except horizon_mod.NotMeasurable:
+                reg = None
+            if horizon_mod.stuck(reg, yaw - prev[0]):
+                moved_ok = False
+        if frames_here:
+            prev = (yaw, wrist, frames_here[-1])
+        if not moved_ok:
+            stuck_run += 1
+            stuck_total += 1
+            log(f"survey: base_yaw did not move to {yaw:.1f} "
+                f"(picture unchanged); stop not filed")
+            if stuck_run >= 2:
+                arm.set_pose(start)
+                arm.save_roommap()
+                return {"error": "base_yaw stopped responding: the picture "
+                                 "did not change across two commanded turns",
+                        "hint": "check the servo and its supply; restarting "
+                                "the dashboard resets the Arduino",
+                        "stopped_at": [yaw, wrist], "per_stop": per_stop,
+                        "stuck_stops": stuck_total}
+        else:
+            stuck_run = 0
+        settled = settled and moved_ok
         looked = {"yaw": yaw, "wrist": wrist, "frames": 0,
-                  "yaw_settled": settled,
+                  "yaw_settled": settled, "moved": moved_ok,
                   "kept": [], "below_floor": [], "people": 0,
                   # Raw boxes, so a direction model can be checked against
                   # the real detections after the fact (labels and numbers,
                   # never pixels).
                   "boxes": []}
-        for frame in _look(latest, frames):
+        for frame in frames_here:
             visited += 1
             looked["frames"] += 1
             # Detect well BELOW the recording floor so near-misses are visible.

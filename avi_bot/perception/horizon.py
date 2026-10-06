@@ -172,3 +172,29 @@ def px_per_deg(wrists, slides, fit, min_cos=0.3):
     # Sign: the slide's direction convention is arbitrary; P is a magnitude.
     rms = float(np.sqrt(np.mean((c * P - s) ** 2)))
     return abs(P), rms
+
+
+# A commanded turn at least this large must change the picture.
+STUCK_MIN_TURN_DEG = 5.0
+
+
+def stuck(reg, commanded_deg, px_per_deg=24.0):
+    """Did the joint fail to move? From a registration between the picture
+    before and after a commanded base turn.
+
+    Found 2026-10-06: base_yaw stopped responding partway through a survey,
+    silently -- the commands went out, nothing in the log -- and eight stops
+    filed the same picture under eight different yaws. A real turn of 5+ deg
+    slides or rolls the picture by tens of pixels at any tilt but the robot's
+    own base (wrist ~44, never surveyed), so an unchanged picture with plenty
+    of matched features means the joint did not move.
+
+    `reg` is register()'s dict, or None when the view had too little texture
+    to tell -- which is "unknown", never "stuck".
+    """
+    if reg is None or abs(commanded_deg) < STUCK_MIN_TURN_DEG:
+        return False
+    moved_px = math.hypot(reg["dx_px"], reg["dy_px"])
+    # Roll of r degrees moves a point 300 px from the centre by ~5 px per deg.
+    moved_px += abs(reg["roll_deg"]) * 300.0 * math.pi / 180.0
+    return moved_px < 0.15 * abs(commanded_deg) * px_per_deg
