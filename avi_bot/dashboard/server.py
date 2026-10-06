@@ -1193,6 +1193,9 @@ def make_handler(st):
             elif self.path == "/detect_debug":
                 floor = float(body.get("min_conf", 0.05))
                 self._json(detect_debug(arm, latest, floor))
+            elif self.path == "/sweep_report":
+                self._json(sweep_report(name=body.get("name", "sweep"),
+                                        draws=int(body.get("draws", 999))))
             elif self.path == "/sweep_dome":
                 self._json(sweep_dome(
                     arm, latest,
@@ -1206,7 +1209,9 @@ def make_handler(st):
                     settle_frames=int(body.get("settle_frames", 6)),
                     clip_frames=(None if body.get("clip_frames") is None
                                  else int(body["clip_frames"])),
-                    out=body.get("out", "sweep")))
+                    out=body.get("out", "sweep"),
+                    order=body.get("order", "down"),
+                    seed=int(body.get("seed", 0))))
             elif self.path == "/build_dome":
                 # magnitudes, frames and settle were accepted in the body and
                 # then dropped on the floor, so several runs that looked like
@@ -1544,9 +1549,43 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                       for p, w in known]}
 
 
+def sweep_report(name="sweep", draws=999):
+    """Run view_probe on a saved sweep. Vectors only -- no frame is read.
+
+    Done here rather than on the Mac so the latents never leave the MSI; they
+    are not images, but there is no reason to move them either.
+    """
+    import os
+    import numpy as np
+    from avi_bot.perception import view_probe
+    path = os.path.join(os.environ.get("USERPROFILE", "."), "avi-remote",
+                        f"{name}-dev.npz")
+    if not os.path.exists(path):
+        return {"error": f"no sweep at {path}; run POST /sweep_dome first"}
+    z = np.load(path)
+    X, el = z["latents"], z["elevation"]
+    t = z["t"] if "t" in z.files else None
+    light = z["light"] if "light" in z.files else None
+    out = {"file": path, "levels": int(len(el)), "dim": int(X.shape[1]),
+           "has_time": t is not None, "has_light": light is not None}
+    if t is None:
+        # Sweeps saved before timestamps existed were all top-to-bottom, so
+        # visit order IS elevation order. Reconstructing that is honest; it
+        # also guarantees the confound check fires, which is the point.
+        t = np.argsort(np.argsort(-el)).astype(float)
+        out["time_reconstructed_from_order"] = True
+    try:
+        out["mantel"] = view_probe.mantel(X, el, t=t, light=light,
+                                          draws=int(draws))
+        out["nn"] = view_probe.nn_adjacent(X, el)
+    except view_probe.NotEnoughData as exc:
+        out["error"] = str(exc)
+    return out
+
+
 def sweep_dome(arm, latest, el_step=4.0, el_start=0.0, el_limit=None,
                azimuths=(0.0,), dwell=1.6, creep=2.5, settle_frames=6,
-               clip_frames=None, out="sweep"):
+               clip_frames=None, out="sweep", order="down", seed=0):
     """Walk every level of the hemisphere, encode a V-JEPA latent at each, and
     PROVE the video actually swept.
 
@@ -1605,6 +1644,18 @@ def sweep_dome(arm, latest, el_step=4.0, el_start=0.0, el_limit=None,
     rungs = dome.ladder(step=float(el_step), start=float(el_start),
                         limit=el_limit)
     levels = [el for el, _ in rungs]
+    # ORDER matters for anything learned from this. A single descending pass
+    # confounds elevation with time: level k is always captured just after
+    # k-1, so slow drift -- light, auto-exposure, sensor warm-up -- makes
+    # neighbouring elevations look alike for reasons unrelated to the view,
+    # and that is indistinguishable from "the latent encodes elevation".
+    # A shuffled order decorrelates elevation from capture time by design.
+    if order == "up":
+        levels = list(reversed(levels))
+    elif order == "shuffle":
+        import random
+        levels = list(levels)
+        random.Random(int(seed)).shuffle(levels)
     if not levels:
         arm.set_pose(start)
         return {"error": "no reachable levels between "
@@ -1630,6 +1681,7 @@ def sweep_dome(arm, latest, el_step=4.0, el_start=0.0, el_limit=None,
         time.sleep(float(dwell))
 
     rows, latents, prev_first = [], [], None
+    t_start = time.time()
     for az in [float(a) for a in azimuths]:
         try:
             creep_to("base_yaw", dome.pose_at(az, levels[0])["base_yaw"])
@@ -1687,6 +1739,8 @@ def sweep_dome(arm, latest, el_step=4.0, el_start=0.0, el_limit=None,
                         "rows": rows}
             latents.append(np.asarray(vec, dtype=np.float32).ravel())
             rows.append({
+                "t": round(time.time() - t_start, 2),
+                "visit": len(latents) - 1,
                 "azimuth": round(az, 1), "elevation": round(el, 1),
                 "wrist": round(want["wrist"], 1),
                 "base_yaw": round(want["base_yaw"], 1),
@@ -1710,9 +1764,12 @@ def sweep_dome(arm, latest, el_step=4.0, el_start=0.0, el_limit=None,
             out_path,
             latents=np.vstack(latents),
             azimuth=np.array([r["azimuth"] for r in got], dtype=np.float32),
-            elevation=np.array([r["elevation"] for r in got], dtype=np.float32))
+            elevation=np.array([r["elevation"] for r in got], dtype=np.float32),
+            t=np.array([r["t"] for r in got], dtype=np.float32),
+            light=np.array([r["light"] for r in got], dtype=np.float32),
+            sd=np.array([r["sd"] for r in got], dtype=np.float32))
 
-    res = {"levels": len(levels), "azimuths": list(azimuths),
+    res = {"levels": len(levels), "azimuths": list(azimuths), "order": order,
            "el_step": el_step, "measured": len(got), "saved": out_path,
            "dim": int(latents[0].size) if latents else 0,
            "clip_frames": n_frames, "rows": rows}

@@ -16,10 +16,33 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load_tracker():
-    """Import assistant/room_tracker.py with cv2 and its siblings stubbed."""
-    for name in ("cv2", "numpy", "settings", "change", "observer",
-                 "room_tracker"):
+# What this file replaces in sys.modules. NOT numpy, which it used to pop:
+# numpy is a real package in the venv, and removing it from sys.modules while
+# its C core stays loaded means the next import re-runs numpy/__init__.py over
+# half-initialised state. Every real-numpy test that sorted after this one in
+# discover order then crashed -- `import numpy` recursed without end, and a
+# later call segfaulted inside np.triu_indices. It stayed hidden because the
+# only numpy-heavy tests (depth_probe, latent_probe) sort BEFORE "room".
+STUBBED = ("cv2", "settings", "change", "observer", "room_tracker")
+
+
+def load_tracker(test=None):
+    """Import assistant/room_tracker.py with cv2 and its siblings stubbed.
+
+    Pass the TestCase and the stubs are removed again when it finishes. They
+    used to persist for the rest of the run, so a fake `settings` with five
+    attributes was what any later test got if it imported settings.
+    """
+    saved = {n: sys.modules.get(n) for n in STUBBED}
+    if test is not None:
+        def restore():
+            for n, m in saved.items():
+                if m is None:
+                    sys.modules.pop(n, None)
+                else:
+                    sys.modules[n] = m
+        test.addCleanup(restore)
+    for name in STUBBED:
         sys.modules.pop(name, None)
 
     cv2 = types.ModuleType("cv2")
@@ -65,9 +88,29 @@ class Args:
     camera = 1
 
 
+class TestItLeavesTheInterpreterAlone(unittest.TestCase):
+    def test_numpy_is_untouched(self):
+        import numpy
+        before = sys.modules["numpy"]
+        load_tracker(self)
+        self.assertIs(sys.modules["numpy"], before)
+        self.assertIs(numpy, before)
+
+    def test_its_stubs_are_gone_afterwards(self):
+        real = sys.modules.get("settings")
+
+        class Probe(unittest.TestCase):
+            def runTest(self):
+                load_tracker(self)
+                assert sys.modules["settings"].__dict__.get("CAMERA_INDEX") == 1
+
+        unittest.TextTestRunner(stream=open("/dev/null", "w")).run(Probe())
+        self.assertIs(sys.modules.get("settings"), real)
+
+
 class TestAcquireCamera(unittest.TestCase):
     def setUp(self):
-        self.rt = load_tracker()
+        self.rt = load_tracker(self)
         self.slept = []
         self.rt.time.sleep = self.slept.append
         self.logged = []
@@ -114,7 +157,7 @@ class TestAcquireCamera(unittest.TestCase):
 
 class TestConstants(unittest.TestCase):
     def setUp(self):
-        self.rt = load_tracker()
+        self.rt = load_tracker(self)
 
     def test_handoff_delay_is_longer_than_the_old_one_five_seconds(self):
         # 1.5 s was what was in place when the handoff failed.
