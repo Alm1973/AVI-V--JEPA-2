@@ -39,7 +39,18 @@ import settings
 MODEL_ID = "facebook/vjepa2-vitl-fpc64-256"
 CLIP_FRAMES = 16
 CLIP_SIZE = 256
-LATENT_DB = "latents.db"
+# DEV BY DEFAULT, and that default is a safety feature rather than a
+# convenience. Shaurya wants a LAUNCH DAY: he wakes AVI up, it is born that
+# day, and it learns from that moment. A robot whose memory already holds
+# months of development data was never born, it was restored from a backup,
+# and the growth he wants to watch would have happened off-camera.
+#
+# So the live store is only ever written by an explicit --profile live. Every
+# run before launch day lands in latents-dev.db without anyone having to
+# remember anything, because "remember to delete it first" is the guard that
+# fails exactly once and cannot be undone.
+PROFILES = {"dev": "latents-dev.db", "live": "latents.db"}
+LATENT_DB = PROFILES["dev"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS latents (
@@ -133,7 +144,11 @@ def grab_clip(cap, n, size):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=LATENT_DB)
+    ap.add_argument("--profile", choices=sorted(PROFILES), default="dev",
+                    help="dev (default) or live. live is the robot's real "
+                         "memory and should only be used from launch day on.")
+    ap.add_argument("--db", default=None,
+                    help="override the profile's filename entirely")
     ap.add_argument("--hours", type=float, default=8.0)
     ap.add_argument("--interval", type=float, default=15.0,
                     help="seconds between samples")
@@ -144,9 +159,12 @@ def main():
     import cv2
     from change import ChangeDetector
 
-    db = open_db(args.db)
+    path = args.db or PROFILES[args.profile]
+    db = open_db(path)
     have = db.execute("SELECT COUNT(*) c FROM latents").fetchone()["c"]
-    log(f"db {os.path.abspath(args.db)} holds {have} latents")
+    log(f"[{args.profile}] db {os.path.abspath(path)} holds {have} latents")
+    if args.profile == "live" and have == 0:
+        log("this is the live store's first row: AVI's memory starts here")
 
     cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, settings.FRAME_WIDTH)

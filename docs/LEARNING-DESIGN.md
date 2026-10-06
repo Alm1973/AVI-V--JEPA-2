@@ -111,6 +111,33 @@ Start pessimistic and conservative, so a new behaviour has to earn its place.
 This is the layer where "it grew" becomes a number he can see: reward per
 behaviour, over weeks.
 
+## Launch day: AVI is born, and learning starts at zero
+
+Shaurya wants a **launch day** — he wakes AVI up, it is born that day, and it
+learns from that moment. That is a design constraint, not a ceremony, and it
+has one hard consequence:
+
+**Nothing learned before launch day may be in the production stores.** A robot
+whose memory already holds months of development data was never born; it was
+restored from a backup, and the growth he wants to watch would have happened
+off-camera where he could not see it.
+
+The line is: **a measurement about the hardware carries over, anything about
+HIM does not.**
+
+| carries over | starts empty |
+|---|---|
+| `config/joints.toml` — calibration, measured constants | `latents.db` |
+| `config/poses.toml` — the taught poses | `facts`, `interactions`, `feedback`, `mood_log` |
+| firmware, code, the frozen encoder | `desk_memory.db` observations |
+
+Enforced by DEFAULT rather than by discipline: `latent_log.py` writes
+`latents-dev.db` unless given `--profile live`. "Remember to clear it first"
+is the kind of guard that fails exactly once and cannot be undone.
+
+Launch day is also when the clocks start: the engagement metric, and the
+two-month novelty-effect horizon it is measured against.
+
 ## What is honest about this
 
 **It is not sentience and I will not call it that.** Nothing here is aware of
