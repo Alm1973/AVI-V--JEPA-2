@@ -516,3 +516,75 @@ The room is empty and static while he is at school, so high temporal coherence
 would be trivially achievable and the `static_scene` guard should flag it. What
 today yields is a **brightness-varied, no-activity baseline** -- useful as the
 null, not as a positive result. The real probe needs him at the desk.
+
+## 2026-10-06 midday: 3D, and a correction to a hardware "fact"
+
+POV stream and the Tailscale cert chase are **dropped** at his request -- the
+video feed was not worth the trouble. Focus is 3D and spatial awareness.
+
+### Depth is possible from one camera, because the camera is not on the axis
+`avi_bot/perception/depth.py`. When base_yaw turns, the camera rotates AND
+swings along an arc of radius r (its horizontal offset from the base axis).
+That arc is a stereo baseline whose length is known from the joint angles.
+
+    da/dth = -1 - (r/rho) cos(eta)
+
+The -1 is rotation, identical for everything, no depth. The second term is the
+signal. Inverted: rho = r cos(eta) / (s/g - 1).
+
+**Identifiability, counted honestly:** n measurements, n+1 unknowns. Under-
+determined by one for ANY number of tracks. I first claimed the rate ratio
+cancels g and gives relative depth free; that is WRONG, and a test pins it --
+a true ratio of 1.75 reads 1.51 / 1.73 / 2.51 for g = 0.55 / 0.62 / 0.70.
+What IS free is the **ordering** (`depth.ordering()`): s is monotonic in
+1/rho for any positive g. Metric needs one external fact plus r.
+
+Assuming the slowest track is at infinity biases ranges **LONG** -- with
+nothing past 0.70 m in view, 0.40 m reads as 1.20 m.
+
+### yaw_deg_per_frame = 83.9 may not be a joint constant
+The wrist axis passes through the camera (r~0, so s = g ~ 1, matching 32.2 vs
+a 31 deg vertical FOV). The base axis is an arm away, so parallax is large.
+The asymmetry the config blames on under-travel is exactly what parallax
+predicts with NO under-travel: s = 1 - r/rho = 0.62 puts the calibration
+landmark at rho ~ 0.47 m, a desk distance.
+
+**POST /probe_depth decides it in one pan.** Equal rates across the scene =>
+under-travel. Rates differing by tens of per cent => parallax, and 83.9 is
+distance-dependent. Tracking is unaffected either way (it corrects observed
+error), so this is mistuning, not breakage.
+
+### Does V-JEPA encode depth? Now testable
+`avi_bot/perception/depth_probe.py`. Measured ranges are labels; fit a LINEAR
+head to log-range against a permutation null. The fold design is the whole
+thing: latents 15 s apart are 0.994 cosine-similar, so random k-fold leaks.
+Measured on two INDEPENDENT random walks with no shared information:
+
+    random folds      R2 = +0.837   <- would have been called a discovery
+    contiguous folds  R2 = +0.064   -> "no better than chance"
+
+Validated both ways: a depth-carrying representation gives R2 0.998 against a
+null max of 0.022 (z 85.8); 1024 noise dims against 240 samples does not beat
+chance.
+
+### 3D RoPE, for the record
+V-JEPA 2 already uses it, but its "3D" is (time, height, width) -- tensor
+indices, not depth. It gives no spatial awareness in the sense wanted. The
+real opening is that V-JEPA 2-AC applies temporal RoPE to **action and pose
+tokens**: AVI's joint angles are exactly that input, so pose conditioning is a
+first-class interface rather than a hack. Adding a pose axis to the RoPE split
+itself needs fine-tuning (R820 work), since the pretrained weights expect
+thirds.
+
+### Owed by Shaurya, now on the critical path
+1. **camera_radius_m** -- horizontal distance, base rotation axis to lens, at
+   OBSERVE. One ruler measurement. Without it depth is relative only.
+2. **camera_faces** -- does the lens look outward from the base axis, or back
+   across the desk? Sets the parallax sign. Just look at it.
+3. Then set `[kinematics] measured = true` in config/joints.toml.
+
+### State
+- **616 tests pass**, Mac-side, no hardware. Deployed 80/80 byte-for-byte.
+- Latents still recording into `latents-dev.db`, ~7 h left on the task.
+- Dashboard still on the OLD code; a restart reopens COM5 and centres both
+  servos, so it waits for him to be present.
