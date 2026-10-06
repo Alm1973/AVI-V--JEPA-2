@@ -48,6 +48,9 @@ from camera_stream import BOUNDARY, Latest, grabber, tailscale_ip  # noqa: E402
 
 from avi_bot.motion import (backends, engine, gestures, poses,     # noqa: E402
                             safety)
+from avi_bot.personality import (attention as att_mod,            # noqa: E402
+                                 behaviors, mood as mood_mod)
+from avi_bot.voice import beeps as beeps_mod                      # noqa: E402
 
 TAUGHT_PATH = os.path.join(os.environ.get("USERPROFILE", "."),
                            "avi-remote", "taught_poses.json")
@@ -110,6 +113,11 @@ class Arm:
         self.sent = dict(self.target)
         self.events = []
         self.engine = engine.MotionEngine(config, backend, start_pose=self.target)
+        self.mood = mood_mod.Mood()
+        self.selector = behaviors.BehaviourSelector()
+        self.attention = att_mod.Attention(config)
+        self.idle_mode = threading.Event()
+        self.last_behaviour = None
         # Breathing and saccades belong to the personality engine in M2. Here
         # they would add motion nobody asked for while a pose is being set.
         for layer in self.engine.layers:
@@ -125,11 +133,48 @@ class Arm:
     def busy(self):
         return self.engine.busy()
 
-    def play(self, name):
+    def play(self, name, why=""):
         move = gestures.make(name)
         self.engine.push(move)
-        self.note(f"gesture {name}")
+        # Mood changes how a move reads, not which move it is (BUILD_SPEC 5.5).
+        emotion = self.mood.emotion()
+        self.engine.style = engine.Style(**mood_mod.style_for(emotion))
+        self.note(f"gesture {name}{why} [{emotion}]")
         return move
+
+    def mood_event(self, name, target=None):
+        self.mood.event(name, target=target)
+        self.note(f"event {name}"
+                  + (f" ({target})" if target else "")
+                  + f" -> {self.mood.emotion()}")
+
+    def run_idle(self, now):
+        """One step of BUILD_SPEC 5.4's idle policy.
+
+        Only ever starts something while the arm is free. A behaviour that
+        interrupted a running gesture would make the robot look indecisive
+        rather than alive.
+        """
+        if not self.idle_mode.is_set() or self.engine.busy():
+            return
+        if not self.selector.due(now):
+            return
+        hour = time.localtime(now).tm_hour
+        quiet = beeps_mod.is_quiet_hours(hour)
+        pick = self.selector.choose(self.mood, now, quiet_hours=quiet)
+        self.last_behaviour = pick
+        gesture = self.selector.gesture_for(pick)
+        chirp = beeps_mod.for_emotion(self.mood.emotion())
+        note = f"idle: {pick}"
+        if chirp and beeps_mod.should_play(chirp, hour):
+            # No speaker is wired up yet, so the chirp is reported rather than
+            # played. Saying which one WOULD play is what makes the policy
+            # reviewable before any audio hardware exists.
+            note += f" (would chirp {chirp})"
+        if gesture:
+            self.play(gesture, why=f" <- {pick}")
+        else:
+            self.note(note)
 
     def set(self, joint, deg):
         lo, hi = self.config.soft_limits(joint)
@@ -175,6 +220,8 @@ class Arm:
                     # mechanism for it.
                     time.sleep(period)
                     continue
+                self.mood.tick(now)
+                self.run_idle(now)
                 if not self.engine.busy():
                     self.engine.base = self.snapshot()
                 else:
@@ -237,6 +284,14 @@ PAGE = b"""<!doctype html>
          max-height:150px;overflow:auto;margin:0}
  #gbusy{color:#60a5fa;text-transform:none;letter-spacing:0}
  body.paused{outline:3px solid #b45309;outline-offset:-3px}
+ .mv{display:flex;align-items:center;gap:8px;margin:3px 0;
+     font:11px ui-monospace,monospace;color:#a1a1aa}
+ .mv .nm{width:62px}
+ .mv .tr{flex:1;height:8px;background:#27272a;border-radius:4px;position:relative}
+ .mv .fl{position:absolute;top:0;bottom:0;border-radius:4px;background:#60a5fa}
+ .mv .zero{position:absolute;top:-2px;bottom:-2px;width:1px;background:#52525b}
+ .mv .n{width:46px;text-align:right}
+ #emo{color:#fbbf24;text-transform:none;letter-spacing:0;font-weight:600}
  #link{display:none;background:#7f1d1d;color:#fecaca;padding:7px 11px;
        border-radius:8px;margin:0 0 10px;font-size:13px;font-weight:600}
  #link.show{display:block}
@@ -251,13 +306,17 @@ PAGE = b"""<!doctype html>
       <button onclick="allCentre()">centre everything</button>
       <button onclick="selftest()">check every servo moves</button>
       <button id="pz" onclick="togglePause()">pause</button>
+      <button id="idle" onclick="toggleIdle()">idle behaviour</button>
       <code id="dl"></code>
     </div>
     <div id="msg"></div>
   </div>
   <div class="side">
     <div id="joints"></div>
-    <div class="sec">gestures <span id="gbusy"></span></div>
+    <div class="sec">mood <span id="emo"></span></div>
+   <div id="mood"></div>
+   <div class="g" id="moodbtns"></div>
+   <div class="sec">gestures <span id="gbusy"></span></div>
     <div class="g" id="gestures"></div>
     <div class="sec">poses</div>
     <div id="poses"></div>
@@ -361,11 +420,45 @@ async function togglePause(){
   msg(r.paused ? "paused: the arm is holding position"
                : "resumed");
 }
+const MOOD_RANGE = {valence: [-1, 1], arousal: [0, 1],
+                    social: [0, 1], energy: [0, 1]};
+function paintMood(s){
+  const m = s.mood;
+  document.getElementById("emo").textContent =
+    "- " + m.emotion + (m.sulking ? " (sulking)" : "") +
+    (m.focus ? " / focus" : "") + (m.present ? "" : " / away");
+  document.getElementById("mood").innerHTML =
+    Object.keys(MOOD_RANGE).map(k => {
+      const [lo, hi] = MOOD_RANGE[k];
+      const f = Math.max(0, Math.min(1, (m[k] - lo) / (hi - lo)));
+      const z = (0 - lo) / (hi - lo);
+      const left = Math.min(f, z), right = Math.max(f, z);
+      return `<div class="mv"><span class="nm">${k}</span>`+
+        `<span class="tr"><span class="zero" style="left:${z*100}%"></span>`+
+        `<span class="fl" style="left:${left*100}%;width:${(right-left)*100}%">`+
+        `</span></span><span class="n">${m[k].toFixed(2)}</span></div>`;
+    }).join("");
+  document.getElementById("idle").textContent =
+    s.idle ? "stop idling" : "idle behaviour";
+  document.getElementById("idle").className = s.idle ? "pri" : "";
+}
+async function moodEvent(n){
+  const body = {name: n};
+  if (n === "new_object") body.target = "something new";
+  await api("/mood_event", body);
+  msg("event: " + n);
+}
+async function toggleIdle(){
+  const r = await api("/idle", {});
+  msg(r.idle ? "idling: it will pick its own behaviours"
+             : "idle behaviour off");
+}
 function paintCommon(s){
   document.getElementById("gbusy").textContent =
     s.busy ? "- playing" : "";
   document.getElementById("pz").textContent = s.paused ? "resume" : "pause";
   document.body.classList.toggle("paused", s.paused);
+  paintMood(s);
   document.getElementById("events").textContent =
     (s.events || []).join("\\n") || "nothing yet";
 }
@@ -378,6 +471,8 @@ async function refresh(){
     s.wanted.map(p => poseRow(p, taught)).join("");
   document.getElementById("gestures").innerHTML = s.gestures.map(g =>
     `<button onclick="playGesture('${g}')">${g}</button>`).join("");
+  document.getElementById("moodbtns").innerHTML = s.mood_events.map(e =>
+    `<button onclick="moodEvent('${e}')">${e}</button>`).join("");
   document.getElementById("sub").textContent =
     (s.backend === "serial" ? "- live, moving the real arm"
                             : "- simulator, the arm is not moving") +
@@ -473,6 +568,12 @@ def make_handler(st):
                 "paused": arm.paused.is_set(),
                 "achievable": cfg.achievable,
                 "events": list(reversed(arm.events[-14:])),
+                "mood": arm.mood.snapshot(),
+                "idle": arm.idle_mode.is_set(),
+                "behaviour": arm.last_behaviour,
+                "mood_events": ["praise", "scold", "arrived", "left",
+                                "task_ok", "task_failed", "new_object",
+                                "focus_start", "focus_end"],
             }
 
         def do_GET(self):
@@ -535,6 +636,18 @@ def make_handler(st):
                 move = arm.play(name)
                 self._json({"ok": True, "name": name,
                             "duration": round(move.duration, 2)})
+            elif self.path == "/mood_event":
+                name = (body.get("name") or "").strip()
+                try:
+                    arm.mood_event(name, target=body.get("target"))
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 400)
+                self._json({"ok": True, "mood": arm.mood.snapshot()})
+            elif self.path == "/idle":
+                want = bool(body.get("on", not arm.idle_mode.is_set()))
+                arm.idle_mode.set() if want else arm.idle_mode.clear()
+                arm.note("idle behaviour on" if want else "idle behaviour off")
+                self._json({"ok": True, "idle": want})
             elif self.path == "/cancel":
                 arm.engine.clear()
                 arm.note("gesture cancelled")

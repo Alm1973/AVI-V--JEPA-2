@@ -11,7 +11,7 @@ Updated 2026-10-05, end of the first hardware day.
 |---|---|
 | **M0** remote ops | **done.** Wake, sleep, deploy, run-as-task, GPU, camera, all over SSH. |
 | **M1** motion foundation | **done.** Firmware v2 flashed, all 4 joints driven, 6 poses taught on the arm, all 13 gestures verified moving on hardware, dashboard folded. |
-| **M2** personality core | **code done.** Mood, idle behaviour selection, attention and the chirp synthesizer are written and tested; M2's acceptance test passes and 22 chirp WAVs are in `docs/beeps/`. Left: wiring it into the dashboard so it can be watched idling. |
+| **M2** personality core | **done.** Mood, idle behaviour selection, attention and the chirp synthesizer, all wired into the dashboard and watched idling on the real arm. M2's acceptance test passes; 22 chirp WAVs are in `docs/beeps/`. No speaker is installed yet, so the dashboard reports which chirp *would* play. |
 | M3–M7 | not started. |
 
 Everything is reachable from the Mac. Nobody has had to sit at the MSI since
@@ -27,6 +27,11 @@ cd ~/avi-desk
 ./runHome pull            # copy taught poses back to the Mac
 ./runHome drive           # teleop's WASD driving (superseded by the dashboard)
 ./runHome stop
+
+On the dashboard: mood bars and the live emotion, buttons for all nine mood
+events, and an **idle behaviour** toggle. Turning it on makes AVI choose its own
+behaviours; click `arrived` first, or it correctly assumes nobody is there and
+only sits still.
 ./scripts/test.sh         # the whole suite, on the Mac, no GPU or hardware
 ```
 
