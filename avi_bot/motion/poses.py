@@ -14,6 +14,7 @@ CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "joints.toml"
 
 class JointConfig:
     def __init__(self, data):
+        self.raw = data
         self.meta = data["meta"]
         self.joints = data["joints"]
         self.sim = data.get("sim", {})
@@ -37,6 +38,13 @@ class JointConfig:
     def achievable(self):
         """What the arm can actually do. Gesture durations derive from this."""
         return float(self.meta.get("achievable_deg_s", self.speed_cap))
+
+    @property
+    def camera(self):
+        """Closed-loop look-at gains, in commanded degrees per frame."""
+        return self.raw.get("camera", {"yaw_deg_per_frame": 29.0,
+                                       "wrist_deg_per_frame": 60.0,
+                                       "wrist_measured": False})
 
     def soft_limits(self, joint):
         j = self.joints[joint]

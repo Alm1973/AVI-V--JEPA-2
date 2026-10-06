@@ -186,3 +186,29 @@ link_shoulder_mm = 90
 link_elbow_mm    = 70
 link_wrist_mm    = 40
 base_height_mm   = 55
+
+# How far the picture moves per commanded degree. This is what closed-loop
+# look-at needs, and it is NOT the camera's field of view.
+#
+# MEASURED 2026-10-05 by centring a tracked person and watching the loop:
+# a 7.4 deg yaw correction moved the person 0.248 of a frame, and an 8.4 deg
+# one moved them 0.323 -> 29.8 and 27.2 commanded degrees per frame width.
+#
+# The C270 is specified at 60 deg diagonal, about 52 horizontal on a 16:9
+# frame, so this is roughly half what the datasheet implies. The cause is
+# confounded: either a narrower effective field of view, or the yaw
+# under-travelling what it is commanded. For a feedback loop that does not
+# matter, because the loop outputs commanded degrees and observes frame
+# fractions, so a constant in exactly those units is the right one. It WOULD
+# matter for anything that needs a true angle -- do not reuse this as an FOV.
+[camera]
+yaw_deg_per_frame = 29.0
+
+# The wrist's equivalent, for vertical tracking. NOT MEASURED THE SAME WAY and
+# deliberately conservative: the two optical attempts at it disagreed (78 and
+# 34 deg per frame height) and both used methods later shown unreliable on this
+# scene. A gain that is too small converges slowly; one that is too large
+# oscillates, which is the failure that is hard to tell from a wrong sign. Run
+# the same closed-loop check vertically and replace this.
+wrist_deg_per_frame = 60.0
+wrist_measured = false

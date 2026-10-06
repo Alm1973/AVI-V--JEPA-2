@@ -11,7 +11,7 @@ Updated 2026-10-05, end of the first hardware day.
 |---|---|
 | **M0** remote ops | **done.** Wake, sleep, deploy, run-as-task, GPU, camera, all over SSH. |
 | **M1** motion foundation | **done.** Firmware v2 flashed, all 4 joints driven, 6 poses taught on the arm, all 13 gestures verified moving on hardware, dashboard folded. |
-| **M2** personality core | **mostly done.** Mood, idle behaviour selection and the chirp synthesizer are written and tested, and M2's own acceptance test passes. Attention (5.3) and wiring it all into the dashboard are left. |
+| **M2** personality core | **code done.** Mood, idle behaviour selection, attention and the chirp synthesizer are written and tested; M2's acceptance test passes and 22 chirp WAVs are in `docs/beeps/`. Left: wiring it into the dashboard so it can be watched idling. |
 | M3–M7 | not started. |
 
 Everything is reachable from the Mac. Nobody has had to sit at the MSI since
@@ -63,7 +63,9 @@ fixed-size leg.
 - **About 29 commanded degrees of yaw move the image one frame width** —
   measured, against the ~52° the C270's datasheet implies. Use this for
   look-at gains; using 60 made the loop apply twice the intended gain and it
-  oscillated instead of settling.
+  oscillated instead of settling. It lives in `config/joints.toml`'s
+  `[camera]`. The **wrist**'s equivalent is still unmeasured and set
+  conservatively at 60 — run the same closed-loop check vertically.
 - **Lower shoulder degrees raise the arm** (ATTENTIVE 29.5 raised, REST 150
   folded).
 - **Higher wrist degrees tilt the camera UP** (REST, camera-down, is 30.5).
