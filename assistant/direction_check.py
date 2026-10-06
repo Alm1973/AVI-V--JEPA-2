@@ -13,10 +13,15 @@ rather than measurement has already gone wrong twice today:
   - Reading a two-position wrist sweep by eye gave a direction that the taught
     poses later contradicted outright.
 
-So this uses dense optical flow (Farneback), which gives a vector per pixel and
-degrades into noise rather than into a confident wrong answer. The median of
-that field is the scene's motion, and the median is used rather than the mean
-so that a moving person or a flickering highlight cannot drag it.
+It uses TEMPLATE MATCHING, after dense optical flow also failed: Farneback
+disagreed with itself by 17-78 px between repeats of the same movement. A
+follow-up measurement settled which part was at fault -- with the arm
+completely still, template matching shows 4 px of apparent movement at match
+scores of 0.98, against about 46 px for a 10 degree wrist move. The scene is
+perfectly stable; averaging a noisy vector field was the problem.
+
+A verdict is only given when the repeats agree, so this reports NO CALL rather
+than inventing a direction.
 
 Reading the result:
   the camera rides the arm, so the scene moves OPPOSITE to the camera.
@@ -68,20 +73,40 @@ def grey(cap):
     raise RuntimeError("no frame")
 
 
-def flow_shift(a, b):
-    """Median (dx, dy) of the dense flow from a to b, in pixels."""
-    f = cv2.calcOpticalFlowFarneback(a, b, None,
-                                     pyr_scale=0.5, levels=4, winsize=25,
-                                     iterations=3, poly_n=7, poly_sigma=1.5,
-                                     flags=0)
-    mag = np.linalg.norm(f, axis=2)
-    # Flat wall contributes no real flow, only noise. Keep the pixels that
-    # actually moved, or fall back to everything if nothing clearly did.
-    strong = mag > max(0.5, float(np.percentile(mag, 70)))
-    if strong.sum() < 500:
-        strong = np.ones_like(mag, dtype=bool)
-    return (float(np.median(f[..., 0][strong])),
-            float(np.median(f[..., 1][strong])))
+def patch_shift(a, b, patch=120, min_score=0.5):
+    """Where did a few patches of `a` end up in `b`? Returns (dx, dy, score).
+
+    Template matching, NOT optical flow. Flow was tried three ways on this
+    scene and failed each time -- phase correlation found no peak at all
+    (response 0.00-0.07) and dense Farneback flow disagreed with itself by
+    17-78 px between repeats of the same move. Measured afterwards: with the
+    arm completely still, template matching shows 4 px of apparent movement at
+    match scores of 0.98, against about 46 px for a 10 degree wrist move. The
+    scene was never the problem; averaging a noisy vector field was.
+
+    Three patches across the frame rather than one, taking the median, so a
+    patch that lands on a blank wall or leaves the frame cannot carry the
+    answer on its own. The match score is returned so a weak find can be
+    rejected rather than averaged in.
+    """
+    half = patch // 2
+    cy = H // 2
+    out = []
+    for cx in (W // 4, W // 2, 3 * W // 4):
+        y0, x0 = cy - half, cx - half
+        tpl = a[y0:y0 + patch, x0:x0 + patch]
+        if tpl.shape[:2] != (patch, patch):
+            continue
+        res = cv2.matchTemplate(b, tpl, cv2.TM_CCOEFF_NORMED)
+        _, score, _, loc = cv2.minMaxLoc(res)
+        if score < min_score:
+            continue
+        out.append((loc[0] - x0, loc[1] - y0, score))
+    if not out:
+        return 0.0, 0.0, 0.0
+    return (float(np.median([o[0] for o in out])),
+            float(np.median([o[1] for o in out])),
+            float(np.median([o[2] for o in out])))
 
 
 def hold(backend, limiter, target, seconds, hz=50.0):
@@ -132,13 +157,14 @@ def main():
                 moved[j] = base[j] + swing[j]
                 hold(backend, limiter, moved, 2.5)
                 b = grey(cap)
-                samples.append(flow_shift(a, b))
+                samples.append(patch_shift(a, b))
                 hold(backend, limiter, base, 2.5)
             dx = float(np.median([s[0] for s in samples]))
             dy = float(np.median([s[1] for s in samples]))
+            score = float(np.median([s[2] for s in samples]))
             results[j] = (dx, dy, samples, swing[j])
             log(f"{j}: +{swing[j]:.0f} deg -> scene dx={dx:+.1f} "
-                f"dy={dy:+.1f} px  (n={len(samples)})")
+                f"dy={dy:+.1f} px  match={score:.2f}  (n={len(samples)})")
     finally:
         hold(backend, limiter, poses.get_pose("HOME"), 3.0)
         cap.release()

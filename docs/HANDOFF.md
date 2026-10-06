@@ -139,10 +139,13 @@ of 0.98**, against ~46 px for a 10° wrist move. So the next attempt should use
 `cv2.matchTemplate`, not flow, and `assistant/direction_check.py` should be
 rewritten onto it.
 
-**Better still, test the loop rather than the geometry:** put a target in frame,
-run the closed loop, and see whether it converges or diverges. That cannot be
-confused by reference frames, and it tests the thing that actually matters.
-Needs M3's detector.
+**Test the loop, not the geometry.** `look_at` only cares whether its
+correction converges. Put a person or object in frame, run the closed loop, and
+watch whether the error shrinks or grows; if it grows, flip the sign. That
+cannot be confused by which frame "right" refers to, and it tests the thing
+that matters instead of a proxy. Needs M3's detector — which already exists on
+the MSI as part of the logger, so **if Shaurya is at the desk, one run of YOLO
+person detection plus a few degrees of yaw settles it today.**
 
 Also open:
 - Can the arm beat 27 °/s with the new supply? All gesture sizing depends on it.

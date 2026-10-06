@@ -760,3 +760,37 @@ rather than tuning.
 Also closed: the camera stream, teleop's driving and calibrate's pose teaching
 are folded into one dashboard on port 8000, built on calibrate's interaction
 model because that is the one that worked.
+
+## 2026-10-05 19:25 — four ways not to measure a joint direction
+
+`base_yaw`'s sign is still unverified, and this is the record of what does not
+work so nobody spends a fifth evening on it.
+
+| method | what happened |
+|---|---|
+| phase correlation, 15° move | peak response 0.00–0.07, i.e. no peak found. Reported 5.8 px for a move worth ~160 px, and gave two OPPOSITE commands the same sign. |
+| phase correlation, 3° move | same, response 0.02–0.07. |
+| dense Farneback flow | repeats of the same move disagreed by 17–78 px. |
+| template matching, 3 patches | match scores 0.68–0.75 and repeats disagreeing by up to 165 px: it finds FALSE matches and one of them carries the median. |
+
+**The scene is not the problem, and that was worth measuring separately.** With
+the arm completely still, template matching shows 4 px of apparent movement at
+match scores of 0.98. So the picture is stable to 4 px; what fails is
+establishing correspondence across a shift of 50–150 px on a scene whose
+features are not distinctive enough to be unambiguous. Every method above
+degrades into a confident wrong answer rather than into silence, which is why
+each one needed its own disproof.
+
+**What to do instead: test the loop, not the geometry.** `look_at` only cares
+whether its correction converges. Put a person or object in frame, run the
+closed loop, and watch whether the error shrinks or grows; if it grows, flip the
+sign. That cannot be confused by which frame of reference "right" means, and it
+tests the thing that actually matters rather than a proxy for it. It needs M3's
+person detector, which already exists on the MSI as part of the logger.
+
+**Available sooner:** if Shaurya is sitting at the desk, YOLO person detection
+gives an unambiguous box. Move the yaw a few degrees and see which way the box
+moves. One run settles it.
+
+Until then `config/joints.toml` keeps `sign = -1` for `base_yaw`, which is what
+his hands-on report implies, and `look_at` must not ship on it.
