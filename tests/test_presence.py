@@ -160,3 +160,24 @@ class Persistence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForChecking(unittest.TestCase):
+    """An hourly fraction hid a false arrival that the raw looks showed. The
+    raw looks have to be reachable."""
+
+    def test_recent_returns_raw_looks_newest_first(self):
+        p = log()
+        run(p, "1001")
+        r = p.recent(3)
+        self.assertEqual([x["present"] for x in r], [True, False, False])
+        self.assertGreater(r[0]["ts"], r[-1]["ts"])
+
+    def test_a_break_offer_is_logged_and_counted_without_breaking_sessions(self):
+        p = log()
+        _, t = run(p, "11" + "1" * 10)
+        p.log_event("break_offered", at=t)
+        run(p, "0" * pm.LEAVE_AFTER, start=t + 20)
+        self.assertEqual(p.summary(now=t + 300)["breaks_offered_today"], 1)
+        self.assertEqual(len(p.sessions(min_minutes=0)), 1,
+                         "a break event must not split or end a session")

@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS samples (
 CREATE INDEX IF NOT EXISTS samples_ts ON samples(ts);
 CREATE TABLE IF NOT EXISTS events (
     ts    REAL NOT NULL,
-    kind  TEXT NOT NULL            -- arrived | left
+    kind  TEXT NOT NULL            -- arrived | left | break_offered
 );
 """
 
@@ -95,6 +95,22 @@ class Presence:
             self.db.execute("INSERT INTO events VALUES (?,?)", (at, event))
         self.db.commit()
         return event
+
+    def log_event(self, kind, at=None):
+        """Record something AVI did about his presence, e.g. a break offer."""
+        at = self.clock() if at is None else float(at)
+        self.db.execute("INSERT INTO events VALUES (?,?)", (at, str(kind)))
+        self.db.commit()
+
+    def recent(self, n=20):
+        """The last n raw looks, newest first. For checking, not summarising:
+        an hourly fraction hid a false arrival that the raw looks show."""
+        return [{"ts": round(ts, 1), "present": bool(pr),
+                 "conf": None if c is None else round(c, 3),
+                 "view_ok": bool(v)}
+                for ts, pr, c, v in self.db.execute(
+                    "SELECT ts, present, conf, view_ok FROM samples "
+                    "ORDER BY ts DESC LIMIT ?", (int(n),))]
 
     # --- what has been learned ------------------------------------------
     def sessions(self, since=None, min_minutes=MIN_SESSION_MIN):
@@ -155,7 +171,10 @@ class Presence:
                # How much of the day could actually have seen him. Without
                # this a low "today_minutes" is ambiguous: away, or unwatched.
                "coverage_today": (round((valid or 0) / total, 3)
-                                  if total else None)}
+                                  if total else None),
+               "breaks_offered_today": self.db.execute(
+                   "SELECT COUNT(*) FROM events WHERE kind = 'break_offered'"
+                   " AND ts >= ?", (day0,)).fetchone()[0]}
         arrivals = [s for s, _ in self.sessions(min_minutes=MIN_SESSION_MIN)]
         if len(arrivals) >= 3:
             hrs = sorted(datetime.fromtimestamp(a).hour

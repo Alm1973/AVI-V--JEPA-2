@@ -55,6 +55,7 @@ from avi_bot.perception import parallax                           # noqa: E402
 from avi_bot.perception import depth as depth_mod                 # noqa: E402
 from avi_bot.perception import dome as dome_mod                   # noqa: E402
 from avi_bot.perception import presence as presence_mod           # noqa: E402
+from avi_bot.skills import breaks as breaks_mod                   # noqa: E402
 from avi_bot.skills import find as find_mod                       # noqa: E402
 from avi_bot.perception import roommap as roommap_mod             # noqa: E402
 
@@ -194,6 +195,7 @@ class Arm:
         # When he is at the desk, learned by watching. Launch-day rule: the
         # dev store unless AVI_PROFILE=live, same as the map and the latents.
         self.presence = presence_mod.Presence(self.presence_path())
+        self.coach = breaks_mod.BreakCoach(self.presence)
         self.load_roommap()
         # Live-tunable, so a value can be changed and watched without a push
         # and a restart. Chasing a confidence floor through a deploy cycle each
@@ -309,6 +311,49 @@ class Arm:
                     self.note(f"presence: {event}")
             except Exception as exc:
                 self.note(f"presence error (continuing): {exc!r}")
+                time.sleep(5.0)
+
+    # The cue for "time for a break". No speakers until the voice module
+    # arrives, so it is a gesture: a yawn-and-stretch reads as "let's stretch"
+    # without words. Words get added on top when there is something to say
+    # them with.
+    BREAK_GESTURE = "yawn_wake"
+
+    def pause_loop(self, latest, deadline, period=0.5):
+        """Watch for natural pauses and let the coach decide about a break.
+
+        change.py's detector, the one the observer uses, run on the dashboard's
+        own stream so it needs no second camera handle. Suppressed whenever
+        the arm moves, because the arm's own motion -- including the break
+        gesture itself -- would otherwise read as him pausing.
+        """
+        import change
+        det = change.ChangeDetector()
+        last = None
+        while not self.stop.is_set() and time.time() < deadline:
+            time.sleep(period)
+            try:
+                frame, _ = _frame(latest)
+                if frame is None:
+                    continue
+                now = time.time()
+                snap = self.snapshot()
+                if last is not None and any(
+                        abs(snap[j] - last[j]) > 0.3 for j in snap):
+                    det.suppress(now + 2.0)
+                last = snap
+                if not det.update(frame, now):
+                    continue
+                if self.coach.on_breakpoint(det.last_reason, now) \
+                        == breaks_mod.BREAK:
+                    move = self.play(self.BREAK_GESTURE)
+                    det.suppress(now + move.duration + 3.0)
+                    self.presence.log_event("break_offered", now)
+                    self.note(f"break offered after "
+                              f"{(now - self.presence.since) / 60:.0f} min "
+                              f"at a natural pause")
+            except Exception as exc:
+                self.note(f"pause loop error (continuing): {exc!r}")
                 time.sleep(5.0)
 
     def track_loop(self, latest, deadline, period=0.4):
@@ -1274,6 +1319,8 @@ def make_handler(st):
             elif self.path == "/presence":
                 pr = arm.presence
                 self._json({"summary": pr.summary(),
+                            "break": arm.coach.status(),
+                            "recent": pr.recent(int(body.get("recent", 15))),
                             "routine": pr.routine(),
                             "sessions": [[round(a), None if b is None
                                           else round(b)]
@@ -2491,6 +2538,8 @@ def main():
     threading.Thread(target=arm.track_loop, args=(latest, deadline),
                      daemon=True).start()
     threading.Thread(target=arm.presence_loop, args=(latest, deadline),
+                     daemon=True).start()
+    threading.Thread(target=arm.pause_loop, args=(latest, deadline),
                      daemon=True).start()
     threading.Thread(target=arm.latent_loop, args=(latest, deadline),
                      daemon=True).start()
