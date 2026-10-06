@@ -66,7 +66,7 @@ class Registry:
         Worth being able to ask: the schema is what the model is told it can
         do, so anything in here is a promise the robot cannot keep.
         """
-        return sorted(set(tools.NAMES) - set(self.handlers))
+        return sorted(set(tools.BY_NAME) - set(self.handlers))
 
     def run(self, name, args=None):
         """Execute one call. Never raises."""
