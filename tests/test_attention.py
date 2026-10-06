@@ -141,7 +141,7 @@ class TestCorrections(unittest.TestCase):
 
     def test_the_gain_comes_from_config_not_a_datasheet(self):
         _, _, cfg = make()
-        self.assertAlmostEqual(cfg.camera["yaw_deg_per_frame"], 29.0)
+        self.assertAlmostEqual(cfg.camera["yaw_deg_per_frame"], 83.9)
 
 
 class TestLoopConverges(unittest.TestCase):
@@ -191,6 +191,118 @@ class TestLoopConverges(unittest.TestCase):
         tail = h[20:]
         worst = max(abs(x) * cfg.camera["yaw_deg_per_frame"] for x in tail)
         self.assertLess(worst, 5.0, f"settles {worst:.1f} deg off centre")
+
+    def _run(self, config_dpf, real_dpf, start=0.35, steps=30):
+        """Run the loop with the constant the code BELIEVES and the one the
+        world actually has, which are not necessarily the same number."""
+        a, c, cfg = make()
+        cfg.camera["yaw_deg_per_frame"] = config_dpf
+        offset = start
+        history = [offset]
+        for _ in range(steps):
+            a.offer("face", W / 2 + offset * W, H / 2, W, H)
+            a.choose()
+            d_yaw, _ = a.corrections()
+            offset += d_yaw / real_dpf
+            history.append(offset)
+            c.advance(0.2)
+        return history
+
+    def test_the_ideal_loop_cannot_check_the_constant(self):
+        """Recorded so nobody trusts run_loop() to validate deg_per_frame.
+
+        When the configured constant matches reality it appears once in the
+        correction and once in the response and cancels EXACTLY:
+        offset += (-ox * dpf * gain) / dpf. So the result is bit-identical for
+        any value, and every convergence test here would pass with a wildly
+        wrong one -- which is what happened: the live value was out by 2.9x
+        while all of this was green. These tests check the sign and the gain.
+        Only a measurement checks the constant.
+        """
+        finals = {dpf: self._run(dpf, dpf)[-1] for dpf in (29.0, 83.9, 500.0)}
+        # Equal to floating-point rounding -- dividing by a different constant
+        # rounds differently in the last bit, which is the only difference a
+        # 17x change in the value makes.
+        for dpf, got in finals.items():
+            self.assertAlmostEqual(got, finals[83.9], places=12,
+                                   msg=f"dpf={dpf} gave {got}, all: {finals}")
+
+    def test_a_mismatched_constant_is_what_actually_hurts(self):
+        """Believing the wrong constant has two distinct failure modes.
+
+        TOO SMALL and the loop crawls: it under-commands every step and takes
+        several times as long to settle. That was the real state of things with
+        29.0 configured against a true 83.9, and it reads from the outside as
+        "the tracker is not converging".
+
+        TOO LARGE and it over-commands and hunts, which reads as a wrong sign.
+        This is why the correction had to come with a measurement rather than
+        a nudge in whichever direction looked better.
+        """
+        truth = 83.9
+        right = self._run(truth, truth)
+        crawl = self._run(truth / 2.9, truth)       # the old 29.0
+        over = self._run(truth * 2.9, truth)
+
+        def steps_to_settle(h):
+            for i, x in enumerate(h):
+                if abs(x) < 0.05:
+                    return i
+            return len(h)
+
+        self.assertGreater(steps_to_settle(crawl), steps_to_settle(right) * 2,
+                           "too-small constant should visibly crawl")
+        self.assertTrue(any(x < -0.05 for x in over),
+                        "too-large constant should overshoot past centre")
+        self.assertLess(steps_to_settle(right), 8,
+                        "the correct constant should settle promptly")
+
+    def test_it_settles_when_the_arm_lags_behind(self):
+        """The real loop's actuator is slow, and that is where it can hunt.
+
+        attention.steer() ACCUMULATES into a target the arm then chases at a
+        limited rate, so between measurements the picture reflects where the
+        arm has got to, not what was commanded. That is the gap the saturation
+        bug lived in, and run_loop's instant arm cannot see it.
+
+        Numbers from the hardware: detections arrive about every 0.4 s and the
+        arm manages ~27 deg/s, so it covers under 11 degrees between
+        measurements while a correction can ask for 38.
+        """
+        import avi_bot.personality.attention as att_mod
+        a, c, cfg = make()
+        dpf = cfg.camera["yaw_deg_per_frame"]
+        rate, dt = 27.0, 0.4
+        target = 0.0          # what steer() has accumulated
+        joint = 0.0           # where the arm has actually got to
+        start = 0.35
+        worst_overshoot = 0.0
+        for _ in range(40):
+            offset = start - joint / dpf
+            a.offer("face", W / 2 + offset * W, H / 2, W, H)
+            a.choose()
+            d_yaw, _ = a.corrections()
+            target = max(-att_mod.MAX_TARGET_DEG,
+                         min(att_mod.MAX_TARGET_DEG, target + d_yaw))
+            step = max(-rate * dt, min(rate * dt, -target - joint))
+            joint += step
+            worst_overshoot = min(worst_overshoot, start - joint / dpf)
+            c.advance(dt)
+        settled = abs(start - joint / dpf) * dpf
+        self.assertLess(settled, 5.0,
+                        f"lagging arm settles {settled:.1f} deg off centre")
+        self.assertGreater(worst_overshoot, -0.08,
+                           f"lagging arm overshot to {worst_overshoot:+.3f}")
+
+    def test_the_target_bound_can_reach_the_frame_edge(self):
+        """A target at the edge of frame must be reachable, or the loop sits
+        pinned against its own bound forever -- which is what +-30 degrees did
+        once yaw_deg_per_frame was corrected to 83.9."""
+        import avi_bot.personality.attention as att_mod
+        _, _, cfg = make()
+        need = 0.5 * cfg.camera["yaw_deg_per_frame"]
+        self.assertGreater(att_mod.MAX_TARGET_DEG, need,
+                           f"needs {need:.1f} deg to centre a frame-edge box")
 
     def test_a_gain_of_one_still_settles(self):
         """It should be stable even if someone turns the gain all the way up,

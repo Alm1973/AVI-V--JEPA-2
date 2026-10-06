@@ -844,7 +844,7 @@ def make_handler(st):
                 self._json(detect_debug(arm, latest, floor))
             elif self.path == "/probe_static":
                 self._json(probe_static(
-                    arm, latest, swing=float(body.get("swing", 7.0)),
+                    arm, latest, swing=float(body.get("swing", 15.0)),
                     min_conf=float(body.get("min_conf", 0.45)),
                     frames=int(body.get("frames", 4))))
             elif self.path in ("/probe_wrist", "/probe_yaw"):
@@ -940,7 +940,7 @@ def detect_debug(arm, latest, min_conf=0.05):
             "n": len(found), "found": found[:25]}
 
 
-def probe_static(arm, latest, swing=7.0, settle=1.8, min_conf=0.45,
+def probe_static(arm, latest, swing=15.0, settle=1.8, min_conf=0.45,
                  frames=4):
     """Pan the base deliberately and learn which candidates do not move.
 

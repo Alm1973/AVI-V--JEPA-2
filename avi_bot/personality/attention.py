@@ -51,7 +51,12 @@ IDLE_YAW_SPREAD = 0.22      # how far off centre an idle glance may wander
 # from corrections and would otherwise wind up without bound: a target the arm
 # cannot reach keeps adding error, and then the arm takes a long slow walk back
 # when the person finally moves. Bounding the target is what stops that.
-MAX_TARGET_DEG = 30.0
+# 30.0 until 2026-10-05, when yaw_deg_per_frame was corrected from 29.0 to
+# 83.9: centring a target at the very edge of frame now needs 0.5 * 83.9 = 42
+# degrees of accumulated target, so a 30 degree bound would have clipped it and
+# left the loop permanently unable to reach the edges of its own picture.
+# base_yaw sits at 90 with soft limits 20..160, so 50 is still well inside.
+MAX_TARGET_DEG = 50.0
 
 
 class Target:

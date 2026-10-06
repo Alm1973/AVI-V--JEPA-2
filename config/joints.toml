@@ -201,19 +201,41 @@ base_height_mm   = 55
 # How far the picture moves per commanded degree. This is what closed-loop
 # look-at needs, and it is NOT the camera's field of view.
 #
-# MEASURED 2026-10-05 by centring a tracked person and watching the loop:
-# a 7.4 deg yaw correction moved the person 0.248 of a frame, and an 8.4 deg
-# one moved them 0.323 -> 29.8 and 27.2 commanded degrees per frame width.
+# MEASURED 2026-10-05 by probe_axis: base_yaw stepped to five absolute
+# positions, 80 -> 100 deg, moved a detected laptop 702 -> 407 px across a
+# 1280 px frame. Slope -15.26 px/deg, r2 = 0.976. 1280 / 15.26 = 83.9.
 #
-# The C270 is specified at 60 deg diagonal, about 52 horizontal on a 16:9
-# frame, so this is roughly half what the datasheet implies. The cause is
-# confounded: either a narrower effective field of view, or the yaw
-# under-travelling what it is commanded. For a feedback loop that does not
-# matter, because the loop outputs commanded degrees and observes frame
-# fractions, so a constant in exactly those units is the right one. It WOULD
-# matter for anything that needs a true angle -- do not reuse this as an FOV.
+# THIS REPLACES AN EARLIER 29.0, WHICH WAS WRONG BY A FACTOR OF 2.9, and the
+# reason is worth keeping because it was not a sloppy reading -- it was a
+# sound-looking measurement taken through a broken loop:
+#
+#   The 29.0 came from dividing a COMMANDED correction by the image shift
+#   that followed it (7.4 deg -> 0.248 of a frame, 8.4 -> 0.323). Both
+#   readings were taken while the loop was oscillating, which is when
+#   attention.steer() was being called about 20 times per detection and the
+#   arm was therefore moving far more than the single correction being
+#   credited with the shift. Divide a real shift by a fraction of the motion
+#   that caused it and the answer comes out small -- by very nearly the 2.9x
+#   seen here. It was also measured off a PERSON, who moves; this one is
+#   measured off a laptop, which does not, and with no feedback loop in the
+#   path at all.
+#
+# Consistency check, and why 83.9 is the believable one: the C270 is about 52
+# deg horizontal on a 16:9 frame, so 52 / 83.9 means base_yaw travels about
+# 62% of the degrees it is commanded. The wrist, measured the same way, comes
+# out at 32.2 against a ~31 deg vertical FOV, i.e. very nearly 1:1. A base
+# that under-travels and a wrist that does not is physically sensible -- the
+# base carries the whole arm and this arm is current-limited. 29.0 would have
+# required the base to OVER-travel by 1.8x, which nothing explains.
+#
+# Leading explanation, NOT verified: the full mechanical sweep (counts 75..460,
+# found by driving to each stop) was labelled 0..180 logical degrees, but the
+# servo's real travel may be nearer 290 deg; 180/290 = 0.62. If so these are
+# honest logical degrees and nothing is broken, but DO NOT reuse them as real
+# angles. To settle it, measure a known real angle -- two marks a known
+# distance apart at a known range -- rather than trusting the lens spec.
 [camera]
-yaw_deg_per_frame = 29.0
+yaw_deg_per_frame = 83.9   # MEASURED 2026-10-05, replaces a wrong 29.0
 
 # The wrist's equivalent, for vertical tracking. MEASURED 2026-10-05 by
 # probe_wrist: stepping the wrist across 125..143 degrees moved a detected

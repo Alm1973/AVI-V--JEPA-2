@@ -150,18 +150,58 @@ probe. `config/joints.toml` carried a comment claiming the opposite — it is
 fixed. **Say which thing moves:** the landmark moves *down*, the view goes
 *up*. Conflating those is how the direction got stated backwards twice.
 
-### Probably: base_yaw under-travels its command by ~1.8×
+### yaw_deg_per_frame is 83.9, not 29.0 — this was the tracking bug
 
-32.2°/frame vertically is about the C270's vertical field of view (a 52°
-horizontal FOV at 16:9 implies ~31°), so the wrist travels very nearly the
-degrees it is commanded. Yaw's 29°/frame against a ~52° horizontal FOV does
-not. Same camera both times, so the asymmetry points at **base_yaw
-under-travelling**, not a narrow lens — which answers the open question that
-has been sitting in this file.
+Measured by `POST /probe_yaw`: base_yaw stepped to five absolute positions,
+80 → 100°, moved a detected laptop 702 → 407 px across a 1280 px frame.
+Slope −15.26 px/deg, **r² = 0.976**. 1280 / 15.26 = **83.9**.
 
-Treat it as a strong inference, **not a measurement**: it leans on a datasheet
-FOV nobody here has checked. It changes nothing for `look_at`, which is
-calibrated in commanded degrees per frame either way.
+**The old 29.0 was wrong by 2.9×, and it was not a sloppy reading.** It came
+from dividing a *commanded* correction by the image shift that followed it
+(7.4° → 0.248 of a frame; 8.4° → 0.323). Both readings were taken while the
+loop was oscillating — which is exactly when `steer()` was firing ~20× per
+detection, so the arm was moving far more than the single correction being
+credited with the shift. Divide a real shift by a fraction of the motion that
+caused it and the answer comes out small, by very nearly 2.9×. It was also
+measured off a **person**, who moves. The new one uses a laptop and no
+feedback loop at all.
+
+**Consequence:** the loop was commanding 2.9× too little yaw, i.e. correcting
+~16% of the error per measurement instead of 45%. From the outside that looks
+precisely like "the tracker isn't converging", which is what we were staring
+at. `tests/test_attention.py` now has
+`test_a_mismatched_constant_is_what_actually_hurts` covering both failure
+modes: too small crawls, too large hunts.
+
+**`MAX_TARGET_DEG` had to go 30 → 50.** Centring a box at the frame edge now
+needs 0.5 × 83.9 = 42° of accumulated target, so the old bound would have
+pinned the loop short of the edges of its own picture.
+
+**Why 83.9 is the believable one:** the C270 is ~52° horizontal at 16:9, so
+52/83.9 means base_yaw travels about **62%** of the degrees it is commanded.
+The wrist, measured the same way, is 32.2 against a ~31° vertical FOV — very
+nearly 1:1. A base that under-travels and a wrist that doesn't is physically
+sensible: the base carries the whole arm and this arm is current-limited.
+29.0 would have required the base to *over*-travel by 1.8×, which nothing
+explains.
+
+Leading explanation, **not verified**: the full mechanical sweep (counts
+75–460, found by driving to each stop) was labelled 0–180 logical degrees but
+may really be ~290°; 180/290 = 0.62. If so these are honest logical degrees
+and nothing is broken — but do not reuse them as real angles. To settle it,
+measure a known real angle (two marks a known distance apart at a known
+range) rather than trusting the lens spec.
+
+### The convergence tests could never have caught this
+
+`run_loop()` applies each correction instantly, so the constant appears in the
+correction and in the response and **cancels exactly**. The suite was green
+with a value out by 2.9×, and would be green with 500. Two tests now pin this
+down: `test_the_ideal_loop_cannot_check_the_constant` records the blind spot,
+and `test_it_settles_when_the_arm_lags_behind` models the rate-limited arm
+(27°/s against 0.4 s detections) where accumulated-target windup actually
+lives. Gain 0.45 is stable there with the corrected constant — checked, not
+assumed.
 
 ### Person detection: confidence cannot do this job, parallax can
 
