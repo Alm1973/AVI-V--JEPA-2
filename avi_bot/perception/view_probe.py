@@ -82,22 +82,35 @@ def _stat(dl_rank, elev, covar_ranks):
     return _corr(_resid(dl_rank, covar_ranks), _resid(de, covar_ranks))
 
 
-def mantel(latents, elevation, t=None, light=None, draws=999, rng=None):
+def mantel(latents, elevation, t=None, light=None, draws=999, rng=None,
+           distances=None):
     """Partial Mantel r between latent distance and elevation distance.
 
     Returns raw r (no controls), partial r (controlling for whichever of t
     and light are given), a permutation null for the partial, and a verdict.
+
+    `distances` replaces `latents` with a precomputed n x n matrix. It exists
+    for the BASELINE: the same test run on raw-pixel distances. Adjacent tilts
+    see overlapping parts of the room, so any representation of appearance --
+    a thumbnail, even -- is expected to look view-structured. A latent space
+    only shows something beyond appearance if it beats that.
     """
-    X = np.asarray(latents, dtype=np.float64)
     el = np.asarray(elevation, dtype=np.float64)
     n = len(el)
-    if X.ndim != 2 or len(X) != n:
-        raise NotEnoughData(f"{len(X)} latents against {n} elevations")
+    if distances is not None:
+        Dm = np.asarray(distances, dtype=np.float64)
+        if Dm.shape != (n, n):
+            raise NotEnoughData(f"distance matrix {Dm.shape} for {n} levels")
+    else:
+        X = np.asarray(latents, dtype=np.float64)
+        if X.ndim != 2 or len(X) != n:
+            raise NotEnoughData(f"{len(X)} latents against {n} elevations")
+        Dm = cosine_distances(X)
     if n < MIN_LEVELS:
         raise NotEnoughData(f"{n} levels; a distance test wants {MIN_LEVELS}")
     rng = rng or np.random.default_rng(0)
 
-    dl = _rank(_upper(cosine_distances(X)))
+    dl = _rank(_upper(Dm))
     covars, named = [], []
     for name, v in (("time", t), ("light", light)):
         if v is not None:
@@ -135,6 +148,31 @@ def mantel(latents, elevation, t=None, light=None, draws=999, rng=None):
                           f"carried by {' and '.join(named)}, not by the view.")
     else:
         out["verdict"] = "NO: latent distance does not track view distance."
+    return out
+
+
+def compare(latents, pixel_distances, elevation, t=None, light=None,
+            draws=999):
+    """V-JEPA against the pixel baseline, on identical controls and null.
+
+    The honest headline. "Encodes the view" on its own may only mean "sees
+    overlapping parts of the room at adjacent tilts", which a thumbnail also
+    does. What V-JEPA adds is the gap between the two.
+    """
+    v = mantel(latents, elevation, t=t, light=light, draws=draws)
+    b = mantel(None, elevation, t=t, light=light, draws=draws,
+               distances=pixel_distances)
+    gap = v["partial_r"] - b["partial_r"]
+    out = {"vjepa": v, "pixels": b, "gap": round(gap, 4)}
+    if b["partial_r"] > b["null_max"] and gap < 0.05:
+        out["verdict"] = ("NO BETTER THAN PIXELS: V-JEPA's view structure is "
+                          "what raw appearance already has. Adjacent tilts "
+                          "overlap; that is all this shows.")
+    elif gap >= 0.05 and v["partial_r"] > v["null_max"]:
+        out["verdict"] = (f"BEYOND APPEARANCE: V-JEPA is more view-structured "
+                          f"than raw pixels by {gap:+.3f} in partial r.")
+    else:
+        out["verdict"] = "INCONCLUSIVE: neither clearly beats the null."
     return out
 
 

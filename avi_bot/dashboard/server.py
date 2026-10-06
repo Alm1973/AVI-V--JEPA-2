@@ -1580,6 +1580,21 @@ def find_object(arm, name, look=True):
             "known": [p.label for p, _ in arm.roommap.known()]}
 
 
+def _pixel_distances(thumbs):
+    """Cosine distances between mean-centred thumbnails. Images discarded.
+
+    Mean-centring per thumbnail removes overall brightness, which the probe
+    already controls for separately, so this measures LAYOUT likeness.
+    """
+    import numpy as np
+    T = np.vstack(thumbs).astype(np.float64)
+    T = T - T.mean(axis=1, keepdims=True)
+    n = np.linalg.norm(T, axis=1, keepdims=True)
+    n[n == 0] = 1.0
+    U = T / n
+    return (1.0 - U @ U.T).astype(np.float32)
+
+
 def sweep_report(name="sweep", draws=999):
     """Run view_probe on a saved sweep. Vectors only -- no frame is read.
 
@@ -1609,6 +1624,12 @@ def sweep_report(name="sweep", draws=999):
         out["mantel"] = view_probe.mantel(X, el, t=t, light=light,
                                           draws=int(draws))
         out["nn"] = view_probe.nn_adjacent(X, el)
+        if "pixel_dist" in z.files:
+            out["baseline"] = view_probe.compare(
+                X, z["pixel_dist"], el, t=t, light=light, draws=int(draws))
+        else:
+            out["baseline"] = {"verdict": "no pixel baseline in this sweep; "
+                                          "re-run sweep_dome to get one"}
     except view_probe.NotEnoughData as exc:
         out["error"] = str(exc)
     return out
@@ -1712,6 +1733,11 @@ def sweep_dome(arm, latest, el_step=4.0, el_start=0.0, el_limit=None,
         time.sleep(float(dwell))
 
     rows, latents, prev_first = [], [], None
+    # Tiny grayscale thumbnails for the PIXEL BASELINE. Held in memory only;
+    # what is saved is the pairwise distance matrix, not the images, because
+    # the camera faces his room. 32x18 is enough to say "these two views look
+    # alike" and far too small to show anything.
+    thumbs = []
     t_start = time.time()
     for az in [float(a) for a in azimuths]:
         try:
@@ -1769,6 +1795,9 @@ def sweep_dome(arm, latest, el_step=4.0, el_start=0.0, el_limit=None,
                 return {"error": f"encode failed at az {az} el {el}: {exc!r}",
                         "rows": rows}
             latents.append(np.asarray(vec, dtype=np.float32).ravel())
+            thumbs.append(cv2.resize(first, (32, 18),
+                                     interpolation=cv2.INTER_AREA)
+                          .astype(np.float32).ravel())
             rows.append({
                 "t": round(time.time() - t_start, 2),
                 "visit": len(latents) - 1,
@@ -1797,6 +1826,7 @@ def sweep_dome(arm, latest, el_step=4.0, el_start=0.0, el_limit=None,
             azimuth=np.array([r["azimuth"] for r in got], dtype=np.float32),
             elevation=np.array([r["elevation"] for r in got], dtype=np.float32),
             t=np.array([r["t"] for r in got], dtype=np.float32),
+            pixel_dist=_pixel_distances(thumbs),
             light=np.array([r["light"] for r in got], dtype=np.float32),
             sd=np.array([r["sd"] for r in got], dtype=np.float32))
 

@@ -125,3 +125,42 @@ class Refusals(unittest.TestCase):
     def test_ties_share_a_rank(self):
         r = vp._rank(np.array([1.0, 2.0, 2.0, 3.0]))
         self.assertEqual(list(r), [0.0, 1.5, 1.5, 3.0])
+
+
+@unittest.skipIf(np is None, "needs numpy")
+class AgainstThePixelBaseline(unittest.TestCase):
+    """Adjacent tilts see overlapping parts of the room, so ANY representation
+    of appearance looks view-structured. V-JEPA only shows something beyond
+    appearance if it beats raw pixels on the same test."""
+
+    def pixel_dist(self, X):
+        return vp.cosine_distances(X)
+
+    def test_a_latent_that_is_just_the_pixels_does_no_better(self):
+        el, t = levels("shuffle")
+        X = view_latents(el)
+        got = vp.compare(X, self.pixel_dist(X), el, t=t, draws=199)
+        self.assertIn("NO BETTER THAN PIXELS", got["verdict"], got)
+        self.assertLess(abs(got["gap"]), 0.05)
+
+    def test_a_latent_cleaner_than_the_pixels_is_credited(self):
+        el, t = levels("shuffle")
+        latent = view_latents(el, noise=0.05, seed=3)
+        noisy_pixels = view_latents(el, noise=2.5, seed=4)
+        got = vp.compare(latent, self.pixel_dist(noisy_pixels), el, t=t,
+                         draws=199)
+        self.assertIn("BEYOND APPEARANCE", got["verdict"], got)
+        self.assertGreater(got["gap"], 0.05)
+
+    def test_distances_and_latents_paths_agree(self):
+        el, t = levels("shuffle")
+        X = view_latents(el)
+        a = vp.mantel(X, el, t=t, draws=99)
+        b = vp.mantel(None, el, t=t, draws=99,
+                      distances=vp.cosine_distances(X))
+        self.assertAlmostEqual(a["partial_r"], b["partial_r"], places=9)
+
+    def test_a_wrong_sized_matrix_is_refused(self):
+        el, _ = levels("shuffle")
+        with self.assertRaises(vp.NotEnoughData):
+            vp.mantel(None, el, distances=np.zeros((5, 5)))
