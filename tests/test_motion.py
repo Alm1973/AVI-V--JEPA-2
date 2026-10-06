@@ -459,6 +459,12 @@ class TestBackends(unittest.TestCase):
         self.assertIsNone(b.ser)
 
     def test_a_dropped_write_is_reported_not_raised(self):
+        # The backend logs the failure loudly, which is right in production and
+        # noise in a suite that is deliberately causing it.
+        import logging
+        logging.getLogger("avi.motion").setLevel(logging.CRITICAL)
+        self.addCleanup(logging.getLogger("avi.motion").setLevel,
+                        logging.NOTSET)
         """The caller's loop must not die on one bad frame. A dropped frame is
         harmless: the target is repeated continuously and the firmware holds
         position if it hears nothing."""
