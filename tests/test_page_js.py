@@ -20,7 +20,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCES = [ROOT / "assistant" / "teleop.py",
            ROOT / "assistant" / "camera_stream.py",
-           ROOT / "assistant" / "calibrate.py"]
+           ROOT / "assistant" / "calibrate.py",
+           ROOT / "avi_bot" / "dashboard" / "server.py"]
 
 
 def served_pages():

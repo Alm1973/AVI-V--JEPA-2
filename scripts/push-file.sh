@@ -46,6 +46,19 @@ ssh -n "${SSH_OPTS[@]}" "$MSI_HOST" \
   "if (Test-Path \"$TMP\") { Remove-Item \"$TMP\" -Force }; exit 0" \
   || { echo "could not clear the staging file" >&2; exit 1; }
 
+# A zero-length file has no chunks, so the staging file is never created and
+# Get-Content -Raw returns null, which FromBase64String rejects. Empty
+# __init__.py files are the common case, and they matter: without one the
+# package becomes a namespace package and imports resolve to "unknown
+# location". So write it directly instead of going through the chunk path.
+if [ "$len" -eq 0 ]; then
+  ssh -n "${SSH_OPTS[@]}" "$MSI_HOST" \
+    "[IO.File]::WriteAllText(\"$TARGET\", \"\")" \
+    || { echo "could not write empty $DEST" >&2; exit 1; }
+  echo "pushed $DEST  (0 bytes, empty)"
+  exit 0
+fi
+
 i=0
 n=0
 while [ "$i" -lt "$len" ]; do

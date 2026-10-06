@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # runHome - bring AVI up and hand back a remote controller.
 #
-#   runHome              20 minutes, simulator (the arm does not move)
+#   runHome              the dashboard: camera, joints, poses, gestures
+#   runHome drive        teleop's WASD driving, 20 minutes, simulator
 #   runHome 45           45 minutes
 #   runHome live         MOVES THE REAL ARM; asks for confirmation first
 #   runHome teach        pose-teaching page: one slider per servo, save poses
@@ -20,6 +21,14 @@ case "$ARG" in
   stop)    exec ./scripts/teleop.sh stop ;;
   status)  exec ./scripts/teleop.sh status ;;
   logs)    shift; exec ./scripts/teleop.sh logs "$@" ;;
+  dash|dashboard|'')
+           echo "deploying ..."
+           ./scripts/deploy.sh >/dev/null 2>&1 || true
+           ./scripts/dashboard.sh start "${2:-60}" || exit 1
+           URL="http://msi:${AVI_DASH_PORT:-8000}/"
+           command -v open >/dev/null && open "$URL" 2>/dev/null || true
+           exit 0 ;;
+  drive)   MODE=start; MINUTES="${2:-20}" ;;
   live)    MODE=live;  MINUTES="${2:-20}" ;;
   teach|calibrate)
            echo "deploying ..."
@@ -29,7 +38,7 @@ case "$ARG" in
            command -v open >/dev/null && open "$URL" 2>/dev/null || true
            exit 0 ;;
   pull)    exec ./scripts/calibrate.sh pull ;;
-  ''|*[!0-9]*) MODE=start; MINUTES=20 ;;
+  *[!0-9]*) MODE=start; MINUTES=20 ;;
   *)       MODE=start; MINUTES="$ARG" ;;
 esac
 
