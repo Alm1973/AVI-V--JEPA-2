@@ -148,10 +148,14 @@ channel   = 3
 min_count = 140
 center_count = 380
 max_count = 580
-# Widened 2026-10-05 at Shaurya's request: 30..150 only reached counts 220..513
-# of the 140..580 he actually calibrated, so the camera could not tilt as far up
-# as the mechanics allow. 12..168 reaches 172..553, which keeps a small margin
-# inside his settled endpoints rather than driving to them.
+# Widened twice on 2026-10-05, both times at Shaurya's request. The original
+# 30..150 reached only counts 220..513 of the 140..580 he actually calibrated;
+# 12..168 reached 172..553 and was still short. Now 4..176, reaching 151..571,
+# which is nearly all of it: 9 counts clear of the bottom end and 9 of the top.
+#
+# Going this close is defensible because 140 and 580 are not guesses -- they are
+# the endpoints he settled on by testing this servo individually, so they are
+# known-reachable positions rather than mechanical stops.
 #
 # The margin matters more than it looks: a servo held against a mechanical stop
 # stalls at maximum current, and this arm is already current-limited -- it tops
@@ -160,8 +164,8 @@ max_count = 580
 #
 # Remember which way is up: LOWER logical degrees tilt the camera UP (measured
 # 65 up, 115 down), so the extra upward travel is at the soft_min end.
-soft_min  = 12.0
-soft_max  = 168.0
+soft_min  = 4.0
+soft_max  = 176.0
 # Driven as of 2026-10-05, with the sign still PROVISIONAL.
 #
 # This is the camera's own tilt, and the camera at its calibrated centre points

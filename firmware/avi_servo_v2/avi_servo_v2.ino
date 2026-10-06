@@ -76,7 +76,7 @@ static const Joint JOINTS[NJ] = {
   {    75,    250,  460,   20.0f, 160.0f,  -1, true  },  // 0 base yaw (MEASURED)
   {    75,    370,  580,   25.0f, 155.0f,  -1, true  },  // 1 shoulder (MEASURED; v1 BUG here)
   {    80,    430,  570,   30.0f, 150.0f,   1, true  },  // 2 elbow, sign PROVISIONAL
-  {   140,    380,  580,   12.0f, 168.0f,   1, true  },  // 3 wrist (widened)
+  {   140,    380,  580,    4.0f, 176.0f,   1, true  },  // 3 wrist (near-full)
 };
 
 enum StartMode { MODE_UNKNOWN, MODE_READBACK };
