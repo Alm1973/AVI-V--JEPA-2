@@ -96,7 +96,9 @@ class Finder:
         if self.centre_wrist is None:
             return None
         offset = (float(cy) - self.frame_height / 2.0) / self.frame_height
-        return self.centre_wrist + offset * self.wrist_deg_per_frame
+        # MINUS, matching RoomMap.direction_of and the tracking loop: raising
+        # the wrist moves a landmark DOWN, so below centre means LESS wrist.
+        return self.centre_wrist - offset * self.wrist_deg_per_frame
 
     def pixel_centre(self, row):
         """The sighting's centre in PIXELS, from whichever columns exist.
@@ -206,7 +208,7 @@ class Finder:
         wrist = None
         if cy is not None and centre_wrist is not None:
             oy = (cy - self.frame_height / 2.0) / self.frame_height
-            wrist = centre_wrist + oy * self.wrist_deg_per_frame
+            wrist = centre_wrist - oy * self.wrist_deg_per_frame
         return {"base_yaw": yaw, "wrist": wrist, "source": "frame",
                 "confident": True,
                 "pose_recorded": pose is not None,

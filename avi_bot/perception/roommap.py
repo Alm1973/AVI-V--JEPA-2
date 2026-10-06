@@ -218,7 +218,16 @@ class RoomMap:
         ox = (float(cx) - w / 2.0) / w
         oy = (float(cy) - h / 2.0) / h
         return (float(yaw) + ox * self.yaw_deg_per_frame,
-                float(wrist) + oy * self.wrist_deg_per_frame)
+                # MINUS. Raising the wrist moves a fixed landmark DOWN the
+                # frame (measured 2026-10-06: wrist 151.3/157.3/163.3 put a
+                # laptop at cy 344/516/599, +21.3 px/deg), so something BELOW
+                # centre lies at a LOWER wrist. This was `+` until then: every
+                # map entry was placed at 2*row - truth, so one object seen
+                # from survey rows 9.4 degrees apart landed ~19 degrees apart
+                # -- the "duplicate laptop" blamed first on a constant and
+                # then on box size. The tracking loop had it right all along
+                # (test_attention: "below centre needs LESS wrist").
+                float(wrist) - oy * self.wrist_deg_per_frame)
 
     @staticmethod
     def _gap(a, b):

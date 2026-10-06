@@ -47,7 +47,12 @@ def sight(m, label, yaw, wrist, conf=0.7, views=2, each=1):
         from_yaw = yaw - 12.0 * i
         from_wrist = wrist - 4.0 * i
         cx = W / 2 + (yaw - from_yaw) / YAW_DPF * W
-        cy = H / 2 + (wrist - from_wrist) / WRIST_DPF * H
+        # MINUS: an object at a higher wrist than the camera's sits ABOVE
+        # centre, because raising the wrist moves landmarks DOWN. This helper
+        # generated synthetic sightings with the inverted sign, matching the
+        # bug in direction_of, so the two agreed and every test built on it
+        # passed while describing physics the arm does not have.
+        cy = H / 2 - (wrist - from_wrist) / WRIST_DPF * H
         for _ in range(each):
             m.observe(label, cx, cy, from_yaw, from_wrist, conf=conf)
     return m
@@ -67,12 +72,48 @@ class Geometry(unittest.TestCase):
         self.assertGreater(yaw, 90.0)
         self.assertAlmostEqual(yaw, 90.0 + YAW_DPF / 2, places=3)
 
-    def test_above_centre_means_a_lower_wrist(self):
-        """Raising the wrist moves a landmark DOWN, so something high in frame
-        lies at a lower wrist."""
+    def test_above_centre_means_a_HIGHER_wrist(self):
+        """Raising the wrist moves a landmark DOWN, so to bring something that
+        is high in the frame down to the centre the wrist must go UP: it lies
+        at a HIGHER wrist.
+
+        This test used to be called test_above_centre_means_a_lower_wrist. Its
+        premise was right and its conclusion inverted, and it pinned the bug
+        it described in place for a day. Measured on the arm 2026-10-06: wrist
+        151.3 / 157.3 / 163.3 put a laptop at cy 344 / 516 / 599.
+        """
         m, _ = fresh()
         _, wrist = m.direction_of(W / 2, 0, 90.0, 140.0)
+        self.assertGreater(wrist, 140.0)
+
+    def test_below_centre_means_a_lower_wrist(self):
+        m, _ = fresh()
+        _, wrist = m.direction_of(W / 2, H, 90.0, 140.0)
         self.assertLess(wrist, 140.0)
+
+    def test_the_measured_laptop_lands_where_it_was_centred(self):
+        """The arm's own measurement, end to end. At wrist 157.3 the laptop sat
+        at cy 516; lowering the wrist to ~150 centred it. With the measured
+        slope of 21.3 px/deg the map must put it near 150, not 157 or 164."""
+        m = rm.RoomMap(YAW_DPF, 720 / 21.25, (W, H), clock=Clock())
+        _, wrist = m.direction_of(W / 2, 516, 90.0, 157.32)
+        self.assertAlmostEqual(wrist, 150.0, delta=0.5)
+
+    def test_the_wrist_round_trips_against_the_tracking_loop(self):
+        """The yaw round trip below existed; the wrist one did not, which is
+        exactly where the sign error lived. The tracking loop had it right."""
+        from avi_bot.personality import attention
+        from avi_bot.motion import poses
+        cfg = poses.load()
+        m = rm.RoomMap(cfg.camera["yaw_deg_per_frame"],
+                       cfg.camera["wrist_deg_per_frame"], (W, H))
+        a = attention.Attention(cfg)
+        a.offer("face", W / 2, H * 0.85, W, H)
+        a.choose()
+        _, d_wrist = a.corrections()
+        _, mapped = m.direction_of(W / 2, H * 0.85, 90.0, 140.0)
+        self.assertLess(d_wrist, 0, "the loop lowers the wrist")
+        self.assertLess(mapped, 140.0, "so the map must place it lower too")
 
     def test_it_round_trips_against_the_tracking_loop(self):
         """Where the map says to look must be where the loop would drive to."""

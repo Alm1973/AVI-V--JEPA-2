@@ -396,7 +396,11 @@ class FindAgainstTheRealSchema(unittest.TestCase):
         self.seed("mug", x=0.45, w=0.10, y=0.70, h=0.10)
         aim = self.finder().aim("mug")
         self.assertIsNotNone(aim["wrist"])
-        self.assertGreater(aim["wrist"], 147.9, "below centre needs more wrist")
+        # Below centre needs LESS wrist: raising the wrist moves a landmark
+        # DOWN. This assertion once said the opposite and passed, because
+        # find and roommap shared the same wrong sign and a test only checked
+        # that they agreed. Agreement is not correctness.
+        self.assertLess(aim["wrist"], 147.9, "below centre needs LESS wrist")
 
 
 class FindPrefersTheRoomMap(unittest.TestCase):
