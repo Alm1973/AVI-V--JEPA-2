@@ -175,9 +175,20 @@ class Arm:
         # bolted to a desk and cannot walk, so it never needs metres -- it
         # needs to know which way to turn. Loaded from disk so a survey is
         # worth doing once rather than every restart.
-        self.roommap = roommap_mod.RoomMap(
-            float(config.camera["yaw_deg_per_frame"]),
-            float(config.camera["wrist_deg_per_frame"]))
+        # The deg-per-frame constants come from the MEASURED dome gains when
+        # there are any, not from [camera]. The survey caught [camera] out:
+        # one laptop was mapped as TWO places 19.6 degrees apart in wrist,
+        # which is what a wrong vertical constant does -- it displaces the
+        # computed direction by a fraction of a frame, so the same object seen
+        # from two elevations lands in two places.
+        #
+        #     [camera] wrist_deg_per_frame   32.2
+        #     dome gain 1.2734 implies       31/1.2734 = 24.3     33% apart
+        #
+        # Collapsing that duplicate is the test of which is right, and it is a
+        # better one than either measurement on its own: the object has to be
+        # in one place, so the constant that puts it there is correct.
+        self.roommap = roommap_mod.RoomMap(*self.frame_constants(config))
         self.load_roommap()
         # Live-tunable, so a value can be changed and watched without a push
         # and a restart. Chasing a confidence floor through a deploy cycle each
@@ -336,6 +347,33 @@ class Arm:
     @property
     def ROOMMAP_PATH(self):
         return self.roommap_path()
+
+    FOV_DEG = (52.0, 31.0)          # the camera's own field of view
+
+    @classmethod
+    def frame_constants(cls, config):
+        """(yaw_deg_per_frame, wrist_deg_per_frame), measured if possible.
+
+        Derived from the dome gains, which were fitted on the arm with large
+        steps and a one-sided approach, rather than from [camera], whose
+        values came from single-landmark probes that disagree with each other.
+        Falls back to [camera] when the dome is unmeasured.
+        """
+        g = config.dome
+        cam = config.camera
+        if g.get("measured"):
+            fx, fy = cls.FOV_DEG
+            try:
+                return (fx / float(g["base_yaw"]), fy / float(g["wrist"]))
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                pass
+        yaw, wrist = cam.get("yaw_deg_per_frame"), cam.get("wrist_deg_per_frame")
+        if yaw is None or wrist is None:
+            raise RuntimeError(
+                "no camera constants: config/joints.toml has neither a "
+                "measured [dome] nor a [camera] section, and a guessed "
+                "deg-per-frame aims the arm at the wrong part of the room")
+        return float(yaw), float(wrist)
 
     def load_roommap(self):
         """Load the saved map. A missing file is normal; a broken one is not.
