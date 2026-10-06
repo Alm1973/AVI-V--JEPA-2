@@ -718,3 +718,51 @@ whole logging pipeline read from. I broke it earlier by retaching base_yaw
   side by side. Pick one deliberately.
 - Still owed: **camera_radius_m** (base axis to lens) and **which way the lens
   faces**, for metric depth.
+
+## The hemisphere sweep (2026-10-06, early afternoon)
+
+His spec: sweep every level of the hemisphere, V-JEPA at each, slow to avoid
+motion blur, then check whether the video actually swept. `POST /sweep_dome`.
+
+**It swept.** 37 levels from TALL down, verified three ways: `between` 33.8 vs
+`within` 2.1 (each level distinct AND stationary, 15.8x), 16/16 distinct frame
+sequence numbers at every level, zero repeats. Latents saved with their
+elevation, time, light and sd to `avi-remote/sweep-dev.npz` (dev profile).
+
+**Map of the dome from TALL:** desk band at elevation 0-48 (textured, sd
+37-68); a **flat blank wall at 48-120** (sd 14-17 -- what OBSERVE was staring
+at); texture again 120-186; and below wrist ~16 the **wrist stops moving**:
+`between` collapses to 3-4 px while `within` rises to 5-7. The view is frozen
+but the frame shakes -- the servo stalling against a mechanical stop well above
+its 4-degree soft limit. Stall current on a current-limited UBEC is a brownout
+risk. **Raising the wrist soft_min to ~20 is recommended, not yet done** -- it
+is his hardware config.
+
+**The confound, caught on real data.** The first sweep was top-to-bottom, so
+elevation and time correlate at -1.00. Its raw Mantel r is **0.75** and the
+nearest latent is the adjacent level **94.6%** of the time against 5.6% chance
+-- which would have been reported as "V-JEPA strongly encodes elevation". The
+probe declared it CONFOUNDED instead. Without the time control it would have
+passed (a test pins that). `order=shuffle` exists to break the tie.
+
+### The test suite segfaulted, and it was not the new code
+Adding view_probe made the full suite crash deterministically inside
+`np.triu_indices`, never when run alone. After the suite, `import numpy`
+recursed forever. `tests/test_room_tracker.py` popped `"numpy"` from
+`sys.modules` in every setUp and never restored it, so the next real-numpy test
+re-ran numpy's `__init__` over a still-loaded C core. Hidden for weeks because
+the numpy-heavy tests sort before "room". It no longer touches numpy and
+restores every stub it installs.
+
+### Bugs of mine this stretch, recorded so they are not repeated
+- `_frame()` returned the SAME image on every call in a loop (`get_after(-1)`
+  and the sequence thrown away). The "median of nine frames" in build_dome was
+  the median of nine copies of one frame, so it reduced nothing. Every per-stop
+  average in the survey and both parallax probes had the same hole. Fixed with
+  `_look(latest, n)`. **The dome gains in config were fitted on duplicated
+  frames and should be re-measured** -- blocked by daylight right now (nothing
+  clears 0.35 at HOME any more).
+- `sweep_dome` first called `enc.encode(frames)`; the Encoder is called
+  directly and returns (vector, ms). Would have failed on the MSI only.
+- Silenced `dashboard.sh start` to /dev/null again and missed that it had not
+  started. Third time this session.
