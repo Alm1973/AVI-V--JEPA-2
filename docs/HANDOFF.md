@@ -242,6 +242,38 @@ was there. Check `POST /detect_debug` before touching a threshold.
 It returns **labels and numbers only, never pixels** — the camera faces
 Shaurya's room, so the frame stays on the MSI.
 
+### M4 is done (2026-10-05)
+
+`avi_bot/brain/` — router, intents, providers, tools, schema, speech, context.
+All three acceptance criteria met: **20/20** scripted utterances (bar was 18),
+provider failover plus a *pre-send* budget guard, and the speech policy applied
+once to every route.
+
+- **Kokoro cannot be installed on the MSI.** Its venv is Python **3.13.13** and
+  Kokoro needs < 3.13. A version wall, not a speed problem.
+- **Piper is the primary and it is fast: RTF 0.036–0.039** (en_US-amy-medium,
+  22050 Hz, CPU, 4.3 s one-off load). 26× real time, so a 20-word reply
+  synthesises in under a quarter of a second. Nothing is lost.
+- `providers.redact()` strips keys and the calendar URL in the one place the
+  prompt is assembled. **The secret iCal address IS the credential** — a
+  provider that logs it has read access to his calendar indefinitely.
+- `context.build()` takes typed arguments with **no free-form parameter**, on
+  purpose: that is how a frame gets smuggled into a cloud request.
+
+Everything is injected (the network call into `Chain`, the 3B pick into
+`Router`), so the whole decision layer tests with no keys, no network, no GPU
+and no arm.
+
+### Two things the research changed — read `docs/RESEARCH-NOTES.md`
+
+1. **The focus nudge was specified wrong.** "Phone use over 2 min → ahem" is a
+   time-based trigger, which the interruption literature finds unreliable; a
+   mistimed nudge trains him to ignore AVI entirely. Now gated on a
+   **breakpoint** (`change.py` already detects them). BUILD_SPEC 9 amended.
+2. **The novelty effect wears off in ~2 months.** Everything charming about M2
+   has a shelf life. The honest test of this project is whether utterances,
+   suggestion-acceptance and awake-time are flat or rising at **week 10**.
+
 ## 4. Open questions
 
 **Resolved today:** `base_yaw`'s sign, by closing the loop on a tracked person
