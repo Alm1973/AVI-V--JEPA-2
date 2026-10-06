@@ -766,3 +766,66 @@ restores every stub it installs.
   directly and returns (vector, ms). Would have failed on the MSI only.
 - Silenced `dashboard.sh start` to /dev/null again and missed that it had not
   started. Third time this session.
+
+## 2026-10-06 afternoon: AVI can find things and look straight at them
+
+### MAIN DIRECTIVE (saved to memory, his words)
+"An inference level robot whose one task is to learn about Shaurya and help
+him out as much as it can, learning about him by observing his surroundings."
+Everything below is in service of that. Finding his things is the first
+helping behaviour that works end to end.
+
+### The vertical sign was backwards in the map and in find
+`POST /find` turned the arm right in yaw and wrong in the vertical, always the
+same way (laptop 22%, pen 14% below centre). Proved on the arm: wrist
+151.3 / 157.3 / 163.3 put the laptop at cy 344 / 516 / 599 -- raising the
+wrist moves a landmark DOWN at 21.3 px/deg, so below centre means LESS wrist.
+`direction_of` and `find.wrist_for` ADDED the offset.
+
+It also explains the duplicate places: with the sign inverted an object is
+filed at 2*row - truth, so copies separate by twice the row spacing (~19 deg;
+observed 20.2). **My two earlier explanations -- the vertical constant, then
+large box centres -- were both wrong.**
+
+How it survived: a test stated the right premise and inverted the conclusion
+(`test_above_centre_means_a_lower_wrist`); the synthetic-sighting helper had
+the same wrong sign; and a test only checked that find and roommap AGREED --
+they did, both wrong. The tracking loop had it right all along. A wrist
+round-trip against it now exists.
+
+**Result, after rebuilding the map:**
+
+    object     before         after
+    laptop     11% / 22%      1.6% / 3.2%
+    pen         1% / 14%      0.4% / 2.8%
+    book       not in frame   1.0% / 2.2%
+    backpack   --             6.2% / 2.1%
+    mug        --             not detected at its aim (weak detection, fading light)
+
+pen and backpack collapsed from 2 places to 1; seen-once 13 -> 3. The second
+"laptop" is 91 deg away in yaw at the same height -- a different object.
+
+### Re-measured gains (real frame averaging)
+base_yaw 0.7492, shoulder 1.5426, elbow 1.1877, wrist 1.0148. The wrist now
+cross-validates: 30.5 deg/frame vs 32.2 (probe_wrist) vs 33.9 (direct). The
+first set was fitted on duplicated frames and is void. **Retracted: "elbow is
+1.72 and dominates elevation."** Shoulder/elbow are still loose, but looking
+around holds them at TALL's values, so only yaw and wrist matter -- the two
+measured well.
+
+### Wrist soft minimum 4 -> 20 (his request)
+Stalls below ~16 (view frozen, frame shaking). Host clamps it now; the firmware
+sketch is updated too but **only takes effect after the Arduino is reflashed**.
+
+### Latent bug that would have bitten on the robot
+`run_survey` used a name it never defined after the _frame refactor; it only
+surfaced as a NameError on the MSI. `tests/test_undefined_names.py` now scans
+every shipped module with symtable (no pyflakes installed). On the committed
+file it reports exactly that one; nowhere else has another.
+
+### V-JEPA
+Shuffled sweep: partial Mantel r 0.745 controlling for time and light, null
+max 0.27, p 0.0005, nearest neighbour 100% adjacent. **V-JEPA's space is
+organised by viewing direction.** Not yet shown: that this beats raw pixels
+(adjacent tilts overlap, so any appearance representation may do the same).
+The pixel-baseline sweep is the next result.
