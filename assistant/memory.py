@@ -35,7 +35,21 @@ CREATE TABLE IF NOT EXISTS sightings (
     det_conf       REAL NOT NULL,
     vlm_margin     REAL NOT NULL,        -- yes score minus no score; > 0 means verified
     x REAL, y REAL, w REAL, h REAL,      -- box as fractions of the frame
-    zone           TEXT NOT NULL         -- left | middle | right of the camera view
+    zone           TEXT NOT NULL,        -- left | middle | right of the camera view
+    -- Where the camera was pointing when this was seen. NULL when unknown,
+    -- which is the honest value and is what a standalone observer run writes.
+    --
+    -- Without these a stored box is not a direction: `zone` means "left of
+    -- the camera view", and that is only a place in the room if you also know
+    -- which way the camera faced. find() used to assume OBSERVE at base_yaw
+    -- 90 forever; OBSERVE was retaught to 60 and every answer would have been
+    -- a third of a frame out. All four joints, not just the two that aim the
+    -- camera, because the camera rides three links -- the same (base_yaw,
+    -- wrist) points somewhere else once the shoulder moves.
+    base_yaw       REAL,
+    shoulder       REAL,
+    elbow          REAL,
+    wrist          REAL
 );
 CREATE INDEX IF NOT EXISTS sight_label ON sightings(label, ts);
 
@@ -65,19 +79,44 @@ def zone_for(x_center_frac):
     return "middle"
 
 
+# The order the joint columns are written in. Named once so the INSERT and the
+# migration cannot disagree about it.
+JOINT_ORDER = ("base_yaw", "shoulder", "elbow", "wrist")
+
+
+def migrate(db):
+    """Add columns an older database is missing. Idempotent.
+
+    CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
+    a schema change is invisible to every database that predates it -- and
+    this one has months of observations in it. SQLite has no ADD COLUMN IF NOT
+    EXISTS, so the existing columns are read first.
+    """
+    have = {r["name"] for r in db.execute("PRAGMA table_info(sightings)")}
+    added = []
+    for col in JOINT_ORDER:
+        if col not in have:
+            db.execute(f"ALTER TABLE sightings ADD COLUMN {col} REAL")
+            added.append(col)
+    if added:
+        db.commit()
+    return added
+
+
 class Memory:
     def __init__(self, path=settings.DB_PATH):
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        migrate(self.db)
 
     def close(self):
         self.db.close()
 
     def add_observation(self, ts, trigger, activity, activity_raw, activity_p,
                         probs, person_conf, vlm_calls, latency_ms,
-                        sightings=(), audit_path=None):
+                        sightings=(), audit_path=None, pose=None):
         local_time, local_date, weekday = local_parts(ts)
         cur = self.db.execute(
             "INSERT INTO observations (ts, local_time, local_date, weekday, trigger,"
@@ -87,12 +126,23 @@ class Memory:
              activity_p, json.dumps({k: round(v, 4) for k, v in probs.items()}),
              person_conf, vlm_calls, latency_ms, audit_path))
         obs_id = cur.lastrowid
+        # A partly-known pose is not usable -- the camera rides three links,
+        # so three of four angles still leaves the aim undetermined. Store all
+        # four or none, rather than something that reads as an answer.
+        joints = None
+        if pose:
+            try:
+                joints = tuple(float(pose[j]) for j in JOINT_ORDER)
+            except (KeyError, TypeError, ValueError):
+                joints = None
         for s in sightings:
             self.db.execute(
                 "INSERT INTO sightings (observation_id, ts, label, det_conf,"
-                " vlm_margin, x, y, w, h, zone) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                " vlm_margin, x, y, w, h, zone, base_yaw, shoulder, elbow,"
+                " wrist) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (obs_id, ts, s["label"], s["det_conf"], s["vlm_margin"],
-                 s["x"], s["y"], s["w"], s["h"], zone_for(s["x"] + s["w"] / 2)))
+                 s["x"], s["y"], s["w"], s["h"],
+                 zone_for(s["x"] + s["w"] / 2)) + (joints or (None,) * 4))
         self.db.commit()
         return obs_id
 

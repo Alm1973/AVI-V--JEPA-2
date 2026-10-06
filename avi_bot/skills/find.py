@@ -124,6 +124,22 @@ class Finder:
             cy = None
         return cx, cy
 
+    def pose_of(self, row):
+        """The arm's joints when the sighting was taken, or None.
+
+        All four or nothing. The camera rides three links, so a base_yaw and a
+        wrist without the shoulder and elbow that held them does not determine
+        where the camera was looking -- and a half-known pose that reads as an
+        answer is worse than a missing one.
+        """
+        got = {}
+        for j in ("base_yaw", "shoulder", "elbow", "wrist"):
+            v = row.get(j)
+            if v is None:
+                return None
+            got[j] = float(v)
+        return got
+
     def from_map(self, name):
         """The map's absolute direction for a label, or None.
 
@@ -161,16 +177,30 @@ class Finder:
         cx, cy = self.pixel_centre(seen)
         if cx is None:
             return None
-        yaw = self.yaw_for(cx)
-        if yaw is None:
+        # The row's OWN pose beats the assumed one. A sighting recorded with
+        # its angles is self-describing and stays correct when a pose is
+        # retaught; falling back on "wherever OBSERVE points now" is what
+        # silently broke when OBSERVE moved from 90 to 60.
+        pose = self.pose_of(seen)
+        centre_yaw = pose["base_yaw"] if pose else self.centre_yaw
+        centre_wrist = pose["wrist"] if pose else self.centre_wrist
+        if centre_yaw is None:
             # A position in a frame whose pose nobody recorded. Real
             # information, useless as an instruction.
             return {"base_yaw": None, "wrist": None, "source": "frame",
                     "confident": False, "why": "no pose recorded for the "
                     "frame this was seen in"}
-        return {"base_yaw": yaw,
-                "wrist": self.wrist_for(cy) if cy is not None else None,
-                "source": "frame", "confident": True}
+        offset = (cx - self.frame_width / 2.0) / self.frame_width
+        yaw = centre_yaw + offset * self.yaw_deg_per_frame
+        wrist = None
+        if cy is not None and centre_wrist is not None:
+            oy = (cy - self.frame_height / 2.0) / self.frame_height
+            wrist = centre_wrist + oy * self.wrist_deg_per_frame
+        return {"base_yaw": yaw, "wrist": wrist, "source": "frame",
+                "confident": True,
+                "pose_recorded": pose is not None,
+                "shape": None if pose is None else
+                         {"shoulder": pose["shoulder"], "elbow": pose["elbow"]}}
 
     def last_seen(self, name, within_s=None):
         """The most recent verified sighting, or None."""

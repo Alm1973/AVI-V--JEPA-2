@@ -41,7 +41,7 @@ class Observer:
     def __init__(self, vlm, detector, memory, change=None, rng=None,
                  clock=time.time, audit_rate=settings.AUDIT_RATE,
                  audit_dir=settings.AUDIT_DIR, mc_passes=settings.MC_PASSES,
-                 pause_file=settings.PAUSE_FILE):
+                 pause_file=settings.PAUSE_FILE, pose_fn=None):
         self.vlm = vlm
         self.detector = detector
         self.memory = memory
@@ -52,6 +52,12 @@ class Observer:
         self.audit_dir = audit_dir
         self.mc_passes = mc_passes
         self.pause_file = pause_file
+        # Returns the arm's joints, or None. The observer has no arm of its
+        # own and must not acquire one -- it runs standalone as often as it
+        # runs under the dashboard. When nothing supplies a pose the sighting
+        # records NULL angles, and find() then declines to turn the arm rather
+        # than assuming the camera was where it used to be.
+        self.pose_fn = pose_fn
         self.paused = False
         self.guest = False
         self.last_obs_ts = None
@@ -59,6 +65,21 @@ class Observer:
         self.pending_change = None
         self.last_activity = None
         self.last_summary = ""
+
+    def current_pose(self):
+        """The arm's joints now, or None. Never raises.
+
+        A pose source that throws must not lose the observation: the sighting
+        is still true and still worth storing, it simply has no direction
+        attached. Failing the whole write would trade a complete record for
+        nothing at all.
+        """
+        if self.pose_fn is None:
+            return None
+        try:
+            return self.pose_fn()
+        except Exception:
+            return None
 
     # --- control -------------------------------------------------------
     def is_paused(self):
@@ -128,7 +149,7 @@ class Observer:
             activity_p=round(p, 4), probs=probs,
             person_conf=round(person_conf, 3),
             vlm_calls=self.vlm.calls - calls0, latency_ms=round(latency_ms, 1),
-            sightings=sightings)
+            sightings=sightings, pose=self.current_pose())
 
         if self.audit_rate > 0 and self.rng.random() < self.audit_rate:
             self.memory.set_audit_path(obs_id, self.save_thumbnail(frame, obs_id))
