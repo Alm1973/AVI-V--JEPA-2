@@ -712,3 +712,51 @@ rather than changed unasked; `wake-timers.sh status` prints it and warns.
 hardware timer is armed, which is good evidence, but it has not been watched
 from sleep to awake yet. Test it with margin at a window that is not adjacent
 to a keepawake expiry.
+
+## 2026-10-05 — M1 closed: every gesture runs on the real arm
+
+Firmware v2 was flashed over SSH using the arduino-cli bundled inside Arduino
+IDE 2.x, so nobody had to sit at the machine. All four joints are driven, all
+six poses were taught on the arm with `calibrate.py`, and `gesture_check.py`
+ran every gesture against the camera.
+
+**13/13 moved the arm and the picture.** The check reports two numbers per
+gesture and the pair is the point: *commanded* is the largest angle any joint
+was actually told to move, taken from the limiter's output, and *observed* is
+how much the picture changed, since the camera rides the arm. Together they
+separate three failures that look identical in a log — a gesture being scaled
+down, a servo not following, and a gesture working.
+
+**Three gestures were unusably slow, and the easing curve was the whole cause.**
+
+| gesture | before | after |
+|---|---|---|
+| yawn_wake | 16.01 s | 5.95 s |
+| celebrate | 11.38 s | 6.70 s |
+| perk_up | 10.18 s | 5.50 s |
+
+A `*_back` curve costs 4.70x in peak speed and `ease_out` costs 3.00x, and they
+were being applied across the *whole* 88-101 degrees between the taught poses,
+against an arm that manages 27 deg/s. 92 x 4.70 / 27 is 16 seconds; there was
+no bug, just arithmetic nobody had done. The travel now uses `ease_in_out` at
+1.571x and the overshoot is a separate fixed-size leg, so it stays sharp
+however far the arm had to come. Observed camera motion went *up* in all three
+as a result, since faster motion changes the picture more.
+
+**The oscillating gestures are tiny.** shake commands 4.5 deg, nod 3.6,
+startled 3.2, excited_wiggle 2.7 — all about 45 % of their intended amplitude,
+because that is what fits 27 deg/s while keeping their timing. They register on
+camera (17-24) but they are twitches rather than gestures. Raising
+`achievable_deg_s` once the 5 V 4 A supply is installed gives every one of them
+its size back with no code change.
+
+**What the taught poses say about the design.** TALL and HOME sit at nearly the
+same shoulder angle, 78.4 against 72.5, and differ mainly at the wrist, 176
+against 87.5. Alertness on this arm is carried by where the camera looks, not
+by how tall it stands — which is not what BUILD_SPEC's "shoulder up, elbow
+extended" assumed, and it is why the hand-written pose table was worth deleting
+rather than tuning.
+
+Also closed: the camera stream, teleop's driving and calibrate's pose teaching
+are folded into one dashboard on port 8000, built on calibrate's interaction
+model because that is the one that worked.

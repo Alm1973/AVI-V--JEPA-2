@@ -123,16 +123,19 @@ def shake():
 
 
 def perk_up():
-    """Rise to TALL with a small overshoot.  spec 0.7 s -> 1.45 s at the cap.
+    """Rise to TALL with a small overshoot.
 
-    The spec asks for anticipation *and* overshoot out of one back curve, but
-    that curve's 4.70x peak would need 1.7 s for this travel anyway. Splitting
-    it into an eager ease_out rise plus a separate 3 deg overshoot leg keeps the
-    overshoot, costs less peak speed, and reads better: at 60 deg/s an
-    anticipation dip is too slow to register as a wind-up.
+    THE EASING CURVE IS THE WHOLE COST. Measured at 10.18 s on hardware
+    2026-10-05: HOME and TALL are 88.5 degrees apart at the wrist, ease_out
+    costs 3.00x in peak speed across all of it, and the arm manages 27 deg/s.
+    ease_in_out costs 1.571x and nearly halves it.
+
+    The overshoot is a separate fixed-size leg rather than a back curve over
+    the whole travel, so it stays sharp however far the arm had to come -- and
+    a back curve here would cost 4.70x, which is how yawn_wake reached 16 s.
     """
     return SequenceMove("perk_up", [
-        _pose("perk_rise", "TALL", 1.1, ease="ease_out"),
+        _pose("perk_rise", "TALL", 1.1, ease="ease_in_out"),
         _kf("perk_overshoot", [
             (0.0, {}), (0.4, {"shoulder": -3.0}), (1.0, {}),
         ], duration=0.35, ease="linear"),
@@ -251,11 +254,23 @@ DOZE_BREATH = 2.2               # multiply Breathing.depth by this while dozing
 
 
 def yawn_wake():
-    """Slow rise from REST with a stretch overshoot.  spec 2.0 s -> 2.8 s.
+    """Slow rise from REST with a stretch overshoot.
 
-    35 deg of travel on a 4.70x overshoot curve needs 2.74 s at the cap.
+    Measured at 16.01 s on hardware before this was split: REST and HOME are
+    about 92 degrees apart at the elbow, and ease_out_back costs 4.70x in peak
+    speed over the lot, which at 27 deg/s is simply what that arithmetic gives.
+    A sixteen-second yawn is not a yawn.
+
+    So the travel uses ease_in_out at 1.571x and the stretch is a separate
+    fixed-size leg. A yawn should look slow, but slow on purpose rather than
+    slow because of an easing curve nobody costed.
     """
-    return _pose("yawn_wake", "HOME", 2.8, ease="ease_out_back")
+    return SequenceMove("yawn_wake", [
+        _pose("yawn_rise", "HOME", 2.4, ease="ease_in_out"),
+        _kf("yawn_stretch", [
+            (0.0, {}), (0.45, {"shoulder": -4.0, "wrist": 4.0}), (1.0, {}),
+        ], duration=0.6, ease="linear"),
+    ])
 
 
 GESTURES = {
