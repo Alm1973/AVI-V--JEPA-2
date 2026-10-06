@@ -133,6 +133,12 @@ class Arm:
         # down and geometry can do the rejecting. See avi_bot/perception.
         self.rejector = parallax.StaticRejector(
             float(config.camera["yaw_deg_per_frame"]))
+        # Track a named desk object instead of a person. The whole look-at
+        # loop -- detector, attention, steering, spring -- is identical; only
+        # the choice of target changes. That makes closed-loop convergence
+        # testable when nobody is in the room, which is most of the time, and
+        # against a landmark that cannot wander off on its own.
+        self.track_label = None
         self.last_person = None
         self.track_error = None
         # Counted rather than inferred. Polling /state samples only the most
@@ -216,11 +222,28 @@ class Arm:
                 # Every candidate, not just the winner: the one that loses on
                 # confidence this frame is exactly the one whose stillness has
                 # to be watched across the next pan.
-                found = self.detector.people(
-                    frame, min_conf=float(self.tune["min_conf"]))
-                for c in found:
-                    self.rejector.observe(yaw, c["cx"], w)
-                live = [c for c in found if self.rejector.accept(c["cx"])]
+                if self.track_label:
+                    found = [d for d in self.detector.everything(
+                                 frame, min_conf=float(self.tune["min_conf"]))
+                             if d["label"] == self.track_label]
+                    found.sort(key=lambda d: -d["conf"])
+                    found = [{"box": None, "conf": d["conf"],
+                              "cx": float(d["cx"]), "cy": float(d["cy"])}
+                             for d in found[:1]]
+                else:
+                    found = self.detector.people(
+                        frame, min_conf=float(self.tune["min_conf"]))
+                if self.track_label:
+                    # No parallax test on a deliberately chosen landmark. It
+                    # is a real object in the room, so it moves with the pan
+                    # by construction, and running the filter here would only
+                    # test the filter against itself.
+                    live = found
+                else:
+                    for c in found:
+                        self.rejector.observe(yaw, c["cx"], w)
+                    live = [c for c in found
+                            if self.rejector.accept(c["cx"])]
                 p = None
                 for c in live:
                     # Continuity is real evidence -- a person does not
@@ -740,9 +763,11 @@ def make_handler(st):
                 "track_hits": arm.track_hits,
                 "track_misses": arm.track_misses,
                 "tune": arm.tune,
-                "static_zones": [round(z.cx) for z in arm.rejector.zones],
+                "static_zones": [round(z.cx)
+                                 for z in arm.rejector.confirmed_zones()],
                 "static_why": arm.rejector.describe(),
                 "static_rejected": arm.rejector.rejected,
+                "track_label": arm.track_label,
                 "mood_events": ["praise", "scold", "arrived", "left",
                                 "task_ok", "task_failed", "new_object",
                                 "focus_start", "focus_end"],
@@ -856,6 +881,13 @@ def make_handler(st):
                     step=float(body.get("step", 6.0)),
                     n=int(body.get("n", 5)),
                     min_conf=float(body.get("min_conf", 0.25))))
+            elif self.path == "/track_label":
+                want = body.get("label") or None
+                arm.track_label = str(want) if want else None
+                arm.last_person = None
+                arm.attention.drop("face")
+                arm.note(f"tracking target: {arm.track_label or 'person'}")
+                self._json({"ok": True, "track_label": arm.track_label})
             elif self.path == "/tracking":
                 want = bool(body.get("on", not arm.tracking.is_set()))
                 arm.tracking.set() if want else arm.tracking.clear()
@@ -935,8 +967,17 @@ def detect_debug(arm, latest, min_conf=0.05):
         return {"error": "no picture"}
     found = arm.detector.everything(frame, min_conf=min_conf)
     h, w = frame.shape[:2]
-    log(f"detect_debug floor={min_conf}: {len(found)} detections")
-    return {"frame": [w, h], "min_conf": min_conf,
+    # Brightness, because "no detections" and "dark room" are indistinguishable
+    # from the counter and we have already confused them once. A number, not a
+    # picture: mean level and spread over the whole frame say whether there is
+    # anything to see without anything leaving the MSI.
+    import cv2
+    g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    lit = {"mean": round(float(g.mean()), 1), "sd": round(float(g.std()), 1)}
+    log(f"detect_debug floor={min_conf}: {len(found)} detections, "
+        f"mean level {lit['mean']}")
+    return {"frame": [w, h], "min_conf": min_conf, "light": lit,
+            "dark": lit["mean"] < 30.0,
             "n": len(found), "found": found[:25]}
 
 
@@ -984,7 +1025,12 @@ def probe_static(arm, latest, swing=15.0, settle=1.8, min_conf=0.45,
     arm.set_pose(start)
     log(f"probe_static: {len(seen)} sightings, {len(arm.rejector.zones)} static")
     return {"swing": swing, "sightings": seen,
-            "static": [round(z.cx) for z in arm.rejector.zones],
+            # Only CONFIRMED zones can reject, so those are what "static"
+            # means here; `why` still lists every zone with its pairing count,
+            # because an unconfirmed one is the interesting thing to look at.
+            "static": [round(z.cx) for z in arm.rejector.confirmed_zones()],
+            "seen_but_unconfirmed": [round(z.cx) for z in arm.rejector.zones
+                                     if not z.confirmed],
             "why": arm.rejector.describe()}
 
 

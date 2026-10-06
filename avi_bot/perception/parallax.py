@@ -33,6 +33,22 @@ MIN_EXPECTED_PX = 200.0
 # in near 1.0, the arm's own hardware near 0.03.
 STATIC_FRACTION = 0.25
 
+# ... AND by no more than this many pixels in absolute terms. The ratio alone
+# is too lenient, and the hardware itself says why. Measured at HOME on
+# 2026-10-05, the genuine arm hardware was found at x = 1109, 1109, 1109 --
+# ZERO drift across a 30 degree pan. The three suspect zones in the same runs
+# drifted 14, 36 and 45 px, which is what you get from pairing two DIFFERENT
+# objects that happen to lie near the same x when detections are sparse and
+# jittery. One of those landed at x = 657, inside the rejection radius of the
+# x = 618..639 where Shaurya sits, which is the one outcome this filter must
+# never produce.
+#
+# Something RIGIDLY bolted to the camera cannot move in the image at all
+# beyond box jitter, so requiring that is a far stronger statement than a
+# ratio. Scene noise with the arm still measured 4 px; detection boxes jitter
+# more like 10-25.
+MAX_STATIC_DRIFT_PX = 25.0
+
 # Only MAGNITUDES are compared, never directions. "Did it move" is the whole
 # question, and a person walking the other way is still moving. The one case
 # this misreads is someone travelling with the pan at exactly the rate that
@@ -46,6 +62,21 @@ MOVING_FRACTION = 0.60
 # Two sightings this close in the image are treated as the same thing. Sized
 # from box jitter, not from the object.
 SAME_PX = 60.0
+
+# ... but REJECTION uses a tighter radius than learning, because the two errors
+# are not symmetric. Matching generously only risks learning a zone; rejecting
+# generously risks throwing away Shaurya. Measured 2026-10-05 at HOME: zones
+# were learned at x = 555 and 692 while he sits around x = 618-639, so a 60 px
+# rejection radius reaches to within 3 px of his seat and a 40 px one does not.
+REJECT_PX = 40.0
+
+# How many independent pairings a zone needs before it is allowed to reject
+# anything. One marginal pairing is not enough to censor part of the frame:
+# of the three zones found at HOME, x=1109 was proved by 0 px of movement
+# across a 30 degree pan and the other two rested on a single 14 px and 45 px
+# reading of an expected 229. The strong one survives this; the weak ones have
+# to earn it.
+CONFIRMATIONS = 2
 
 # A static zone stops being trusted this long after the evidence for it. The
 # arm's hardware does not move, but the camera's tilt and the arm's pose change
@@ -70,18 +101,24 @@ class Sighting:
 
 
 class StaticZone:
-    __slots__ = ("cx", "at", "evidence")
+    __slots__ = ("cx", "at", "evidence", "seen")
 
     def __init__(self, cx, at, evidence):
         self.cx = float(cx)
         self.at = float(at)
         self.evidence = evidence      # (d_yaw, d_cx, expected_px) that proved it
+        self.seen = 1                 # independent pairings supporting it
+
+    @property
+    def confirmed(self):
+        return self.seen >= CONFIRMATIONS
 
     def __repr__(self):
         d_yaw, d_cx, exp = self.evidence
         return (f"<StaticZone x={self.cx:.0f} "
                 f"yaw moved {d_yaw:+.1f} deg, box moved {d_cx:+.0f} px of "
-                f"{exp:.0f} expected>")
+                f"{exp:.0f} expected, {self.seen} pairing(s)"
+                f"{'' if self.confirmed else ', UNCONFIRMED'}>")
 
 
 class StaticRejector:
@@ -131,7 +168,8 @@ class StaticRejector:
             expected = self.expected_px(d_yaw, width)
             if expected >= MIN_EXPECTED_PX:
                 moved = abs(now.cx - best.cx)
-                if moved / expected < STATIC_FRACTION:
+                if (moved / expected < STATIC_FRACTION
+                        and moved <= MAX_STATIC_DRIFT_PX):
                     found = self._mark((best.cx + now.cx) / 2.0, t,
                                        (d_yaw, now.cx - best.cx, expected))
 
@@ -167,7 +205,12 @@ class StaticRejector:
             if abs(z.cx - cx) <= SAME_PX:
                 z.cx = (z.cx + cx) / 2.0
                 z.at = t
-                z.evidence = evidence
+                z.seen += 1
+                # Keep whichever evidence is strongest, since that is what a
+                # human reading the log needs to judge the zone.
+                if abs(evidence[1]) / evidence[2] < \
+                        abs(z.evidence[1]) / z.evidence[2]:
+                    z.evidence = evidence
                 return z
         z = StaticZone(cx, t, evidence)
         self.zones.append(z)
@@ -182,7 +225,8 @@ class StaticRejector:
         """True when this image position is known not to move with the camera."""
         t = self.clock() if t is None else float(t)
         self._expire(t)
-        return any(abs(z.cx - float(cx)) <= SAME_PX for z in self.zones)
+        return any(abs(z.cx - float(cx)) <= REJECT_PX
+                   for z in self.zones if z.confirmed)
 
     def accept(self, cx, t=None):
         """is_static inverted, counting what it throws away. Use this in a loop."""
@@ -195,3 +239,6 @@ class StaticRejector:
         if not self.zones:
             return "no static zones learned"
         return "; ".join(repr(z) for z in self.zones)
+
+    def confirmed_zones(self):
+        return [z for z in self.zones if z.confirmed]

@@ -108,21 +108,33 @@ class TestCorrections(unittest.TestCase):
         a.choose()
         self.assertEqual(a.corrections(), (0.0, 0.0))
 
-    def test_a_target_right_of_centre_turns_the_view_right(self):
+    def test_a_target_right_of_centre_raises_yaw(self):
+        """Named after the JOINT, not after "the view", on purpose.
+
+        "turns the view right" and "moves the image right" are opposite
+        statements, and phrasing this test in those words is how it ended up
+        asserting the wrong sign and passing for hours while the arm turned
+        away from him on hardware.
+
+        The fact, measured: raising base_yaw moves a fixed landmark LEFT
+        (-15.26 px per logical degree, r2 = 0.976). A target right of centre
+        therefore needs MORE yaw.
+        """
         a, _, _ = make()
         a.offer("face", W * 0.8, H / 2, W, H)
         a.choose()
         d_yaw, _ = a.corrections()
-        # base_yaw's sign in config makes larger degrees look right, confirmed
-        # by closing this loop on hardware, so the correction is negative.
-        self.assertLess(d_yaw, 0.0)
+        self.assertGreater(d_yaw, 0.0)
 
-    def test_a_target_below_centre_tilts_the_view_down(self):
+    def test_a_target_below_centre_lowers_the_wrist(self):
+        """Also named after the joint. Measured: raising the wrist moves a
+        fixed landmark DOWN the frame (+22.33 px/deg, r2 = 0.986), so a target
+        below centre needs LESS wrist. Opposite to yaw, and that asymmetry is
+        real -- the two axes have independent geometry and config signs."""
         a, _, _ = make()
         a.offer("face", W / 2, H * 0.85, W, H)
         a.choose()
         _, d_wrist = a.corrections()
-        # Higher wrist degrees tilt UP, so looking down is negative.
         self.assertLess(d_wrist, 0.0)
 
     def test_the_gain_is_below_one(self):
@@ -160,9 +172,10 @@ class TestLoopConverges(unittest.TestCase):
             d_yaw, _ = a.corrections()
             if flip:
                 d_yaw = -d_yaw
-            # Moving the view right by d degrees moves the target LEFT in the
-            # image by d / deg_per_frame of a frame.
-            offset += d_yaw / deg_per_frame
+            # The PLANT, from probe_axis: raising yaw by d degrees moves a
+            # fixed landmark LEFT by d / deg_per_frame of a frame, so the
+            # offset goes DOWN. Written as measured, not as imagined.
+            offset -= d_yaw / deg_per_frame
             history.append(offset)
             c.advance(0.2)
         return history
@@ -203,7 +216,7 @@ class TestLoopConverges(unittest.TestCase):
             a.offer("face", W / 2 + offset * W, H / 2, W, H)
             a.choose()
             d_yaw, _ = a.corrections()
-            offset += d_yaw / real_dpf
+            offset -= d_yaw / real_dpf
             history.append(offset)
             c.advance(0.2)
         return history
@@ -284,7 +297,7 @@ class TestLoopConverges(unittest.TestCase):
             d_yaw, _ = a.corrections()
             target = max(-att_mod.MAX_TARGET_DEG,
                          min(att_mod.MAX_TARGET_DEG, target + d_yaw))
-            step = max(-rate * dt, min(rate * dt, -target - joint))
+            step = max(-rate * dt, min(rate * dt, target - joint))
             joint += step
             worst_overshoot = min(worst_overshoot, start - joint / dpf)
             c.advance(dt)
@@ -352,7 +365,9 @@ class TestSteering(unittest.TestCase):
         a.offer("face", W * 0.85, H / 2, W, H)     # fresh measurement
         a.choose()
         a.steer(layer)
-        self.assertLess(layer.target["base_yaw"], one)
+        self.assertGreater(abs(layer.target["base_yaw"]), abs(one),
+                           "a fresh measurement should move the target "
+                           "further, not sit still")
 
     def test_the_target_cannot_wind_up_without_bound(self):
         a, c, _ = make()

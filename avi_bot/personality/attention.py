@@ -157,14 +157,31 @@ class Attention:
         d_yaw = 0.0
         d_wrist = 0.0
         if abs(ox) > DEADBAND_FRAC:
-            # Negative because the correction opposes the offset: a target to
-            # the right of centre needs the view to move right, which brings
-            # the target back toward the middle.
-            d_yaw = -ox * float(cam["yaw_deg_per_frame"]) * self.gain
+            # POSITIVE, and this sign comes from a measurement, not from
+            # reasoning about which way a camera turns -- that reasoning has
+            # been got wrong here more than once because "the view goes right"
+            # and "the image moves right" are opposite statements.
+            #
+            # probe_axis, 2026-10-05, r2 = 0.976: raising base_yaw by one
+            # logical degree moves a FIXED landmark 15.26 px LEFT on a 1280 px
+            # frame. So cx falls as yaw rises, and a target to the RIGHT of
+            # centre (ox > 0) needs yaw to INCREASE to come back to the middle.
+            #
+            # It was negative until now. On hardware that drove the error UP
+            # from 16 to 30 degrees and then sat against the target bound,
+            # while the arm wandered between 35 and 60 degrees under the idle
+            # layers -- which reads as a gain problem rather than a sign one.
+            # Note the wrist below is the other way round and is CORRECT; the
+            # two axes have independent geometry and config signs, so one
+            # being negative is not evidence about the other.
+            d_yaw = ox * float(cam["yaw_deg_per_frame"]) * self.gain
         if abs(oy) > DEADBAND_FRAC:
-            # Higher wrist degrees tilt the view UP (measured; see
-            # config/poses.toml), and a target BELOW centre has oy > 0, so it
-            # needs the view to go down: also negative.
+            # NEGATIVE, from the same procedure: probe_axis found that raising
+            # the wrist by one degree moves a fixed landmark 22.33 px DOWN the
+            # frame (r2 = 0.986), i.e. cy RISES as wrist rises. A target below
+            # centre has oy > 0 and needs cy to fall, so the wrist must come
+            # down. Opposite to yaw above, because the two axes' geometry and
+            # config signs are independent.
             d_wrist = -oy * float(cam["wrist_deg_per_frame"]) * self.gain
         return d_yaw, d_wrist
 

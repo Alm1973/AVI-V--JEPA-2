@@ -103,6 +103,70 @@ class Parallax(unittest.TestCase):
 
 
 
+    def test_one_marginal_pairing_cannot_censor_the_frame(self):
+        """A zone needs CONFIRMATIONS pairings before it rejects anything.
+
+        Measured at HOME on 2026-10-05: three zones were learned, but only
+        x=1109 was strong (0 px of movement across a 30 deg pan, expected 458).
+        The other two rested on a single 14 px and 45 px reading of an expected
+        229 -- and they sat at x=555 and x=692, bracketing the x=618..639 where
+        Shaurya actually sits. One weak pairing must not blacklist his seat.
+        """
+        r, t = fresh()
+        # Exactly one pairing: two sightings at one spot across a real pan.
+        r.observe(90.0, 600, W, t=t)
+        r.observe(105.0, 614, W, t=t + 0.4)
+        self.assertTrue(r.zones, "should have noticed it")
+        self.assertFalse(r.zones[0].confirmed)
+        self.assertTrue(r.accept(600, t=t + 1),
+                        "rejected on a single pairing")
+        # A second independent pairing confirms it.
+        r.observe(90.0, 607, W, t=t + 1)
+        self.assertTrue(r.zones[0].confirmed, r.describe())
+        self.assertFalse(r.accept(600, t=t + 2))
+
+    def test_rejection_radius_spares_where_he_sits(self):
+        """Learning is generous, rejecting is not -- the errors are not
+        symmetric. A zone at 555 must not reach a detection at 618."""
+        from avi_bot.perception import parallax as px
+        self.assertLess(px.REJECT_PX, px.SAME_PX)
+        r, t = fresh()
+        for i in range(3):
+            r.observe(90.0, 555, W, t=t + i)
+            r.observe(105.0, 550, W, t=t + i + 0.4)
+        self.assertTrue(r.zones[0].confirmed)
+        self.assertFalse(r.accept(555, t=t + 10), "should reject its own spot")
+        self.assertTrue(r.accept(618, t=t + 10),
+                        "must not reach the seat at 618")
+
+    def test_a_drifting_box_is_not_rigidly_attached(self):
+        """Pairs that drift are two objects, not one static one.
+
+        At HOME on 2026-10-05 the real arm hardware was found at x = 1109,
+        1109, 1109 -- zero drift across a 30 degree pan. The spurious zones in
+        the same runs drifted 14, 36 and 45 px, and one of them landed at
+        x = 657, close enough to Shaurya's seat at 618 to censor him. The ratio
+        test passed all of them; an absolute ceiling does not.
+        """
+        from avi_bot.perception import parallax as px
+        r, t = fresh()
+        drift = px.MAX_STATIC_DRIFT_PX + 11      # the measured 36 px case
+        for i in range(4):
+            r.observe(90.0, 657, W, t=t + i)
+            r.observe(105.0, 657 + drift, W, t=t + i + 0.4)
+        self.assertFalse(r.zones, f"learned a drifting pair: {r.describe()}")
+        self.assertTrue(r.accept(618, t=t + 10), "censored his seat")
+
+    def test_zero_drift_is_still_learned(self):
+        """The real case must survive the tightening: x=1109, 0 px of 458."""
+        r, t = fresh()
+        for i in range(3):
+            r.observe(75.0, 1109, W, t=t + i * 2)
+            r.observe(105.0, 1109, W, t=t + i * 2 + 0.4)
+        self.assertTrue(r.zones, "lost the one case that was certain")
+        self.assertTrue(r.zones[0].confirmed, r.describe())
+        self.assertFalse(r.accept(1109, t=t + 20))
+
     def test_nothing_known_passes(self):
         """The default is to accept: a dropped frame is cheap, a lock-on is not."""
         r, t = fresh()
