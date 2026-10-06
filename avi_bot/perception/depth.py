@@ -72,6 +72,8 @@ axis does not.
 """
 import math
 
+from . import optics
+
 # Below this the fit is noise: a pan that moved a few pixels cannot be asked
 # for a slope. Chosen in commanded degrees because that is what is commanded.
 MIN_SWING_DEG = 6.0
@@ -143,12 +145,9 @@ class Track:
         frame edge of a 52-degree lens the difference is a few per cent -- same
         order as the parallax being measured, so it is not ignorable.
         """
-        half = math.tan(math.radians(self.fov_deg / 2.0))
-        out = []
-        for x in self.xs:
-            off = (x - self.frame_width / 2.0) / (self.frame_width / 2.0)
-            out.append(math.degrees(math.atan(off * half)))
-        return out
+        return [optics.angle_pinhole(x - self.frame_width / 2.0,
+                                     self.frame_width, self.fov_deg)
+                for x in self.xs]
 
     def rate(self):
         """Image-angle degrees per COMMANDED degree, as a positive magnitude.

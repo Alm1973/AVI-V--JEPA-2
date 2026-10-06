@@ -1166,6 +1166,7 @@ def make_handler(st):
                     prefer=body.get("prefer", "OBSERVE"),
                     frames=int(body.get("frames", 5)),
                     settle=float(body.get("settle", 0.8)),
+                    approach=float(body.get("approach", 12.0)),
                     yaw_scale=float(body.get("yaw_scale", 4.0)),
                     magnitudes=body.get("magnitudes")))
             elif self.path == "/probe_depth":
@@ -1430,7 +1431,8 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
 
 
 def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
-               prefer="OBSERVE", frames=5, magnitudes=None, yaw_scale=4.0):
+               prefer="OBSERVE", frames=5, magnitudes=None, yaw_scale=4.0,
+               approach=12.0):
     """Learn the dome's joint-to-direction map from the arm's own motion.
 
     What Shaurya asked for: establish a dome with TALL at the top, then move
@@ -1474,6 +1476,29 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
         if not got:
             return None
         return max(got, key=lambda d: d["conf"])
+
+    def go(joint, target, lo, hi):
+        """Drive a joint to `target`, always arriving from BELOW it.
+
+        base_yaw has severe asymmetric backlash. Measured on this arm with a
+        shared home reference, positive travel was clean and monotonic --
+        11.5, 13.3, 17.8, 19.1 px per degree at 2, 4, 8 and 16 degrees -- while
+        negative travel barely moved at all: 2 and 4 degree commands produced
+        3 px, which is noise, and 8 degrees produced motion the wrong way.
+
+        Approaching every target from one side is what the diagnosis itself
+        recommends, and it removes a confound this probe had introduced. An
+        earlier version took its reference once per joint to save time, which
+        meant negative samples arrived from the opposite side and measured
+        backlash rather than gain.
+        """
+        pre = target - approach
+        if pre < lo:
+            pre = min(hi, target + approach)      # no room below; come down
+        arm.set(joint, pre)
+        time.sleep(settle * 0.6)
+        arm.set(joint, target)
+        time.sleep(settle)
 
     def find(label):
         """Where `label` is now: the MEDIAN over several frames.
@@ -1539,16 +1564,14 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
             # the way back between samples, which paid two settles and two
             # travels for one measurement.
             if at_home is None:
-                arm.set(joint, home[joint])
-                time.sleep(settle)
+                go(joint, home[joint], lo, hi)
                 at_home = find(label)
                 if at_home is None:
                     lost.append(f"{joint}: lost {label} at the home reading")
                     break
             before_j = dict(home)
             at_before = at_home
-            arm.set(joint, target)
-            time.sleep(settle)
+            go(joint, target, lo, hi)
             after_j = arm.snapshot()
             at_after = find(label)
             if at_after is None:
@@ -1557,8 +1580,7 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
             samples.append((before_j, after_j,
                             at_after[0] - at_before[0],
                             at_after[1] - at_before[1]))
-        arm.set(joint, home[joint])
-        time.sleep(settle)
+        go(joint, home[joint], lo, hi)
     arm.set_pose(start)
 
     limits = {j: arm.config.soft_limits(j)
@@ -1569,6 +1591,7 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
 
     out = {"landmark": label, "step": step, "magnitudes": mags,
            "magnitudes_base_yaw": per_joint["base_yaw"], "frames": frames,
+           "approach_deg": approach,
            "samples": len(samples), "fit": d.fit,
            "residuals": d.residuals,
            "diagnosis": {j: d.diagnose(j)

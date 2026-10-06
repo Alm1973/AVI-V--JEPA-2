@@ -39,6 +39,8 @@ than returning a number that is merely arithmetic.
 """
 import math
 
+from . import optics
+
 # Which way each pitch joint drives elevation. Inferred, then checked against
 # the taught poses; see the module docstring. Replaced by learn().
 PITCH_SIGNS = {"shoulder": -1.0, "elbow": -1.0, "wrist": +1.0}
@@ -200,9 +202,13 @@ class Dome:
         """
         w, h = frame
         az, el = self.direction_of(joints_seen)
-        az += ((float(cx) - w / 2.0) / w) * yaw_deg_per_frame \
+        # LINEAR on purpose: yaw_deg_per_frame and wrist_deg_per_frame were
+        # fitted as straight lines through pixel offset, so those numbers mean
+        # linear. A pinhole conversion here would be better physics applied to
+        # constants that do not match it. See optics.py.
+        az += optics.angle_linear(float(cx) - w / 2.0, w, yaw_deg_per_frame) \
             * self.gains["base_yaw"]
-        el += ((float(cy) - h / 2.0) / h) * wrist_deg_per_frame \
+        el += optics.angle_linear(float(cy) - h / 2.0, h, wrist_deg_per_frame) \
             * self.gains["wrist"]
         return self.joints_for(az, el, prefer=prefer or joints_seen)
 
