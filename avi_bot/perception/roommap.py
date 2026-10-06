@@ -35,6 +35,8 @@ back to the same place.
 import math
 import time
 
+from avi_bot.perception import world as world_mod
+
 # A sighting this far from an existing one is the same object. In degrees of
 # commanded yaw: about a quarter of a frame width at 83.9 deg/frame, which is
 # generous enough to survive box jitter and tight enough to tell a mug from
@@ -192,7 +194,11 @@ class RoomMap:
 
     def __init__(self, yaw_deg_per_frame=83.9, wrist_deg_per_frame=32.2,
                  frame=(1280, 720), clock=time.time, shoulder=None,
-                 elbow=None):
+                 elbow=None, view=None):
+        # A world.View when level is measured: directions are then worked out
+        # on the sphere instead of with one constant per axis. See
+        # direction_of. None keeps the flat constants.
+        self.view = view
         self.yaw_deg_per_frame = float(yaw_deg_per_frame)
         self.wrist_deg_per_frame = float(wrist_deg_per_frame)
         self.frame = frame
@@ -216,17 +222,34 @@ class RoomMap:
         got = [float(p) for p in px_sizes if p]
         if not got:
             return SAME_DEG
-        span = max(got) / float(self.frame[0]) * self.yaw_deg_per_frame
+        if self.view is not None:
+            span = math.degrees(max(got) / self.view.focal) / self.view.yaw_gain
+        else:
+            span = max(got) / float(self.frame[0]) * self.yaw_deg_per_frame
         return max(SAME_DEG, SAME_SIZE_FRACTION * span)
+
+    @property
+    def geometry(self):
+        return "world" if self.view is not None else "flat"
 
     def direction_of(self, cx, cy, yaw, wrist):
         """A detection at (cx, cy), seen from (yaw, wrist), points where?
+
+        Returned as the (yaw, wrist) that would put it at frame centre.
+
+        WITH A VIEW (level measured): the pixel's ray is found on the sphere
+        and turned back into the joint angles that centre it. On the 2026-10-06
+        dense survey this put every object in ONE cluster at any threshold
+        and cut the scatter from 3.19 to 2.37 deg; the flat constants split
+        the laptop in two at 8 deg and scattered the mug by 6.
 
         Inverts the same two measured constants the tracking loop uses, with
         the same signs: raising yaw moves a landmark LEFT, so something right
         of centre lies at a HIGHER yaw; raising wrist moves a landmark DOWN,
         so something above centre lies at a LOWER wrist.
         """
+        if self.view is not None:
+            return self.view.aim(*self.view.direction(cx, cy, yaw, wrist))
         w, h = self.frame
         ox = (float(cx) - w / 2.0) / w
         oy = (float(cy) - h / 2.0) / h
@@ -418,6 +441,8 @@ class RoomMap:
     def to_dict(self):
         return {"yaw_deg_per_frame": self.yaw_deg_per_frame,
                 "wrist_deg_per_frame": self.wrist_deg_per_frame,
+                "geometry": self.geometry,
+                "view": self.view.to_dict() if self.view is not None else None,
                 "frame": list(self.frame),
                 "shoulder": self.shoulder, "elbow": self.elbow,
                 "anchors": {k: list(v) for k, v in self.anchors.items()},
@@ -438,7 +463,9 @@ class RoomMap:
         m = cls(yaw_deg_per_frame=data.get("yaw_deg_per_frame", 83.9),
                 wrist_deg_per_frame=data.get("wrist_deg_per_frame", 32.2),
                 frame=tuple(data.get("frame", (1280, 720))), clock=clock,
-                shoulder=data.get("shoulder"), elbow=data.get("elbow"))
+                shoulder=data.get("shoulder"), elbow=data.get("elbow"),
+                view=(world_mod.View(**data["view"]) if data.get("view")
+                      else None))
         m.anchors = {k: tuple(v) for k, v in (data.get("anchors") or {}).items()}
         for row in data.get("places") or []:
             place = Place(row["label"], row["yaw"], row["wrist"],

@@ -900,3 +900,53 @@ switching to TALL's (worked only because /survey happened to pass pose=TALL).
 (within ~2), so "V-JEPA beats pixels" is about its SPATIAL encoding. Whether the
 video/dynamics part helps is untested; that needs clips taken during known arm
 motion.
+
+## 2026-10-06 ~16:45: AVI knows which way is level -- 3D without a ruler
+
+**The 1.8x "under-travel" was never real.** `POST /probe_horizon` turns the
+base 8 deg twice at 14 wrist tilts on TALL's shape and registers the pictures
+(ORB + RANSAC). A turn about the base axis ROLLS the image by g sin(e) and
+SLIDES it by g cos(e). Roll needs no FOV and carries no parallax, so fitting it
+across tilts (26 measurements, rms 0.066, bootstrap CIs) gives:
+
+| | value | 95% | note |
+|---|---|---|---|
+| base_yaw gain g | 0.95 | 0.89-0.98 | config assumed ~0.55 |
+| level | wrist 160.3 | 155-164 | TALL looks ~16 deg ABOVE level |
+| wrist gain | 1.03 | 0.93-1.09 | dome's independent 1.0148 agrees |
+| FOV (linear) | ~48.6 | +-3 | trades off against g; datasheet 52 |
+
+52/83.9 = 0.62 = cos 52; the dome's 0.7492 = cos 41. The low slide was the
+camera looking DOWN. Wrist ~44 on this shape sees the robot's own base (no
+roll, no slide); below that it looks back under itself (slide reverses).
+Looking down, the desk slides 0.3-0.4 deg/deg faster than the far room: the
+lens is in FRONT of the base axis (camera faces outward), offset/height ~0.35.
+All in `[horizon]`, config/joints.toml.
+
+**Backlash: 13.1 deg** (`POST /probe_backlash`: same yaw from above vs below,
+13.5 / 12.7; from below twice repeats to 0.8). Up to ~16 effective when the
+arm looks down. Every yaw move now ends in an upward run of 18 deg unless the
+slack is KNOWN to be taken up (`motion/backlash.py`, `Slack`). Two real bugs
+it explained:
+- every survey row started with a downward jump, so its first column was
+  misplaced (a pen 11 deg off; the next 13 deg step moved it 32 px, not 280);
+- /find turned 10.9 deg UP from a survey's downward park and never reached
+  the laptop.
+Stops near soft_min cannot get a full run-up; their sightings are dropped
+(`yaw_settled` per stop) and they do not count as "looked there" for desk diffs.
+
+**The map now works on the sphere** (`perception/world.py`, `RoomMap(view=)`).
+On the same dense survey (42 settled boxes): world geometry gives ONE cluster
+per object at 8/15/25 deg thresholds, scatter 2.37 deg; the flat constants
+split the laptop in two at 8 deg and scattered the mug by 6.1. The flat map
+on disk was archived to `roommap-dev.json.flat.json`. /find from the new map
+centres things within ~1-5 deg in a 48 deg frame. desk_changes snapshot
+version 3 (new instrument).
+
+Still not modelled: parallax from the lens offset (near left-desk objects are
+~0.5 deg worse in world geometry than flat, which absorbed some of it by
+accident). Needs one length -- see below.
+
+**Only ONE ruler number is now needed for metric 3D**: lens height above the
+desk at TALL's shape, OR the lens's horizontal offset from the base axis. The
+ratio between them (~0.35) is already measured.

@@ -35,7 +35,10 @@ PROFILES = {"dev": "desk-dev.db", "live": "desk.db"}
 # reported a phone, a wallet and a backpack as "disappeared" -- indistinguishable
 # from objects that were simply now being filtered out. A diff across a change
 # in the instrument measures the instrument.
-SNAPSHOT_VERSION = 2
+#   2: clipped boxes excluded.
+#   3: directions on the sphere (world.View) instead of flat constants, and
+#      stops whose yaw backlash was not taken up are left out.
+SNAPSHOT_VERSION = 3
 
 
 def _gap(a, b):

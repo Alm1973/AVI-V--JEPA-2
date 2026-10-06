@@ -31,6 +31,7 @@ except to the tailnet address this binds to.
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 import threading
@@ -56,6 +57,7 @@ from avi_bot.perception import depth as depth_mod                 # noqa: E402
 from avi_bot.perception import desk_changes as desk_mod           # noqa: E402
 from avi_bot.perception import dome as dome_mod                   # noqa: E402
 from avi_bot.perception import horizon as horizon_mod             # noqa: E402
+from avi_bot.perception import world as world_mod                 # noqa: E402
 from avi_bot.motion import backlash as backlash_mod               # noqa: E402
 from avi_bot.perception import presence as presence_mod           # noqa: E402
 from avi_bot.skills import breaks as breaks_mod                   # noqa: E402
@@ -194,7 +196,9 @@ class Arm:
         # Collapsing that duplicate is the test of which is right, and it is a
         # better one than either measurement on its own: the object has to be
         # in one place, so the constant that puts it there is correct.
-        self.roommap = roommap_mod.RoomMap(*self.frame_constants(config))
+        self.roommap = roommap_mod.RoomMap(*self.frame_constants(config),
+                                           view=world_mod.View.from_config(
+                                               config))
         # When he is at the desk, learned by watching. Launch-day rule: the
         # dev store unless AVI_PROFILE=live, same as the map and the latents.
         self.presence = presence_mod.Presence(self.presence_path())
@@ -520,7 +524,18 @@ class Arm:
             return False          # no map yet is the normal first case
         try:
             with open(path) as f:
-                self.roommap = roommap_mod.RoomMap.from_dict(json.load(f))
+                loaded = roommap_mod.RoomMap.from_dict(json.load(f))
+            if (self.roommap.view is not None and loaded.view is None
+                    and loaded.places):
+                # A map filed with the flat constants cannot be mixed with
+                # directions worked out on the sphere: the same object would
+                # land in two places, one per geometry. Keep the old one on
+                # disk and start this geometry clean.
+                os.replace(path, path + ".flat.json")
+                self.note(f"room map was flat geometry; archived to "
+                          f"{path}.flat.json, starting a world-geometry map")
+                return False
+            self.roommap = loaded
             return True
         except Exception as exc:
             self.note(f"room map at {path} did not load, starting empty: {exc!r}")
@@ -1387,6 +1402,10 @@ def make_handler(st):
                     arm, latest, delta=float(body.get("delta", 8.0)),
                     wrists=body.get("wrists"),
                     approach=float(body.get("approach", 24.0))))
+            elif self.path == "/probe_backlash":
+                self._json(probe_backlash(
+                    arm, latest, yaw=float(body.get("yaw", 90.0)),
+                    wrist=float(body.get("wrist", 150.0))))
             elif self.path == "/probe_depth":
                 self._json(probe_depth(
                     arm, latest,
@@ -1568,15 +1587,24 @@ REPORT_FLOOR = 0.10
 
 
 def _yaw_to(arm, target, settle):
-    """Put base_yaw at `target`, last move upward (motion/backlash.py)."""
+    """Put base_yaw at `target`, last move upward (motion/backlash.py).
+    Returns whether the backlash is known to be taken up -- False near the
+    soft limit, where the run-up gets cut short."""
     lo, _ = arm.config.soft_limits("base_yaw")
+    slack = getattr(arm, "yaw_slack", None)
+    if slack is None:
+        slack = arm.yaw_slack = backlash_mod.Slack()
     here = arm.snapshot().get("base_yaw")
-    cmds = backlash_mod.plan(here, target, lo)
+    known = (slack.settled and here is not None and slack.last is not None
+             and abs(float(here) - slack.last) < 1e-6)
+    cmds = backlash_mod.plan(here, target, lo, settled=known)
     for i, cmd in enumerate(cmds):
         arm.set("base_yaw", cmd)
+        slack.command(here, cmd)
         if i < len(cmds) - 1:
             time.sleep(max(settle * 0.6, backlash_mod.travel_s(here, cmd)))
-            here = cmd
+        here = cmd
+    return slack.settled
 
 
 def _clipped(d, frame):
@@ -1687,11 +1715,16 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
     # read as "cup" on one scan cannot pass for something new.
     sightings, visited_stops = [], []
     for yaw, wrist in stops:
-        _yaw_to(arm, yaw, settle)
+        settled = _yaw_to(arm, yaw, settle)
         arm.set("wrist", wrist)
         time.sleep(settle)
         looked = {"yaw": yaw, "wrist": wrist, "frames": 0,
-                  "kept": [], "below_floor": [], "people": 0}
+                  "yaw_settled": settled,
+                  "kept": [], "below_floor": [], "people": 0,
+                  # Raw boxes, so a direction model can be checked against
+                  # the real detections after the fact (labels and numbers,
+                  # never pixels).
+                  "boxes": []}
         for frame in _look(latest, frames):
             visited += 1
             looked["frames"] += 1
@@ -1709,6 +1742,10 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                         [d["label"], round(d["conf"], 2)])
                     continue
                 looked["kept"].append([d["label"], round(d["conf"], 2)])
+                looked["boxes"].append(
+                    [roommap_mod.canonical_label(d["label"]),
+                     round(float(d["conf"]), 3), int(d["cx"]), int(d["cy"]),
+                     int(d["w"]), int(d["h"]), bool(_clipped(d, frame))])
                 # A box cut off by the frame edge covers only the visible part
                 # of the object, so its centre is pulled toward the middle of
                 # the frame and the "direction" depends on which stop saw it.
@@ -1716,6 +1753,10 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                 # into pairs 13-16 degrees apart that way. Those boxes stay
                 # out of the snapshot; an object is still caught from the
                 # stops that see it whole.
+                if not settled:
+                    # Where it looked is uncertain by up to the backlash, so
+                    # nothing seen here is filed anywhere.
+                    continue
                 if not _clipped(d, frame):
                     dy, dw = arm.roommap.direction_of(d["cx"], d["cy"],
                                                       yaw, wrist)
@@ -1733,7 +1774,8 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                             "hint": "POST /forget_map to rebuild at this shape"}
                 seen += 1
         per_stop.append(looked)
-        visited_stops.append((float(yaw), float(wrist)))
+        if settled:
+            visited_stops.append((float(yaw), float(wrist)))
     arm.set_pose(start)
     arm.roommap.forget_stale()
     saved = arm.save_roommap()
@@ -2509,6 +2551,70 @@ def probe_horizon(arm, latest, wrists=None, delta=8.0, approach=24.0,
             f"{width / P:.1f} deg (config assumes 52)")
     except horizon_mod.NotMeasurable as exc:
         out["error"] = str(exc)
+    return out
+
+
+def probe_backlash(arm, latest, yaw=90.0, wrist=150.0, run=40.0, settle=2.0,
+                   repeats=2):
+    """base_yaw's backlash, in degrees, from two pictures.
+
+    Arrive at `yaw` from below, then from above, and register the pictures.
+    Their slide, divided by how far one degree of turn slides the picture at
+    this tilt (g cos(e) px/deg, from [horizon]), is the backlash. Arriving
+    from below twice gives the repeatability to judge it against.
+    """
+    h = arm.config.raw.get("horizon", {})
+    if not h.get("measured"):
+        return {"error": "[horizon] is not measured; POST /probe_horizon"}
+    taught = load_taught() or {}
+    start = arm.snapshot()
+    lo, hi = arm.config.soft_limits("base_yaw")
+    if yaw - run < lo or yaw + run > hi:
+        return {"error": f"{yaw}+-{run} leaves {lo}..{hi}"}
+    if dome_mod.POLE in taught:
+        arm.set("shoulder", taught[dome_mod.POLE]["shoulder"])
+        arm.set("elbow", taught[dome_mod.POLE]["elbow"])
+    arm.set("wrist", wrist)
+
+    def shot(frm):
+        arm.set("base_yaw", frm)
+        time.sleep(backlash_mod.travel_s(None, 0) / 2)
+        arm.set("base_yaw", yaw)
+        time.sleep(settle)
+        got = list(_look(latest, 3))
+        return got[-1] if got else None
+
+    e = float(h.get("wrist_gain", 1.0)) * (wrist - float(h["level_wrist"]))
+    per_deg = (float(h.get("yaw_gain", 1.0)) * math.cos(math.radians(e))
+               * 1280.0 / float(h.get("fov_deg", 48.6)))
+    out = {"yaw": yaw, "wrist": wrist, "elevation": round(e, 1),
+           "px_per_deg_of_turn": round(per_deg, 2), "trials": []}
+    try:
+        for _ in range(int(repeats)):
+            a, b, c = shot(yaw - run), shot(yaw + run), shot(yaw - run)
+            trial = {}
+            for name, (x, y) in (("below_vs_above", (a, b)),
+                                 ("below_vs_below", (a, c))):
+                try:
+                    r = horizon_mod.register(x, y)
+                    trial[name] = round(r["dx_px"] / per_deg, 2)
+                    trial[name + "_inliers"] = r["inliers"]
+                except (horizon_mod.NotMeasurable, TypeError) as exc:
+                    trial[name] = None
+                    trial[name + "_error"] = str(exc)
+            out["trials"].append(trial)
+    finally:
+        arm.set_pose(start)
+    got = [t["below_vs_above"] for t in out["trials"]
+           if t.get("below_vs_above") is not None]
+    rep = [t["below_vs_below"] for t in out["trials"]
+           if t.get("below_vs_below") is not None]
+    if got:
+        out["backlash_deg"] = round(abs(sum(got) / len(got)), 2)
+    if rep:
+        out["repeatability_deg"] = round(max(abs(v) for v in rep), 2)
+    log(f"probe_backlash: {out.get('backlash_deg')} deg "
+        f"(repeat {out.get('repeatability_deg')})")
     return out
 
 
