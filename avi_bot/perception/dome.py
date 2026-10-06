@@ -188,15 +188,23 @@ class Dome:
         return (round((pole_wrist - hi) * gw, 1),
                 round((pole_wrist - lo) * gw, 1))
 
-    def ladder(self, step=12.0, azimuth=0.0, limit=None):
+    def ladder(self, step=12.0, azimuth=0.0, limit=None, start=0.0):
         """Poses stepping DOWN the dome from the pole. His "work your way down".
 
         Stops when the wrist runs out, so the last rung is the lowest the arm
         can actually look rather than the lowest that was asked for.
+
+        `start` skips the top of the dome. Measured 2026-10-06: every stop at
+        elevation 0 -- the pole's own tilt -- kept nothing across a whole
+        survey, because it aims at wall and ceiling. It is also where the
+        detector's false "person" boxes live, 3 to 6 per stop, and a check at
+        TALL showed one of them to be a 347x109 strip at cy 55, the very top
+        edge of the frame. Furniture, not a person. Since the survey skips
+        person labels, that row costs stops and returns nothing.
         """
         lo_el, hi_el = self.elevation_span()
         far = hi_el if limit is None else min(hi_el, float(limit))
-        out, el = [], max(0.0, lo_el)
+        out, el = [], max(float(start), lo_el)
         while el <= far + 1e-9:
             try:
                 out.append((round(el, 1), self.pose_at(azimuth, el)))
@@ -205,7 +213,7 @@ class Dome:
             el += float(step)
         return out
 
-    def grid(self, el_step=12.0, az_step=15.0, limit=None):
+    def grid(self, el_step=12.0, az_step=15.0, limit=None, start=0.0):
         """The whole reachable dome, as rungs of a ladder across azimuth.
 
         Rows of constant elevation: the camera's tilt is fixed along a row, so
@@ -214,7 +222,7 @@ class Dome:
         """
         az_lo, az_hi = self.azimuth_limits()
         out = []
-        for el, _ in self.ladder(step=el_step, limit=limit):
+        for el, _ in self.ladder(step=el_step, limit=limit, start=start):
             az = az_lo + 0.5
             while az <= az_hi - 0.5 + 1e-9:
                 try:

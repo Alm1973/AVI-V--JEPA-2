@@ -481,3 +481,30 @@ class ItDiagnosesWhyAFitIsPoor(unittest.TestCase):
                         "predicted_px": -10.0 * m}
                        for m in (2.0, 4.0, 6.0, 8.0)]
         self.assertIn("one direction", d.diagnose("base_yaw")["verdict"])
+
+
+class TheTopOfTheDomeIsSkippable(unittest.TestCase):
+    """Measured, not assumed: every stop at elevation 0 -- the pole's own tilt
+    -- kept nothing across a whole 30-stop survey, because it aims at wall and
+    ceiling. It is also where the detector's false "person" boxes cluster, 3 to
+    6 per stop, one of which proved to be a 347x109 strip at the very top edge
+    of the frame. The survey skips person labels, so that row costs six stops
+    and returns nothing."""
+
+    def test_the_ladder_can_start_below_the_pole(self):
+        d = a_dome()
+        rungs = [el for el, _ in d.ladder(step=12.0, start=12.0)]
+        self.assertNotIn(0.0, rungs)
+        self.assertEqual(rungs[0], 12.0)
+
+    def test_starting_at_zero_still_includes_the_pole(self):
+        d = a_dome()
+        self.assertEqual(d.ladder(step=12.0, start=0.0)[0][0], 0.0)
+
+    def test_the_grid_drops_the_whole_top_row(self):
+        d = a_dome()
+        full = d.grid(el_step=12.0, az_step=16.0, limit=48.0, start=0.0)
+        cut = d.grid(el_step=12.0, az_step=16.0, limit=48.0, start=12.0)
+        self.assertEqual(len(full) - len(cut),
+                         len([1 for _, el, _ in full if el == 0.0]))
+        self.assertTrue(all(el > 0.0 for _, el, _ in cut))

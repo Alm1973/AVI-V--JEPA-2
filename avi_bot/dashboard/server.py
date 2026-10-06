@@ -1244,6 +1244,7 @@ def make_handler(st):
                     el_step=float(body.get("el_step", 12.0)),
                     az_step=float(body.get("az_step", 16.0)),
                     el_limit=float(body.get("el_limit", 60.0)),
+                    el_start=float(body.get("el_start", 12.0)),
                     settle=float(body.get("settle", 1.8)),
                     frames=int(body.get("frames", 2))))
             elif self.path == "/forget_map":
@@ -1359,7 +1360,7 @@ REPORT_FLOOR = 0.10
 
 def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                frames=2, pose=None, el_step=12.0, az_step=16.0,
-               el_limit=60.0):
+               el_limit=60.0, el_start=12.0):
     """Look around the room on purpose and write down what is where.
 
     This is the "look around" behaviour with a point to it. The stops come
@@ -1418,14 +1419,15 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
         # Only the band the desk is actually in. The wrist spans 219 degrees
         # of elevation from the pole, and most of that is ceiling or carpet.
         grid = dome.grid(el_step=float(el_step), az_step=float(az_step),
-                         limit=float(el_limit))
+                         limit=float(el_limit), start=float(el_start))
         stops = [(p["base_yaw"], p["wrist"]) for _, _, p in grid]
         shape_src = dome.pole_shape()
         arm.set("shoulder", shape_src["shoulder"])
         arm.set("elbow", shape_src["elbow"])
         time.sleep(settle)
         log(f"survey: dome grid on {dome.pole}'s shape, {len(stops)} stops, "
-            f"elevation 0..{el_limit} in {el_step}, azimuth step {az_step}")
+            f"elevation {el_start}..{el_limit} in {el_step}, azimuth step "
+            f"{az_step}")
     else:
         if not levels:
             levels = [max(wlo, 125.0), 148.0, min(whi, 170.0)]
