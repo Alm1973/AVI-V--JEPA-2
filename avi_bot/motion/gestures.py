@@ -201,8 +201,9 @@ def thinking():
     """Slow look up and to one side, pause, return.  1.5 s, as specified."""
     return _kf("thinking", [
         (0.00, {}),
-        (0.33, {"base_yaw": -9.0, "shoulder": -5.0, "wrist": -6.0}),
-        (0.66, {"base_yaw": -9.0, "shoulder": -5.0, "wrist": -6.0}),
+        # +wrist looks up, which is what "look up and to one side" wants.
+        (0.33, {"base_yaw": -9.0, "shoulder": -5.0, "wrist": 6.0}),
+        (0.66, {"base_yaw": -9.0, "shoulder": -5.0, "wrist": 6.0}),
         (1.00, {}),
     ], duration=1.5, ease="ease_in_out")
 
@@ -214,8 +215,9 @@ def embarrassed():
     """
     return _kf("embarrassed", [
         (0.00, {}),
-        (0.25, {"wrist": 10.0, "base_yaw": -5.0}),
-        (0.55, {"wrist": 10.0, "base_yaw": -5.0}),
+        # -wrist looks down, which is the point of looking embarrassed.
+        (0.25, {"wrist": -10.0, "base_yaw": -5.0}),
+        (0.55, {"wrist": -10.0, "base_yaw": -5.0}),
         (1.00, {}),
     ], duration=1.4, ease="ease_in_out")
 

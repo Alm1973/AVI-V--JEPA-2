@@ -107,10 +107,55 @@ class TestConfig(unittest.TestCase):
                 self.assertTrue(lo <= p[j] <= hi,
                                 f"pose {name} joint {j} = {p[j]} outside {lo}..{hi}")
 
-    def test_observe_is_the_calibrated_center(self):
-        # The observer only logs object positions from OBSERVE, so if this
-        # drifts, every "left side of the desk" in the database is wrong.
-        self.assertEqual(poses.get_pose("OBSERVE"), poses.pose())
+    def test_observe_is_fully_specified(self):
+        """The observer logs object positions ONLY from OBSERVE, so if it is
+        ever partly specified the arm ends up somewhere nobody chose and every
+        "left side of the desk" in the database means something different.
+
+        It is deliberately NOT the mechanical centre: measured 2026-10-05, the
+        camera at wrist centre points at the carpet, so a centred OBSERVE would
+        have the logger faithfully recording the floor.
+        """
+        p = poses.get_pose("OBSERVE")
+        self.assertEqual(set(p), set(poses.JOINTS))
+        for j in poses.JOINTS:
+            self.assertIsInstance(p[j], float)
+        if poses.POSES_ARE_TAUGHT:
+            self.assertNotEqual(p, poses.pose(),
+                                "OBSERVE is at mechanical centre, which aims "
+                                "at the carpet; re-teach it")
+
+    def test_the_poses_in_use_were_taught_on_the_arm(self):
+        """Not a rule, a record. If config/poses.toml goes missing the fallback
+        table takes over, and those values are guesses."""
+        self.assertTrue(poses.POSES_ARE_TAUGHT,
+                        "config/poses.toml is missing, so the invented "
+                        "fallback poses are in use")
+
+    def test_distinct_pose_names_are_actually_distinct(self):
+        """Two names for one position is almost always an unfinished teach --
+        and a gesture that moves to it becomes a silent no-op."""
+        same = []
+        names = sorted(poses.POSES)
+        for i, a in enumerate(names):
+            for b in names[i + 1:]:
+                if poses.get_pose(a) == poses.get_pose(b):
+                    same.append(f"{a}=={b}")
+        unexpected = [s for s in same
+                      if s not in poses.KNOWN_DUPLICATE_POSES]
+        self.assertEqual(unexpected, [],
+                         "identical poses that are not listed as known in "
+                         "config/poses.toml: " + ", ".join(unexpected))
+
+    def test_known_duplicate_list_does_not_go_stale(self):
+        """Once a pose is re-taught, its entry here should go, or the list
+        quietly licenses a future mistake."""
+        for entry in poses.KNOWN_DUPLICATE_POSES:
+            a, _, b = entry.partition("==")
+            self.assertEqual(
+                poses.get_pose(a), poses.get_pose(b),
+                f"{entry} is listed as a known duplicate but the two poses "
+                f"now differ; remove it from config/poses.toml")
 
 
 class TestEasing(unittest.TestCase):

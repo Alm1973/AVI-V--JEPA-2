@@ -1,0 +1,68 @@
+# Named poses, TAUGHT ON THE REAL ARM by Shaurya on 2026-10-05 with
+# assistant/calibrate.py. These replace a hand-written table that was invented
+# from geometry nobody had measured, and whose TALL and LOW both leaned the arm
+# down because the shoulder's two ends are both down with upright in the middle.
+#
+# Degrees are logical, 0..180, as config/joints.toml defines them. Re-teach any
+# of these with `./runHome teach`, then `./runHome pull`, and edit here.
+#
+# WHAT THE DATA SAYS ABOUT DIRECTION, which is worth more than the earlier
+# guesses: REST is "camera down" at wrist 30.5 and OBSERVE looks at the desk at
+# wrist 136, so HIGHER WRIST DEGREES TILT THE CAMERA UP. An earlier reading of
+# a two-position sweep concluded the opposite and was wrong. Likewise the
+# shoulder: ATTENTIVE is raised and alert at 29.5 while REST and LOW are folded
+# at 150 and 154, so LOWER SHOULDER DEGREES RAISE THE ARM.
+
+
+[meta]
+# Pose names that are deliberately, or at least knowingly, the same position.
+# Anything NOT listed here and duplicated fails the test suite, because two
+# names for one position is almost always an unfinished teach -- and any
+# gesture that moves to it becomes a silent no-op.
+#
+# TALL was saved without the arm being moved off HOME, so `perk_up` currently
+# has nothing to rise to. Needs re-teaching: shoulder lower than HOME's 78.4
+# (lower raises the arm) and the camera up.
+known_duplicates = ["HOME==TALL"]
+
+[HOME]
+base_yaw = 90.0
+shoulder = 78.4
+elbow = 93.9
+wrist = 176.0
+# counts 250 397 436 571   taught 2026-10-05T17:39:36
+
+[OBSERVE]
+base_yaw = 90.0
+shoulder = 84.0
+elbow = 95.0
+wrist = 136.0
+# counts 250 384 438 482   taught 2026-10-05T17:48:57
+
+[ATTENTIVE]
+base_yaw = 90.0
+shoulder = 29.5
+elbow = 131.0
+wrist = 131.0
+# counts 250 511 494 471   taught 2026-10-05T17:46:46
+
+[TALL]
+base_yaw = 90.0
+shoulder = 78.4
+elbow = 93.9
+wrist = 176.0
+# counts 250 397 436 571   taught 2026-10-05T17:39:49
+
+[LOW]
+base_yaw = 90.0
+shoulder = 154.0
+elbow = 30.0
+wrist = 129.0
+# counts 250 160 197 467   taught 2026-10-05T17:43:05
+
+[REST]
+base_yaw = 90.0
+shoulder = 150.0
+elbow = 140.5
+wrist = 30.5
+# counts 250 173 509 221   taught 2026-10-05T17:41:38
