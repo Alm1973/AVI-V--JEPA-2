@@ -29,6 +29,14 @@ MIN_HITS = 2             # an object seen fewer times in one scan is a guess
 
 PROFILES = {"dev": "desk-dev.db", "live": "desk.db"}
 
+# Bump whenever what goes INTO a snapshot changes. Scans are only compared
+# with scans of the same version: the first real comparison crossed a code
+# change (clipped boxes started being excluded between scan 1 and scan 2) and
+# reported a phone, a wallet and a backpack as "disappeared" -- indistinguishable
+# from objects that were simply now being filtered out. A diff across a change
+# in the instrument measures the instrument.
+SNAPSHOT_VERSION = 2
+
 
 def _gap(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
@@ -124,34 +132,44 @@ class DeskLog:
     SCHEMA = """
     CREATE TABLE IF NOT EXISTS scans (
         ts REAL NOT NULL, objects TEXT NOT NULL, stops TEXT NOT NULL,
-        half_width TEXT NOT NULL, here INTEGER);
+        half_width TEXT NOT NULL, here INTEGER, version INTEGER);
     CREATE TABLE IF NOT EXISTS changes (
         ts REAL NOT NULL, kind TEXT NOT NULL, label TEXT NOT NULL,
         detail TEXT, here INTEGER);
     """
 
-    def __init__(self, path=":memory:", clock=time.time):
+    def __init__(self, path=":memory:", clock=time.time,
+                 version=SNAPSHOT_VERSION):
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.executescript(self.SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(scans)")}
+        if "version" not in cols:
+            # Scans from before versions existed are version 1 by definition.
+            self.db.execute("ALTER TABLE scans ADD COLUMN version INTEGER")
+            self.db.execute("UPDATE scans SET version = 1")
+            self.db.commit()
         self.clock = clock
+        self.version = int(version)
 
     def close(self):
         self.db.close()
 
     def last(self):
+        """The latest scan of THIS snapshot version, or (None, None)."""
         row = self.db.execute(
-            "SELECT ts, objects FROM scans ORDER BY ts DESC LIMIT 1"
-        ).fetchone()
+            "SELECT ts, objects FROM scans WHERE version = ? "
+            "ORDER BY ts DESC LIMIT 1", (self.version,)).fetchone()
         return (row[0], json.loads(row[1])) if row else (None, None)
 
     def record(self, objects, stops, half_width, here=None, at=None):
         """Store a scan and the changes since the previous one."""
         at = self.clock() if at is None else float(at)
         prev_ts, prev = self.last()
-        self.db.execute("INSERT INTO scans VALUES (?,?,?,?,?)",
+        self.db.execute("INSERT INTO scans VALUES (?,?,?,?,?,?)",
                         (at, json.dumps(objects), json.dumps(stops),
                          json.dumps(list(half_width)),
-                         None if here is None else int(bool(here))))
+                         None if here is None else int(bool(here)),
+                         self.version))
         changes = None
         if prev is not None:
             changes = diff(prev, objects, stops, half_width)

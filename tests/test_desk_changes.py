@@ -95,3 +95,36 @@ class TheLog(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NeverAcrossAChangeInTheInstrument(unittest.TestCase):
+    """The first real comparison crossed a code change and reported a phone, a
+    wallet and a backpack as gone -- indistinguishable from objects the new
+    code had simply started filtering out."""
+
+    def test_a_new_version_starts_fresh(self):
+        import os
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), "d.db")
+        old = dc.DeskLog(path, clock=lambda: 1000.0, version=1)
+        old.record(dc.snapshot(seen("backpack", 38, 144)), DESK, HALF, at=1000)
+        old.close()
+        new = dc.DeskLog(path, clock=lambda: 2000.0, version=2)
+        self.addCleanup(new.close)
+        self.assertIsNone(new.record([], DESK, HALF, at=2000),
+                          "compared across versions")
+
+    def test_scans_from_before_versions_existed_count_as_version_1(self):
+        import os
+        import sqlite3
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), "d.db")
+        db = sqlite3.connect(path)
+        db.executescript("CREATE TABLE scans (ts REAL, objects TEXT, stops TEXT,"
+                         " half_width TEXT, here INTEGER);")
+        db.execute("INSERT INTO scans VALUES (1, '[]', '[]', '[1,1]', 0)")
+        db.commit()
+        db.close()
+        log = dc.DeskLog(path, version=1)
+        self.addCleanup(log.close)
+        self.assertEqual(log.last()[0], 1)
