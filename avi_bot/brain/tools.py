@@ -12,6 +12,12 @@ marked `confirm` -- the executor is expected to refuse anything not in
 config/apps.toml rather than trusting the model's path.
 """
 
+# Mirrored from schema.EMOTIONS rather than imported, to keep this module free
+# of a dependency on pydantic for the sake of one list.
+EMOTION_NAMES = ("neutral", "happy", "excited", "curious", "sad", "sulky",
+                 "confused", "alert", "sleepy", "affectionate", "proud")
+
+
 def _tool(name, description, properties=None, required=None, **extra):
     schema = {"type": "object", "properties": properties or {},
               "required": required or [], "additionalProperties": False}
@@ -83,8 +89,34 @@ TOOLS = [
     _tool("scold", "He was not pleased."),
 ]
 
+# THE REPLY IS A TOOL, because that is what the model does anyway.
+#
+# gpt-oss-20b on Groq emits the final JSON as a tool call named "json", and
+# Groq rejects the whole request with a 400 -- "attempted to call tool 'json'
+# which was not in request.tools" -- so the turn is lost even though the
+# arguments were a perfectly valid Reply. Measured 2026-10-06 against the live
+# API; two of four open questions failed this way and nothing in the local
+# tests could have caught it.
+#
+# Declaring it makes the model's natural behaviour legal instead of fatal. It
+# is kept OUT of TOOLS/BY_NAME so no skill can ever be registered for it and
+# the registry's "every tool has a handler" check stays meaningful: this is an
+# envelope, not an action.
+REPLY_TOOL_NAMES = ("json", "reply", "final_reply")
+
+REPLY_TOOL = _tool(
+    "json",
+    "Your final reply. Call this LAST, after any action tools, exactly once.",
+    {"say": {"type": ["string", "null"],
+             "description": "at most 20 words, or null for no speech"},
+     "beep": {"type": ["string", "null"], "enum": list(EMOTION_NAMES) + [None]},
+     "gesture": {"type": ["string", "null"]}})
+
 BY_NAME = {t["function"]["name"]: t for t in TOOLS}
 NAMES = tuple(BY_NAME)
+
+# What gets SENT to a provider: the skills plus the reply envelope.
+WIRE_TOOLS = TOOLS + [REPLY_TOOL]
 
 # Simple intents the local VLM fallback can choose between with a
 # multiple-choice, first-token call (BUILD_SPEC 8.1 step 3). Deliberately

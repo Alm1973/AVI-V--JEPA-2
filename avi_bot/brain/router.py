@@ -66,10 +66,19 @@ class Decision:
 
 
 def _extract_calls(result):
-    """Pull tool calls out of an OpenAI-compatible response. Tolerant on
-    purpose: providers disagree about shapes, and a chain whose job is to
-    survive one provider failing should survive one provider being odd."""
+    """Pull tool calls and the reply out of an OpenAI-compatible response.
+
+    Returns (skill_calls, reply_source), where reply_source is whatever should
+    be handed to schema.parse -- either the message content or the arguments
+    of the reply-envelope tool call.
+
+    Tolerant on purpose: providers disagree about shapes, and a chain whose job
+    is to survive one provider failing should survive one being odd. The
+    reply-as-tool-call path is not an oddity though, it is the normal
+    behaviour of gpt-oss-20b -- see tools.REPLY_TOOL.
+    """
     out = []
+    envelope = None
     choice = None
     try:
         choice = result.choices[0]
@@ -100,13 +109,22 @@ def _extract_calls(result):
                 raw_args = json.loads(raw_args or "{}")
             except Exception:
                 raw_args = None
+        if name in tools.REPLY_TOOL_NAMES:
+            # The reply, not an action. Validated by schema.parse like any
+            # other reply rather than by validate_call, which only knows about
+            # skills.
+            envelope = raw_args if isinstance(raw_args, dict) else None
+            continue
         args, err = tools.validate_call(name, raw_args or {})
         if err is None:
             out.append((name, args))
     content = getattr(message, "content", None)
     if content is None and isinstance(message, dict):
         content = message.get("content")
-    return out, content
+    # The envelope wins over content: a model that bothered to fill in the
+    # structured fields meant those, and its prose is usually the same thing
+    # said less precisely.
+    return out, (envelope if envelope is not None else content)
 
 
 class Router:
@@ -141,7 +159,7 @@ class Router:
             messages.append({"role": "system", "content": context})
         messages.append({"role": "user", "content": utterance})
         started = self.clock()
-        name, result = self.chain.ask(messages, tools=tools.TOOLS)
+        name, result = self.chain.ask(messages, tools=tools.WIRE_TOOLS)
         calls, content = _extract_calls(result)
         reply, err = schema.parse(content) if content else (
             schema.Reply(), None)
@@ -152,7 +170,7 @@ class Router:
             messages.append({"role": "system",
                              "content": "Your last reply was not valid JSON. "
                                         "Reply with ONLY the JSON object."})
-            name, result = self.chain.ask(messages, tools=tools.TOOLS)
+            name, result = self.chain.ask(messages, tools=tools.WIRE_TOOLS)
             more, content = _extract_calls(result)
             calls = calls or more
             reply, err = schema.parse(content) if content else (
