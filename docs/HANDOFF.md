@@ -310,6 +310,61 @@ one of the 27 tools in the schema has an implementation.
 real time. Kokoro **cannot be installed** — it needs Python < 3.13 and the
 MSI venv is 3.13.13. Nothing is lost.
 
+### State at 2026-10-06 morning — 540 tests, M0–M5 done
+
+**M3 closed on hardware.** The yaw-sign fix verified on real detections of
+him: yaw 70 → 76.5, error **−1.0° to +0.5°** (bar is ±5°), **111/111 hits**
+at conf 0.82–0.90, 3 s to centre, no oscillation.
+
+**Route 2 (cloud) works live.** 6/6 open questions through Groq, 0 failures,
+363 ms–1.0 s, with `set_reminder` and `look_at` called from plain speech.
+
+**The dashboard now does everything at once** — tracking, V-JEPA latents,
+idle behaviours, one camera. Measured 5.38 GB of 6.44 free with YOLO
+resident, and V-JEPA needs 0.74, so the turn-taking I had been doing all
+morning was never necessary. Encode is *faster* folded in (369 ms vs ~600),
+because the clip comes from the already-decoded stream.
+
+**`/pov`** is a tiny status page: camera view plus the eight numbers that say
+whether the robot is alive.
+
+### The false positives were a low-light artifact
+
+| Pose | Dark, empty | Daylight, empty |
+|---|---|---|
+| HOME | 3 boxes, **0.61–0.68** | 0 |
+| ATTENTIVE | **0.678** | 0 |
+| TALL | **0.696, 0.606** | 0.314 |
+
+Yesterday's whole confidence crisis — a 0.75 floor finding nothing in 84
+frames, a 0.70 floor locking onto the arm — was **substantially about
+darkness**. In daylight there is a clean gap between 0.31 and his 0.82. So the
+trust threshold now follows measured brightness: **0.65 lit / 0.75 dim / 0.85
+dark**, strictest when brightness is unknown.
+
+### Two things I got wrong and corrected
+
+1. **"OBSERVE points at a blank wall."** It does not. That was sd 16 in an
+   unlit room at 23:00 — I was reading the darkness, not the framing. In
+   daylight it saw the desk fine. It *was* badly aimed, which is a smaller and
+   different fault; retaught arithmetically (yaw 90→60, wrist 136→147.9) and
+   the laptop went from the top-left corner to near centre.
+2. **Parallax cannot be trusted on people.** It assumes the target holds still
+   during the pan. He shifted in his seat and picked up a spurious "attached"
+   vote; two would have rejected him. Tracking works today because UNKNOWN
+   falls back to confidence, not because parallax carries it.
+
+### Blocked on him
+
+- **Tailscale HTTPS Certificates** (admin console → DNS) — without it an
+  Artifact cannot show the stream, since a browser blocks http:// inside an
+  https:// page. Frames would still go MSI → browser directly, never through
+  claude.ai.
+- **A daytime latent run with him present.** The overnight probe was
+  *inconclusive*: `d = 1.367` looked like a pass but the window contained
+  sunrise, and the only brightness bands showing structure were the two
+  widest in brightness. Needs steady light and a moving room.
+
 ## 4. Open questions
 
 **Resolved today:** `base_yaw`'s sign, by closing the loop on a tracked person
