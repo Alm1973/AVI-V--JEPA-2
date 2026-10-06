@@ -50,6 +50,7 @@ from avi_bot.motion import (backends, engine, gestures, poses,     # noqa: E402
                             safety)
 from avi_bot.personality import (attention as att_mod,            # noqa: E402
                                  behaviors, mood as mood_mod)
+from avi_bot.perception import parallax                           # noqa: E402
 from avi_bot.voice import beeps as beeps_mod                      # noqa: E402
 
 TAUGHT_PATH = os.path.join(os.environ.get("USERPROFILE", "."),
@@ -121,7 +122,30 @@ class Arm:
         self.selector = behaviors.BehaviourSelector()
         self.attention = att_mod.Attention(config)
         self.idle_mode = threading.Event()
+        self.tracking = threading.Event()
         self.last_behaviour = None
+        self.detector = None
+        self.last_person = None
+        # Confidence alone cannot separate Shaurya (0.75-0.89) from the arm's
+        # own hardware in shot (0.56-0.72): at 0.70 the tracker locked onto
+        # itself, at 0.75 it found nothing in 84 frames. Parallax separates the
+        # same two things by a factor of thirty, so the floor can come back
+        # down and geometry can do the rejecting. See avi_bot/perception.
+        self.rejector = parallax.StaticRejector(
+            float(config.camera["yaw_deg_per_frame"]))
+        self.last_person = None
+        self.track_error = None
+        # Counted rather than inferred. Polling /state samples only the most
+        # recent attempt, so a slow poll makes a healthy detector look like it
+        # is failing most frames -- which is exactly the wrong conclusion to
+        # draw before changing a confidence floor.
+        self.track_hits = 0
+        self.track_misses = 0
+        # Live-tunable, so a value can be changed and watched without a push
+        # and a restart. Chasing a confidence floor through a deploy cycle each
+        # time is the slow way to find it.
+        self.tune = {"min_conf": 0.70, "gain": att_mod.GAIN,
+                     "period": 0.4, "deadband": att_mod.DEADBAND_FRAC}
         # Off while poses are being set -- motion nobody asked for makes a
         # slider impossible to land -- and ON while idling, where they are the
         # whole difference between a robot that is alive and one that is
@@ -155,6 +179,90 @@ class Arm:
         self.note(f"event {name}"
                   + (f" ({target})" if target else "")
                   + f" -> {self.mood.emotion()}")
+
+    def track_loop(self, latest, deadline, period=0.4):
+        """Offer person detections to attention, while tracking is on.
+
+        Its own thread, at a few hertz, because a detection takes tens of
+        milliseconds on the GPU and the arm loop runs at 50 Hz: doing it inline
+        would stall the thing that has to keep sending P frames inside the
+        firmware's 500 ms watchdog.
+
+        The detector is loaded lazily, on first use, so the dashboard still
+        starts in a second and still works on a machine with no GPU.
+        """
+        import cv2
+        import numpy as np
+        while not self.stop.is_set() and time.time() < deadline:
+            if not self.tracking.is_set():
+                time.sleep(0.2)
+                continue
+            try:
+                if self.detector is None:
+                    self.note("loading YOLO-World for person tracking ...")
+                    from detector import DeskDetector
+                    self.detector = DeskDetector()
+                    self.note("tracking: looking for you")
+                jpeg, _ = latest.get_after(-1, timeout=1.5)
+                if not jpeg:
+                    continue
+                frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8),
+                                     cv2.IMREAD_COLOR)
+                if frame is None:
+                    continue
+                near = self.last_person["cx"] if self.last_person else None
+                h, w = frame.shape[:2]
+                yaw = self.snapshot()["base_yaw"]
+                # Every candidate, not just the winner: the one that loses on
+                # confidence this frame is exactly the one whose stillness has
+                # to be watched across the next pan.
+                found = self.detector.people(
+                    frame, min_conf=float(self.tune["min_conf"]))
+                for c in found:
+                    self.rejector.observe(yaw, c["cx"], w)
+                live = [c for c in found if self.rejector.accept(c["cx"])]
+                p = None
+                for c in live:
+                    # Continuity is real evidence -- a person does not
+                    # teleport -- so it breaks ties between similar scores.
+                    c["score"] = c["conf"]
+                    if near is not None and w:
+                        c["score"] += 0.10 * (1.0 - min(
+                            1.0, abs(c["cx"] - near) / (w / 2.0)))
+                    if p is None or c["score"] > p["score"]:
+                        p = c
+                if p:
+                    self.track_hits += 1
+                    self.last_person = {"conf": round(p["conf"], 2),
+                                        "cx": round(p["cx"]), "w": w}
+                    self.attention.offer("face", p["cx"], p["cy"], w, h,
+                                         label="person", conf=p["conf"])
+                else:
+                    self.track_misses += 1
+                    self.last_person = None
+                    self.attention.drop("face")
+            except Exception as exc:
+                self.note(f"tracking error (continuing): {exc!r}")
+                time.sleep(1.0)
+            time.sleep(period)
+
+    def follow(self):
+        """One steering step. Called from the arm loop."""
+        if not self.tracking.is_set():
+            self.engine.look_at.weight = 0.0
+            self.track_error = None
+            return
+        target = self.attention.choose(frame=(1280, 720))
+        if target is None or target.source == "idle":
+            # Nothing real to look at: let the spring relax rather than
+            # chasing an invented point, which would fight the idle saccades.
+            self.engine.look_at.set_target(yaw=0.0, pitch=0.0)
+            self.engine.look_at.weight = 0.4
+            self.track_error = None
+            return
+        self.attention.steer(self.engine.look_at, target, weight=1.0)
+        ex, ey = self.attention.error_degrees(target)
+        self.track_error = (round(ex, 1), round(ey, 1))
 
     def set_alive(self, on):
         """Breathing and saccades: the layers that make stillness read as calm
@@ -253,9 +361,10 @@ class Arm:
                     # Hold position: stop sending, and let the firmware's own
                     # watchdog do the holding rather than inventing a second
                     # mechanism for it.
-                    time.sleep(period)
+                    time.sleep(float(self.tune["period"]))
                     continue
                 self.mood.tick(now)
+                self.follow()
                 self.run_idle(now)
                 if not self.engine.busy():
                     self.engine.base = self.snapshot()
@@ -327,6 +436,7 @@ PAGE = b"""<!doctype html>
  .mv .zero{position:absolute;top:-2px;bottom:-2px;width:1px;background:#52525b}
  .mv .n{width:46px;text-align:right}
  #emo{color:#fbbf24;text-transform:none;letter-spacing:0;font-weight:600}
+ #trkinfo{font:11px ui-monospace,monospace;color:#71717a;margin-top:4px}
  #link{display:none;background:#7f1d1d;color:#fecaca;padding:7px 11px;
        border-radius:8px;margin:0 0 10px;font-size:13px;font-weight:600}
  #link.show{display:block}
@@ -342,9 +452,11 @@ PAGE = b"""<!doctype html>
       <button onclick="selftest()">check every servo moves</button>
       <button id="pz" onclick="togglePause()">pause</button>
       <button id="idle" onclick="toggleIdle()">idle behaviour</button>
+      <button id="trk" onclick="toggleTracking()">look at me</button>
       <code id="dl"></code>
     </div>
     <div id="msg"></div>
+    <div id="trkinfo"></div>
   </div>
   <div class="side">
     <div id="joints"></div>
@@ -476,12 +588,28 @@ function paintMood(s){
   document.getElementById("idle").textContent =
     s.idle ? "stop idling" : "idle behaviour";
   document.getElementById("idle").className = s.idle ? "pri" : "";
+  const tb = document.getElementById("trk");
+  tb.textContent = s.tracking ? "stop looking" : "look at me";
+  tb.className = s.tracking ? "pri" : "";
+  document.getElementById("trkinfo").textContent = !s.tracking ? "" :
+    (s.person
+      ? "person at x=" + s.person.cx + "/" + s.person.w +
+        " conf " + s.person.conf +
+        (s.track_error ? "   error " + s.track_error[0] + "\\u00b0, "
+                       + s.track_error[1] + "\\u00b0" : "")
+      : "looking for you ...");
 }
 async function moodEvent(n){
   const body = {name: n};
   if (n === "new_object") body.target = "something new";
   await api("/mood_event", body);
   msg("event: " + n);
+}
+async function toggleTracking(){
+  const r = await api("/tracking", {});
+  msg(r.tracking ? "tracking on - loading the detector the first time, "
+                 + "which takes a few seconds"
+                 : "tracking off");
 }
 async function toggleIdle(){
   const r = await api("/idle", {});
@@ -606,6 +734,15 @@ def make_handler(st):
                 "mood": arm.mood.snapshot(),
                 "idle": arm.idle_mode.is_set(),
                 "behaviour": arm.last_behaviour,
+                "tracking": arm.tracking.is_set(),
+                "person": arm.last_person,
+                "track_error": arm.track_error,
+                "track_hits": arm.track_hits,
+                "track_misses": arm.track_misses,
+                "tune": arm.tune,
+                "static_zones": [round(z.cx) for z in arm.rejector.zones],
+                "static_why": arm.rejector.describe(),
+                "static_rejected": arm.rejector.rejected,
                 "mood_events": ["praise", "scold", "arrived", "left",
                                 "task_ok", "task_failed", "new_object",
                                 "focus_start", "focus_end"],
@@ -685,6 +822,42 @@ def make_handler(st):
                 arm.note("idle behaviour on, breathing" if want
                          else "idle behaviour off, holding still")
                 self._json({"ok": True, "idle": want})
+            elif self.path == "/tune":
+                for k, v in (body or {}).items():
+                    if k not in arm.tune:
+                        return self._json({"error": f"unknown knob {k}; "
+                                           f"have {sorted(arm.tune)}"}, 400)
+                    arm.tune[k] = float(v)
+                arm.attention.gain = float(arm.tune["gain"])
+                att_mod.DEADBAND_FRAC = float(arm.tune["deadband"])
+                arm.note("tuned " + " ".join(f"{k}={arm.tune[k]}"
+                                             for k in sorted(body or {})))
+                self._json({"ok": True, "tune": arm.tune})
+            elif self.path == "/reset_counts":
+                arm.track_hits = arm.track_misses = 0
+                arm.rejector.rejected = 0
+                arm.rejector.zones = []
+                arm.rejector.history = []
+                self._json({"ok": True})
+            elif self.path == "/detect_debug":
+                floor = float(body.get("min_conf", 0.05))
+                self._json(detect_debug(arm, latest, floor))
+            elif self.path == "/probe_static":
+                self._json(probe_static(
+                    arm, latest, swing=float(body.get("swing", 7.0)),
+                    min_conf=float(body.get("min_conf", 0.45))))
+            elif self.path == "/probe_wrist":
+                self._json(probe_wrist(
+                    arm, latest, step=float(body.get("step", 6.0)),
+                    n=int(body.get("n", 5)),
+                    min_conf=float(body.get("min_conf", 0.25))))
+            elif self.path == "/tracking":
+                want = bool(body.get("on", not arm.tracking.is_set()))
+                arm.tracking.set() if want else arm.tracking.clear()
+                if not want:
+                    arm.attention.drop("face")
+                arm.note("tracking on" if want else "tracking off")
+                self._json({"ok": True, "tracking": want})
             elif self.path == "/cancel":
                 arm.engine.clear()
                 arm.note("gesture cancelled")
@@ -722,11 +895,182 @@ def make_handler(st):
                         b"Content-Type: image/jpeg\r\n"
                         b"Content-Length: " + str(len(jpeg)).encode() +
                         b"\r\n\r\n" + jpeg + b"\r\n")
-                    time.sleep(period)
+                    time.sleep(float(self.tune["period"]))
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
     return Handler
+
+
+def _frame(latest):
+    import cv2
+    import numpy as np
+    for _ in range(40):
+        jpeg, _ = latest.get_after(-1, timeout=2.0)
+        if jpeg:
+            f = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+            if f is not None:
+                return f
+    return None
+
+
+def detect_debug(arm, latest, min_conf=0.05):
+    """What does the camera ACTUALLY see -- as labels, never as pixels.
+
+    "0 hits in 1686 frames" has two completely different causes: nobody is in
+    front of the camera, or the detector is broken. A confidence floor cannot
+    tell them apart and neither can staring at the counter. This answers it
+    without a frame leaving the MSI, because the camera faces Shaurya's room.
+    """
+    if arm.detector is None:
+        from detector import DeskDetector
+        arm.detector = DeskDetector()
+    frame = _frame(latest)
+    if frame is None:
+        return {"error": "no picture"}
+    found = arm.detector.everything(frame, min_conf=min_conf)
+    h, w = frame.shape[:2]
+    log(f"detect_debug floor={min_conf}: {len(found)} detections")
+    return {"frame": [w, h], "min_conf": min_conf,
+            "n": len(found), "found": found[:25]}
+
+
+def probe_static(arm, latest, swing=7.0, settle=1.8, min_conf=0.45):
+    """Pan the base deliberately and learn which candidates do not move.
+
+    The passive version only learns while the arm happens to be panning, and
+    the failure it exists to prevent is exactly the one where the arm has
+    saturated and STOPPED panning. So this asks the question on purpose: a
+    swing either side of here, every person candidate recorded at each yaw,
+    and whatever stayed put gets blacklisted.
+
+    `swing` has a floor set by geometry, not by taste: the shift has to be
+    bigger than detection-box jitter before standing still means anything.
+    """
+    if arm.detector is None:
+        from detector import DeskDetector
+        arm.detector = DeskDetector()
+    need = (parallax.MIN_EXPECTED_PX / 1280.0) * arm.rejector.yaw_deg_per_frame
+    if swing < need:
+        return {"error": f"swing {swing} deg is too small to prove anything; "
+                         f"need at least {need:.1f}"}
+    start = arm.snapshot()
+    lo, hi = arm.config.soft_limits("base_yaw")
+    here = start["base_yaw"]
+    stops = [here, max(lo, here - swing), min(hi, here + swing), here]
+    seen = []
+    for yaw in stops:
+        arm.set("base_yaw", yaw)
+        time.sleep(settle)
+        frame = _frame(latest)
+        if frame is None:
+            continue
+        w = frame.shape[1]
+        for c in arm.detector.people(frame, min_conf=min_conf):
+            arm.rejector.observe(yaw, c["cx"], w)
+            seen.append({"yaw": round(yaw, 1), "cx": round(c["cx"]),
+                         "conf": round(c["conf"], 2)})
+    arm.set_pose(start)
+    log(f"probe_static: {len(seen)} sightings, {len(arm.rejector.zones)} static")
+    return {"swing": swing, "sightings": seen,
+            "static": [round(z.cx) for z in arm.rejector.zones],
+            "why": arm.rejector.describe()}
+
+
+def probe_wrist(arm, latest, step=6.0, n=5, min_conf=0.25):
+    """Measure wrist_deg_per_frame the way yaw was measured: off a DETECTION.
+
+    config/joints.toml carries wrist_deg_per_frame = 60.0 flagged
+    wrist_measured = false -- a conservative guess, which is why vertical
+    tracking crawls. This replaces it with a number.
+
+    THE METHOD MATTERS. Four optical measurements of arm motion failed on
+    2026-10-05: phase correlation twice (no peak, 0.00-0.07), dense Farneback
+    (17-78 px disagreement) and template matching (false matches, 165 px) --
+    all while the scene's own noise with the arm still measured 4 px, so the
+    methods were at fault, not the signal. Do not attempt a fifth. What DID
+    work was watching a detected box move, so that is what this does: pick the
+    most confident thing on the desk, step the wrist across a span, and fit its
+    cy against the commanded angle.
+
+    A fit is reported only if it is actually linear. A slope from two noisy
+    points is how a guess gets written down as a measurement.
+    """
+    if arm.detector is None:
+        from detector import DeskDetector
+        arm.detector = DeskDetector()
+    start = arm.snapshot()
+    lo, hi = arm.config.soft_limits("wrist")
+    here = start["wrist"]
+    half = step * (n - 1) / 2.0
+    angles = [here - half + i * step for i in range(n)]
+    angles = [a for a in angles if lo <= a <= hi]
+    if len(angles) < 3:
+        arm.set_pose(start)
+        return {"error": f"no room to sweep: wrist at {here} in {lo}..{hi}"}
+
+    # Lock onto one landmark. The desk's most confident object, chosen once at
+    # the middle of the sweep, then followed by nearest-box so a second mug
+    # cannot be mistaken for the first one moving.
+    arm.set("wrist", angles[len(angles) // 2])
+    time.sleep(1.8)
+    frame = _frame(latest)
+    if frame is None:
+        arm.set_pose(start)
+        return {"error": "no picture"}
+    h, w = frame.shape[:2]
+    seed = [d for d in arm.detector.everything(frame, min_conf=min_conf)
+            if d["label"] != "person"]
+    if not seed:
+        arm.set_pose(start)
+        return {"error": f"nothing on the desk above {min_conf} to track"}
+    label = seed[0]["label"]
+
+    pts, track = [], seed[0]
+    for a in angles:
+        arm.set("wrist", a)
+        time.sleep(1.8)
+        frame = _frame(latest)
+        if frame is None:
+            continue
+        cands = [d for d in arm.detector.everything(frame, min_conf=min_conf)
+                 if d["label"] == label]
+        if not cands:
+            continue
+        track = min(cands, key=lambda d: abs(d["cx"] - track["cx"]))
+        pts.append((a, float(track["cy"])))
+    arm.set_pose(start)
+
+    if len(pts) < 3:
+        return {"error": f"only saw {label} in {len(pts)} of {len(angles)} "
+                         f"positions", "points": pts}
+    # Least squares, plus the residual, because the residual is the only thing
+    # that says whether the slope means anything.
+    k = len(pts)
+    mx = sum(a for a, _ in pts) / k
+    my = sum(y for _, y in pts) / k
+    sxx = sum((a - mx) ** 2 for a, _ in pts)
+    sxy = sum((a - mx) * (y - my) for a, y in pts)
+    if sxx == 0:
+        return {"error": "all samples at one angle"}
+    slope = sxy / sxx                      # px of cy per commanded degree
+    syy = sum((y - my) ** 2 for _, y in pts)
+    r2 = (sxy * sxy / (sxx * syy)) if syy else 0.0
+    span = abs(slope) * (max(a for a, _ in pts) - min(a for a, _ in pts))
+    out = {"landmark": label, "points": [[round(a, 1), round(y)] for a, y in pts],
+           "slope_px_per_deg": round(slope, 2), "r2": round(r2, 3),
+           "span_px": round(span), "frame": [w, h]}
+    # 4 px is the measured scene noise; a span near it proves nothing, and a
+    # scattered fit means the landmark was not what moved.
+    if span < 40 or r2 < 0.80 or slope == 0:
+        out["error"] = ("fit too weak to record: need span >= 40 px and "
+                        "r2 >= 0.80")
+        return out
+    out["wrist_deg_per_frame"] = round(abs(h / slope), 1)
+    out["sign"] = "up" if slope < 0 else "down"
+    log(f"probe_wrist: {out['wrist_deg_per_frame']} deg/frame "
+        f"off {label}, r2={r2:.3f}")
+    return out
 
 
 def run_selftest(arm, latest, swing=8.0, settle=1.6):
@@ -819,6 +1163,8 @@ def main():
     threading.Thread(target=grabber, args=(latest, args, deadline),
                      daemon=True).start()
     threading.Thread(target=arm.run, daemon=True).start()
+    threading.Thread(target=arm.track_loop, args=(latest, deadline),
+                     daemon=True).start()
 
     srv = ThreadingHTTPServer((host, args.port), make_handler({
         "arm": arm, "latest": latest, "deadline": deadline,

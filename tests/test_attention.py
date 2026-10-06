@@ -211,14 +211,47 @@ class TestSteering(unittest.TestCase):
         self.assertNotEqual(layer.target["base_yaw"], 0.0)
         self.assertEqual(layer.value, before, "steer moved the joint directly")
 
-    def test_repeated_steering_accumulates_toward_the_target(self):
+    def test_steering_twice_on_one_detection_corrects_once(self):
+        """The bug that only showed on hardware. steer() is called from a
+        50 Hz motion loop while detections arrive at about 2.5 Hz, so without
+        this it integrates the same error twenty times and winds the target to
+        its bound in a fraction of a second -- which looks exactly like a gain
+        problem and is not one."""
         a, _, _ = make()
         layer = engine.LookAt()
         a.offer("face", W * 0.85, H / 2, W, H)
         a.choose()
         first, _ = a.steer(layer)
+        self.assertNotEqual(first, 0.0)
+        after_one = layer.target["base_yaw"]
+        for _ in range(20):
+            self.assertEqual(a.steer(layer), (0.0, 0.0))
+        self.assertEqual(layer.target["base_yaw"], after_one,
+                         "integrated a stale detection")
+
+    def test_a_new_detection_steers_again(self):
+        a, c, _ = make()
+        layer = engine.LookAt()
+        a.offer("face", W * 0.85, H / 2, W, H)
+        a.choose()
         a.steer(layer)
-        self.assertLess(layer.target["base_yaw"], first)
+        one = layer.target["base_yaw"]
+        c.advance(0.4)
+        a.offer("face", W * 0.85, H / 2, W, H)     # fresh measurement
+        a.choose()
+        a.steer(layer)
+        self.assertLess(layer.target["base_yaw"], one)
+
+    def test_the_target_cannot_wind_up_without_bound(self):
+        a, c, _ = make()
+        layer = engine.LookAt()
+        for _ in range(200):
+            c.advance(0.4)
+            a.offer("face", W, H / 2, W, H)        # permanently off-centre
+            a.choose()
+            a.steer(layer)
+        self.assertLessEqual(abs(layer.target["base_yaw"]),
+                             att.MAX_TARGET_DEG + 1e-9)
 
 
 if __name__ == "__main__":

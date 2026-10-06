@@ -132,6 +132,45 @@ they sit at max-diff 1–2 on a live stream. Compare raw 1280×720.
 **The C270's first ~5 frames are black with `ok=True`.** `open_camera()` loops
 until `frame.mean() >= 1.0`; keep that.
 
+### Person detection: confidence cannot do this job, parallax can
+
+Two overlapping ranges, measured 2026-10-05: **Shaurya 0.75–0.89** and **the
+arm's own hardware in shot 0.56–0.72**. A floor between them is a coin toss —
+at 0.70 the tracker locked onto itself and saturated at ±30°, at 0.75 it
+reported 0 hits in 84 frames. Do not go back to tuning the floor.
+
+The separation that works is geometric and is worth a factor of thirty. The
+camera is bolted to the arm, so anything else bolted to the arm sits at a
+**fixed image position** no matter how far the arm swings; a real person slides
+by `Δyaw / yaw_deg_per_frame` of the frame width. The log that proved it:
+`base_yaw` swung 40.4 → 56.9° (0.59 of a frame, ~750 px at 1280) while the
+suspect box stayed at x = 1023…1072.
+
+`avi_bot/perception/parallax.py` implements it. Two things to know before
+changing it:
+
+- The static test needs the partner sighting at the **same image position with
+  the largest yaw difference**; the moving test needs the partner **nearest in
+  time**. An early version used the first match for both and learned nothing
+  off 1° pans.
+- Only **magnitudes** are compared, never directions. "Did it move" is the
+  whole question.
+
+`POST /probe_static` asks the question on purpose rather than waiting for a pan,
+because the failure it prevents is precisely the one where the arm has
+saturated and *stopped* panning.
+
+### "0 hits in N frames" is usually an empty room
+
+`detect_debug` exists because that counter has two completely different causes
+and no amount of staring at it tells them apart. On 2026-10-05 at 21:25,
+`track_misses` was 1686 with zero hits and the detector was **working
+perfectly**: laptop 0.45, mug 0.24, headphones 0.09, best person 0.134. Nobody
+was there. Check `POST /detect_debug` before touching a threshold.
+
+It returns **labels and numbers only, never pixels** — the camera faces
+Shaurya's room, so the frame stays on the MSI.
+
 ## 4. Open questions
 
 **Resolved today:** `base_yaw`'s sign, by closing the loop on a tracked person

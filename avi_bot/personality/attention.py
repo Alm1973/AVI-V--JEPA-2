@@ -46,6 +46,13 @@ DEADBAND_FRAC = 0.03
 
 IDLE_YAW_SPREAD = 0.22      # how far off centre an idle glance may wander
 
+# How far the accumulated look-at target may wander from centre, in degrees.
+# The limiter clamps the final JOINT, but the spring's target is integrated
+# from corrections and would otherwise wind up without bound: a target the arm
+# cannot reach keeps adding error, and then the arm takes a long slow walk back
+# when the person finally moves. Bounding the target is what stops that.
+MAX_TARGET_DEG = 30.0
+
 
 class Target:
     def __init__(self, source, cx, cy, width, height, label=None, conf=1.0,
@@ -80,6 +87,7 @@ class Attention:
         self.targets = {}
         self.current = None
         self._idle_until = 0.0
+        self._steered_at = {}
 
     # --- choosing --------------------------------------------------------
     def offer(self, source, cx, cy, width, height, label=None, conf=1.0):
@@ -173,14 +181,37 @@ class Attention:
     def steer(self, look_at_layer, target=None, weight=1.0):
         """Push the correction into the engine's spring-smoothed LookAt layer.
 
+        ONCE PER MEASUREMENT. A feedback loop integrates an error, so calling
+        this repeatedly on the same detection integrates that error repeatedly
+        -- and the caller is a 50 Hz motion loop while detections arrive at
+        about 2.5 Hz. Measured on 2026-10-05: stepping 20 times per detection
+        wound the target to its +-30 degree bound in a fraction of a second,
+        the arm went to 60.9 degrees and stayed there, and the error sat at
+        9 degrees looking exactly like a gain problem. The convergence tests
+        stepped once per offer and passed, which is why this was invisible
+        until it ran on the arm.
+
+        Returns (0.0, 0.0) when the target has not been updated since the last
+        call, so it is safe to call as often as you like.
+
         The spring is what stops it snapping; this only ever moves the spring's
         target, never the joint, so a jittery detection cannot become a jittery
         arm.
         """
+        target = target or self.current
+        if target is None:
+            return 0.0, 0.0
+        if self._steered_at.get(target.source) == target.at:
+            return 0.0, 0.0
+        self._steered_at[target.source] = target.at
+
         d_yaw, d_wrist = self.corrections(target)
+        bound = MAX_TARGET_DEG
         look_at_layer.set_target(
-            yaw=look_at_layer.target["base_yaw"] + d_yaw,
-            pitch=look_at_layer.target["wrist"] + d_wrist)
+            yaw=max(-bound, min(bound,
+                                look_at_layer.target["base_yaw"] + d_yaw)),
+            pitch=max(-bound, min(bound,
+                                  look_at_layer.target["wrist"] + d_wrist)))
         look_at_layer.weight = weight if (d_yaw or d_wrist) else \
             look_at_layer.weight
         return d_yaw, d_wrist
