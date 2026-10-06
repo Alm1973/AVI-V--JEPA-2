@@ -469,7 +469,14 @@ avi-desk/
 - **Reading PCA9685 registers on boot:** unverified; it's a bench test before use.
 - **Small-model tool calling:** if `gpt-oss-20b` gets tool calls wrong, try `llama-3.3-70b-versatile` on Groq.
 - **Desk hours** are needed for wake timers and the observer schedule. Ask Shaurya.
-- **The C270's field of view** is needed for look-at gains. Measure it instead of assuming.
+- ~~**The C270's field of view** is needed for look-at gains.~~ **MEASURED
+  2026-10-05**, and what look-at needs is not the FOV but commanded degrees
+  per frame: **yaw 83.9**, **wrist 32.2** (`config/joints.toml [camera]`). Both
+  off a tracked desk object with no feedback loop in the path, r² 0.976 and
+  0.986. An earlier yaw figure of 29.0 was wrong by 2.9× because it divided a
+  commanded correction by a shift measured through an oscillating loop. Do not
+  reuse either number as a field of view: yaw's implies base_yaw travels only
+  ~62% of the degrees it is commanded.
 
 ## 17. Sources checked (Oct 2026)
 
