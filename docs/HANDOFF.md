@@ -274,6 +274,42 @@ and no arm.
    has a shelf life. The honest test of this project is whether utterances,
    suggestion-acceptance and awake-time are flat or rising at **week 10**.
 
+### M5 is done, and so is the assembly (2026-10-06)
+
+**486 tests**, all Mac-side, no hardware. `Registry.missing()` is empty — every
+one of the 27 tools in the schema has an implementation.
+
+- `avi_bot/main.py` assembles the whole robot **headless**. If that ever stops
+  being true, remote development stops working.
+- `avi_bot/scheduler.py` is the only part that speaks unprompted: one
+  announcement at a time, nothing during quiet/sleep/guest, stale items
+  dropped rather than delivered late, and nothing retired until delivery is
+  confirmed.
+- `avi_bot/hearing/listener.py` has the echo gate (deaf while speaking + 300 ms)
+  with everything else injected, since the reSpeaker lands Thursday.
+- 10 TTS-generated WAV fixtures in `fixtures/audio/`. The 63 MB voice model is
+  gitignored; `models/` holds it.
+
+**Three bugs found by tests rather than by reading**, all worth knowing:
+
+1. **`"a"` was in the word-number table**, so *"set **a** timer for 5 minutes"*
+   parsed `a` as the duration and "5 minutes" as the *label* — a one-minute
+   timer, confidently.
+2. **Transcripts spell numbers out.** *"Focus for twenty five minutes"* didn't
+   parse, so the spoken path silently lost the duration while the typed path
+   worked. `avi_bot/numbers.py` now handles compounds; it refuses "five twenty"
+   (a time) and "twenty twenty" (a year).
+3. **Calendar warnings dedup *on read*** while `Scheduler.due()` is polled by
+   design — so any warning that wasn't the soonest item in a tick was consumed
+   and never spoken. Calendar announcements are buffered now; timers and
+   reminders don't need it because they live in a table.
+
+### Voice: Piper, not Kokoro
+
+`RTF 0.036–0.039` measured on the MSI (en_US-amy-medium, 22050 Hz, CPU). 26×
+real time. Kokoro **cannot be installed** — it needs Python < 3.13 and the
+MSI venv is 3.13.13. Nothing is lost.
+
 ## 4. Open questions
 
 **Resolved today:** `base_yaw`'s sign, by closing the loop on a tracked person
