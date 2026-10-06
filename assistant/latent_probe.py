@@ -115,6 +115,46 @@ def temporal_coherence(X, ts, near_s=120.0, rng=None, pairs=4000):
             if pooled else None}
 
 
+def within_brightness(X, ts, light, rng, buckets=5):
+    """Temporal coherence measured INSIDE narrow brightness bands.
+
+    The reason this test exists: the overnight run scored d = 1.367, a clear
+    pass, and the window happened to contain sunrise. A slow monotonic change
+    in light level produces exactly that signature -- near-in-time frames
+    alike, far-apart frames different -- without the representation knowing
+    anything about the room at all. Passing test 1 is therefore consistent
+    with an encoder that has learned only to measure brightness.
+
+    Splitting into bands of similar light and re-running within each one
+    removes that explanation: if the structure survives when every pair
+    being compared is equally lit, it is not the light.
+    """
+    if len(X) < 100:
+        return None
+    order = np.argsort(light)
+    chunks = np.array_split(order, buckets)
+    out = []
+    for chunk in chunks:
+        if len(chunk) < 60:
+            continue
+        idx = np.sort(chunk)
+        r = temporal_coherence(X[idx], ts[idx], rng=rng, pairs=1500)
+        if r is None:
+            continue
+        lo, hi = float(light[idx].min()), float(light[idx].max())
+        out.append({"n": len(idx),
+                    "light": (round(lo, 1), round(hi, 1)),
+                    "light_width": round(hi - lo, 1),
+                    "d": r["d"], "spread": r["scene_spread"],
+                    # The per-band static guard. Without it this function
+                    # reported d for bands whose scenes never changed, where
+                    # d is meaningless by test 1's own criterion -- and then
+                    # called those bands "weak", which reads as evidence
+                    # against the encoder when it is no evidence at all.
+                    "static": bool(r["static_scene"])})
+    return out
+
+
 def kmeans(X, k, rng, iters=60, restarts=4):
     best, best_inertia = None, np.inf
     for _ in range(restarts):
@@ -230,6 +270,49 @@ def main():
     else:
         for k, v in mi_against_null(lab, bucket, rng).items():
             print(f"   {k}: {v}")
+
+    print("\n2b. IS IT JUST THE LIGHT?  (coherence within brightness bands)")
+    bands = within_brightness(X, meta["ts"], meta["light_mean"], rng)
+    if not bands:
+        print("   not enough data per band yet")
+    else:
+        for b in bands:
+            if b["static"]:
+                verdict = "INCONCLUSIVE (nothing happened in this band)"
+            elif b["d"] and b["d"] > 0.5:
+                verdict = "structure"
+            elif b["d"] and b["d"] > 0.2:
+                verdict = "weak"
+            else:
+                verdict = "none"
+            print(f"   light {b['light'][0]:>6.1f}-{b['light'][1]:<6.1f} "
+                  f"(width {b['light_width']:>5.1f})  n={b['n']:<5} "
+                  f"d={b['d']:<6} spread={b['spread']:<7} {verdict}")
+        usable = [b for b in bands if not b["static"]]
+        strong = [b for b in usable if b["d"] and b["d"] > 0.5]
+        print(f"   -> {len(usable)} of {len(bands)} bands had anything "
+              f"happening in them; {len(strong)} of those kept their "
+              f"structure.")
+        if not usable:
+            print("   VERDICT: this window cannot answer the question. Every "
+                  "band is a static scene.")
+        else:
+            # A band that is wide in brightness has not held brightness
+            # constant, so structure inside it is not evidence against the
+            # lighting explanation.
+            widths = sorted(b["light_width"] for b in usable)
+            if strong and min(b["light_width"] for b in strong) > 5.0:
+                print("   VERDICT: the only bands with structure are also the "
+                      "WIDEST in brightness, so the lighting is not "
+                      "controlled for and remains the simplest explanation. "
+                      "Needs a window where the light is steady and the room "
+                      "is not.")
+            elif strong:
+                print("   VERDICT: structure survives with brightness roughly "
+                      "constant, so test 1 is not measuring the lighting.")
+            else:
+                print("   VERDICT: no band keeps its structure once brightness "
+                      "is held constant. Test 1 measured the lighting.")
 
     print("\n3. EVENTS  (does cluster carry information about change firing?)")
     if len(np.unique(meta["changed"])) < 2:
