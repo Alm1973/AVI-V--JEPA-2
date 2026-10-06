@@ -4,6 +4,8 @@
 #   runHome              20 minutes, simulator (the arm does not move)
 #   runHome 45           45 minutes
 #   runHome live         MOVES THE REAL ARM; asks for confirmation first
+#   runHome teach        pose-teaching page: one slider per servo, save poses
+#   runHome pull         copy the taught poses back to this Mac
 #   runHome stop         end the session and free the camera
 #   runHome status
 #
@@ -19,6 +21,14 @@ case "$ARG" in
   status)  exec ./scripts/teleop.sh status ;;
   logs)    shift; exec ./scripts/teleop.sh logs "$@" ;;
   live)    MODE=live;  MINUTES="${2:-20}" ;;
+  teach|calibrate)
+           echo "deploying ..."
+           ./scripts/deploy.sh >/dev/null 2>&1 || true
+           ./scripts/calibrate.sh start "${2:-45}" || exit 1
+           URL="http://msi:${AVI_CALIB_PORT:-8082}/"
+           command -v open >/dev/null && open "$URL" 2>/dev/null || true
+           exit 0 ;;
+  pull)    exec ./scripts/calibrate.sh pull ;;
   ''|*[!0-9]*) MODE=start; MINUTES=20 ;;
   *)       MODE=start; MINUTES="$ARG" ;;
 esac
