@@ -865,3 +865,38 @@ once 3+ arrivals exist. presence-dev.db, in the launch-day test.
 **The empty chair scores 0.38-0.39 as a person** (a static 602x660 box, >90%
 of the frame) -- it was counted once at a 0.40 floor. Floor is now 0.50.
 **Unvalidated with him in the chair** -- expect 0.6+; check this first.
+
+## 2026-10-06 ~15:20: AVI sees someone at the desk, and what changes
+
+**Presence validated against a real person.** At 15:14:39 a person appeared at
+the seat view at **0.924 / 0.910 / 0.904** -- against the empty chair's
+0.38-0.39 -- and "arrived" was logged after the second sighting. The 0.50 floor
+sits in a gap of half a unit. While the arm was away scanning, misses were not
+counted as absence; the session survived a dashboard restart. (Not confirmed it
+was Shaurya -- could be anyone at the desk.)
+
+**Break coach** (`skills/breaks.py`, `pause_loop`): after 50 min at the desk,
+waits for a NATURAL pause from change.py ("change" = motion that settled; never
+"change-forced"), then the yawn/stretch gesture. Detector suppressed while the
+arm moves so its own gesture is not read as his pause. Session began 15:15.
+
+**Desk changes** (`perception/desk_changes.py`, `POST /desk_scan`,
+`/desk_history`): survey snapshot -> diff with the previous one -> appeared /
+disappeared / moved / stayed, with whether he was here. Rules: gone only if the
+new scan LOOKED there (else "unchecked"); a single sighting is a flicker;
+boxes clipped by the frame edge are excluded (they split the laptop, backpack
+and a pen into pairs 13-16 deg apart); snapshots are VERSIONED and never
+compared across a code change (that crossing produced a fake "phone, wallet,
+backpack disappeared").
+Clean result so far: laptops and both pens stayed; the mug moved 28 deg while
+someone sat at the desk (tentative -- 3 sightings).
+Known gap: an object too big to ever fit whole in one frame (the backpack) is
+now excluded from snapshots entirely.
+
+**Also fixed:** run_survey filed sightings under the shape it had BEFORE
+switching to TALL's (worked only because /survey happened to pass pose=TALL).
+
+**Honest correction on V-JEPA:** sweep clips are stationary within a level
+(within ~2), so "V-JEPA beats pixels" is about its SPATIAL encoding. Whether the
+video/dynamics part helps is untested; that needs clips taken during known arm
+motion.
