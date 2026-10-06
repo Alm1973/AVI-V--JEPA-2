@@ -175,7 +175,25 @@ max_count = 580
 #     the camera tilted up.
 # Keep the two apart when writing this down: the LANDMARK moves down, the VIEW
 # goes up. Conflating them is how it got stated backwards twice.
-soft_min  = 4.0
+#
+# soft_min RAISED 4 -> 20 on 2026-10-06, at Shaurya's request, on measurement.
+# The hemisphere sweep stepped the wrist down from TALL in 6-degree-of-view
+# rungs and recorded, per rung, how much the image changed from the previous
+# rung (`between`) and within the rung's own clip (`within`). Down to wrist ~30
+# the pattern was normal: between 13-79 px, within ~2. Below it:
+#
+#     wrist  25.2  between 13.6  within 1.63
+#     wrist  20.5  between 13.2  within 1.61
+#     wrist  15.8  between 13.6  within 2.02
+#     wrist  11.1  between  3.0  within 5.11
+#     wrist   6.4  between  3.9  within 6.65
+#
+# Under ~16 the view stops changing while the frame starts shaking: the servo
+# is pushing against something mechanical and not getting there. That is a
+# stall, and the paragraph above says what a stall costs on this supply. 20
+# leaves margin over the last rung that clearly moved. REST, the lowest taught
+# pose, is 30.5, so no pose changes.
+soft_min  = 20.0
 soft_max  = 176.0
 # Driven as of 2026-10-05, with the sign still PROVISIONAL.
 #
@@ -184,9 +202,10 @@ soft_max  = 176.0
 # the floor -- the one joint that had to work for anything else to be useful.
 #
 # Driving it with an unverified sign is safe even though the direction is
-# unknown: the soft limits below clamp to 30..150 logical degrees, and the
-# piecewise map puts that inside [min_count, max_count] whichever way the sign
-# points. A wrong sign reverses R and F; it cannot reach an end stop.
+# unknown: the soft limits above clamp it (20..176 logical degrees, which this
+# line once described as 30..150 from an earlier pair), and the piecewise map
+# puts that inside [min_count, max_count] whichever way the sign points. A wrong
+# sign reverses R and F; it cannot reach an end stop.
 sign      = 1
 driven    = true
 
