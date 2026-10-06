@@ -437,3 +437,55 @@ class WeightIsBounded(unittest.TestCase):
                            f"position barely budged ({now - start:.2f} deg)")
         self.assertLess(abs(now - truth), 1.5,
                         f"settled at {now:.2f}, the mug is at {truth:.2f}")
+
+
+class BigThingsCannotBePinnedPrecisely(unittest.TestCase):
+    """You cannot localise an object more precisely than its own extent.
+
+    A fixed 10-degree threshold mapped ONE laptop as two confirmed places 20
+    degrees apart in wrist. The cause is not a wrong constant -- changing
+    wrist_deg_per_frame from 32.2 to 24.3 left the gap at 20.2 degrees. It is
+    that a large box's centre sits near the middle of the frame across several
+    tilt rows at once, so each row files the object at its own elevation and
+    the map grows a copy per row. A point landmark slides out of frame; a
+    laptop does not.
+    """
+
+    def test_a_small_object_keeps_the_tight_threshold(self):
+        m, _ = fresh()
+        self.assertEqual(m.same_deg(40), rm.SAME_DEG)
+        self.assertEqual(m.same_deg(None), rm.SAME_DEG)
+
+    def test_a_big_object_gets_a_threshold_its_own_width(self):
+        m, _ = fresh()
+        # 600 px of 1280 at 83.9 deg/frame is 39.3 degrees of view.
+        self.assertAlmostEqual(m.same_deg(600), 600 / 1280 * YAW_DPF, places=3)
+        self.assertGreater(m.same_deg(600), rm.SAME_DEG)
+
+    def test_the_larger_of_the_two_sizes_decides(self):
+        m, _ = fresh()
+        self.assertEqual(m.same_deg(40, 600), m.same_deg(600))
+
+    def test_one_laptop_across_two_tilt_rows_stays_one_place(self):
+        """The regression, with the real numbers: rows 9.4 degrees of wrist
+        apart, a laptop centred in both, previously two places."""
+        m, _ = fresh()
+        big = 620
+        m.observe("laptop", 640, 360, 102.0, 157.2, conf=0.9, px_size=big)
+        m.observe("laptop", 640, 360, 102.0, 147.8, conf=0.5, px_size=big)
+        self.assertEqual(len(m.places), 1,
+                         f"one laptop became {len(m.places)} places")
+
+    def test_a_mug_beside_a_laptop_is_still_its_own_place(self):
+        """The threshold must not grow so far that distinct objects merge.
+        Different labels never merge anyway, so this checks two small ones."""
+        m, _ = fresh()
+        m.observe("mug", 300, 360, 90.0, 150.0, conf=0.8, px_size=70)
+        m.observe("mug", 1000, 360, 90.0, 150.0, conf=0.8, px_size=70)
+        self.assertEqual(len(m.places), 2)
+
+    def test_two_separate_laptops_far_apart_still_separate(self):
+        m, _ = fresh()
+        m.observe("laptop", 640, 360, 40.0, 150.0, conf=0.9, px_size=500)
+        m.observe("laptop", 640, 360, 140.0, 150.0, conf=0.9, px_size=500)
+        self.assertEqual(len(m.places), 2)

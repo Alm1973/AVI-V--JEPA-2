@@ -39,7 +39,20 @@ import time
 # commanded yaw: about a quarter of a frame width at 83.9 deg/frame, which is
 # generous enough to survive box jitter and tight enough to tell a mug from
 # the laptop beside it.
+#
+# A FLOOR, not the whole rule. See same_deg(): a fixed threshold mapped one
+# laptop as two places 20 degrees apart, because a large object's box centre
+# sits near the middle of the frame across several tilt rows at once and each
+# row then claims it at that row's own elevation. A point landmark slides out
+# of frame; a laptop does not.
 SAME_DEG = 10.0
+
+# How much of an object's own angular width counts as "the same place". You
+# cannot localise a thing more precisely than its own extent, so a laptop
+# spanning half the frame has a direction good to tens of degrees and no
+# better. 1.0 means two sightings closer than the object is wide are one
+# object.
+SAME_SIZE_FRACTION = 1.0
 
 # How fast a place is forgotten. A mug moves; a monitor does not. Rather than
 # guess which, every sighting decays and a thing that keeps being seen in one
@@ -179,6 +192,20 @@ class RoomMap:
         self.elbow = elbow
 
     # --- geometry --------------------------------------------------------
+    def same_deg(self, *px_sizes):
+        """How close two sightings must be to be one object, in degrees.
+
+        Scales with the object's apparent size. A fixed 10 degrees split one
+        laptop across two tilt rows 20 degrees apart: a big box's centre stays
+        near the middle of the frame however the camera tilts, so each row
+        files it at its own elevation and the map grows a copy per row.
+        """
+        got = [float(p) for p in px_sizes if p]
+        if not got:
+            return SAME_DEG
+        span = max(got) / float(self.frame[0]) * self.yaw_deg_per_frame
+        return max(SAME_DEG, SAME_SIZE_FRACTION * span)
+
     def direction_of(self, cx, cy, yaw, wrist):
         """A detection at (cx, cy), seen from (yaw, wrist), points where?
 
@@ -230,7 +257,8 @@ class RoomMap:
         for place in self.places:
             if place.label != label:
                 continue
-            if self._gap((place.yaw, place.wrist), want) > SAME_DEG:
+            if self._gap((place.yaw, place.wrist), want) > self.same_deg(
+                    place.px_size, px_size):
                 continue
             # Weighted mean, so a thing seen fifty times is not dragged
             # across the room by one bad box.
