@@ -125,6 +125,106 @@ class Dome:
         return math.degrees(math.acos(
             max(-1.0, min(1.0, sum(a * b for a, b in zip(u, v))))))
 
+    # --- the pole's own shape: a 2-DOF dome where the model is EXACT -----
+    #
+    # Shaurya's instruction, and it repairs the hole in everything above. The
+    # three-pitch-joint model predicts where the camera POINTS and ignores
+    # where it IS -- and on a serial arm shoulder and elbow move the lens a
+    # long way. Measured: OBSERVE sits between HOME and ATTENTIVE in pitch sum
+    # and sees something completely different (nothing at all, in fact), and
+    # once the gains were measured the pose ordering stopped matching the names
+    # Shaurya gave them.
+    #
+    # Holding shoulder and elbow at the POLE's values removes the problem
+    # rather than modelling it. The camera then sits in one fixed place and
+    # only turns, which is the one regime where elevation really is linear in
+    # the joint. base_yaw pans, the wrist tilts, and nothing translates.
+    #
+    # The wrist alone spans the whole dome from the pole: 176 down to 20 is 156
+    # degrees of travel, and at the measured gain that is nearly 200 degrees of
+    # view. There was never a need to involve shoulder or elbow in looking
+    # around.
+
+    def pole_shape(self):
+        """Shoulder and elbow as the pole holds them. Held for every pose."""
+        p = self.poses[self.pole]
+        return {"shoulder": float(p["shoulder"]), "elbow": float(p["elbow"])}
+
+    def pose_at(self, azimuth, elevation):
+        """The pose that looks at a dome direction, from the pole's shape.
+
+        Exact rather than approximate: only base_yaw and wrist move, so the
+        camera rotates in place and no translation is unaccounted for.
+        """
+        pole = self.poses[self.pole]
+        gw, gy = self.gains["wrist"], self.gains["base_yaw"]
+        if abs(gw) < 1e-9 or abs(gy) < 1e-9:
+            raise OffDome("a zero gain makes the dome unreachable")
+        out = dict(self.pole_shape())
+        out["wrist"] = float(pole["wrist"]) - float(elevation) / gw
+        out["base_yaw"] = float(pole["base_yaw"]) + float(azimuth) / gy
+        for j, deg in (("wrist", out["wrist"]), ("base_yaw", out["base_yaw"])):
+            lo, hi = self.limits.get(j, (-math.inf, math.inf))
+            if not (lo - 1e-6 <= deg <= hi + 1e-6):
+                raise OffDome(
+                    f"az {azimuth:.1f} el {elevation:.1f} needs {j} "
+                    f"{deg:.1f}, outside {lo:.0f}..{hi:.0f}")
+        return out
+
+    def direction_at(self, joints):
+        """(azimuth, elevation) for a pose on the pole's shape. The inverse."""
+        pole = self.poses[self.pole]
+        el = (float(pole["wrist"]) - float(joints["wrist"])) \
+            * self.gains["wrist"]
+        az = (float(joints["base_yaw"]) - float(pole["base_yaw"])) \
+            * self.gains["base_yaw"]
+        return az, el
+
+    def elevation_span(self):
+        """How far down the dome the wrist alone can look."""
+        lo, hi = self.limits.get("wrist", (-math.inf, math.inf))
+        pole_wrist = float(self.poses[self.pole]["wrist"])
+        gw = self.gains["wrist"]
+        return (round((pole_wrist - hi) * gw, 1),
+                round((pole_wrist - lo) * gw, 1))
+
+    def ladder(self, step=12.0, azimuth=0.0, limit=None):
+        """Poses stepping DOWN the dome from the pole. His "work your way down".
+
+        Stops when the wrist runs out, so the last rung is the lowest the arm
+        can actually look rather than the lowest that was asked for.
+        """
+        lo_el, hi_el = self.elevation_span()
+        far = hi_el if limit is None else min(hi_el, float(limit))
+        out, el = [], max(0.0, lo_el)
+        while el <= far + 1e-9:
+            try:
+                out.append((round(el, 1), self.pose_at(azimuth, el)))
+            except OffDome:
+                break
+            el += float(step)
+        return out
+
+    def grid(self, el_step=12.0, az_step=15.0, limit=None):
+        """The whole reachable dome, as rungs of a ladder across azimuth.
+
+        Rows of constant elevation: the camera's tilt is fixed along a row, so
+        everything in it is seen from the same height and can be compared with
+        itself.
+        """
+        az_lo, az_hi = self.azimuth_limits()
+        out = []
+        for el, _ in self.ladder(step=el_step, limit=limit):
+            az = az_lo + 0.5
+            while az <= az_hi - 0.5 + 1e-9:
+                try:
+                    out.append((round(az, 1), round(el, 1),
+                                self.pose_at(az, el)))
+                except OffDome:
+                    pass
+                az += float(az_step)
+        return out
+
     # --- inverse ---------------------------------------------------------
     def _clamp(self, joint, deg):
         lo, hi = self.limits.get(joint, (-math.inf, math.inf))

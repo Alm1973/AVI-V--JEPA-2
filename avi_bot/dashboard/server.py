@@ -68,9 +68,10 @@ TAUGHT_PATH = os.path.join(os.environ.get("USERPROFILE", "."),
 # The poses worth teaching, with what each one is for. Shown in this order.
 WANTED = [
     ("HOME", "neutral resting posture; where it returns to"),
-    ("OBSERVE", "watching the desk. The logger records object positions ONLY "
-                "from this pose, so aim it at the desk properly"),
-    ("ATTENTIVE", "slightly raised, looking at where you sit"),
+    ("OBSERVE", "spare; NOT the logging pose any more -- it faced a blank "
+                "wall (sd 15.5, nothing detected at any base_yaw)"),
+    ("ATTENTIVE", "THE LOGGING POSE. Object positions are recorded ONLY from "
+                  "here, so aim it at the desk properly"),
     ("TALL", "alert and upright"),
     ("LOW", "shy or sulking; down and small"),
     ("REST", "asleep; folded as low as it goes, camera down"),
@@ -1163,7 +1164,7 @@ def make_handler(st):
                     arm, latest,
                     step=float(body.get("step", 5.0)),
                     min_conf=float(body.get("min_conf", 0.40)),
-                    prefer=body.get("prefer", "OBSERVE"),
+                    prefer=body.get("prefer", poses.OBSERVE_POSE),
                     frames=int(body.get("frames", 5)),
                     settle=float(body.get("settle", 0.8)),
                     approach=float(body.get("approach", 12.0)),
@@ -1201,7 +1202,10 @@ def make_handler(st):
                     arm, latest,
                     levels=body.get("wrist_levels"),
                     min_conf=float(body.get("min_conf", 0.30)),
-                    pose=body.get("pose", "OBSERVE"),
+                    pose=body.get("pose", dome_mod.POLE),
+                    el_step=float(body.get("el_step", 12.0)),
+                    az_step=float(body.get("az_step", 16.0)),
+                    el_limit=float(body.get("el_limit", 60.0)),
                     settle=float(body.get("settle", 1.8)),
                     frames=int(body.get("frames", 2))))
             elif self.path == "/forget_map":
@@ -1316,7 +1320,8 @@ REPORT_FLOOR = 0.10
 
 
 def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
-               frames=2, pose="OBSERVE"):
+               frames=2, pose=None, el_step=12.0, az_step=16.0,
+               el_limit=60.0):
     """Look around the room on purpose and write down what is where.
 
     This is the "look around" behaviour with a point to it. The stops come
@@ -1343,6 +1348,7 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
     # and every sighting would be filed under a direction the robot cannot
     # reproduce. The map records the shape it was built at and refuses to
     # mix, so this is enforced rather than hoped for.
+    pose = pose or poses.OBSERVE_POSE
     if pose and taught and pose in taught:
         arm.set("shoulder", taught[pose]["shoulder"])
         arm.set("elbow", taught[pose]["elbow"])
@@ -1351,11 +1357,42 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
 
     lo, hi = arm.config.soft_limits("base_yaw")
     wlo, whi = arm.config.soft_limits("wrist")
-    if not levels:
-        # Three bands around where the taught poses look, clamped to limits.
-        levels = [max(wlo, 125.0), 148.0, min(whi, 170.0)]
-    levels = [max(wlo, min(whi, float(v))) for v in levels]
-    stops = arm.roommap.survey_stops((lo, hi), levels)
+
+    # Stops come from the DOME, on the pole's own shape, which is Shaurya's
+    # instruction and also the only geometry here that is exact. Holding
+    # shoulder and elbow at TALL's values means the camera rotates in place:
+    # base_yaw pans, the wrist tilts, nothing translates. The old uniform
+    # sweep moved all four joints and so moved the lens as well as its aim,
+    # which is why its results could not be reproduced across shapes.
+    dome = None
+    g = arm.config.dome
+    if g.get("measured"):
+        try:
+            dome = dome_mod.Dome(
+                taught,
+                gains={k: float(g[k]) for k in
+                       ("base_yaw", "shoulder", "elbow", "wrist")},
+                limits={j: arm.config.soft_limits(j) for j in poses.JOINTS})
+        except dome_mod.OffDome as exc:
+            log(f"survey: no dome ({exc}); falling back to the flat sweep")
+
+    if dome is not None:
+        # Only the band the desk is actually in. The wrist spans 219 degrees
+        # of elevation from the pole, and most of that is ceiling or carpet.
+        grid = dome.grid(el_step=float(el_step), az_step=float(az_step),
+                         limit=float(el_limit))
+        stops = [(p["base_yaw"], p["wrist"]) for _, _, p in grid]
+        shape_src = dome.pole_shape()
+        arm.set("shoulder", shape_src["shoulder"])
+        arm.set("elbow", shape_src["elbow"])
+        time.sleep(settle)
+        log(f"survey: dome grid on {dome.pole}'s shape, {len(stops)} stops, "
+            f"elevation 0..{el_limit} in {el_step}, azimuth step {az_step}")
+    else:
+        if not levels:
+            levels = [max(wlo, 125.0), 148.0, min(whi, 170.0)]
+        levels = [max(wlo, min(whi, float(v))) for v in levels]
+        stops = arm.roommap.survey_stops((lo, hi), levels)
 
     start = arm.snapshot()
     seen, visited = 0, 0
@@ -1431,7 +1468,7 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
 
 
 def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
-               prefer="OBSERVE", frames=5, magnitudes=None, yaw_scale=4.0,
+               prefer=None, frames=5, magnitudes=None, yaw_scale=4.0,
                approach=12.0):
     """Learn the dome's joint-to-direction map from the arm's own motion.
 
@@ -1455,6 +1492,7 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
     if arm.detector is None:
         from detector import DeskDetector
         arm.detector = DeskDetector()
+    prefer = prefer or poses.OBSERVE_POSE
     taught = load_taught() or {}
     if dome_mod.POLE not in taught:
         return {"error": f"{dome_mod.POLE} is not taught; the dome has no "

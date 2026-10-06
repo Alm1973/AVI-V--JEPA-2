@@ -107,23 +107,39 @@ class TestConfig(unittest.TestCase):
                 self.assertTrue(lo <= p[j] <= hi,
                                 f"pose {name} joint {j} = {p[j]} outside {lo}..{hi}")
 
-    def test_observe_is_fully_specified(self):
-        """The observer logs object positions ONLY from OBSERVE, so if it is
-        ever partly specified the arm ends up somewhere nobody chose and every
+    def test_the_logging_pose_is_fully_specified(self):
+        """Object positions are logged ONLY from one pose, so if it is ever
+        partly specified the arm ends up somewhere nobody chose and every
         "left side of the desk" in the database means something different.
 
         It is deliberately NOT the mechanical centre: measured 2026-10-05, the
-        camera at wrist centre points at the carpet, so a centred OBSERVE would
+        camera at wrist centre points at the carpet, so a centred pose would
         have the logger faithfully recording the floor.
         """
-        p = poses.get_pose("OBSERVE")
+        p = poses.get_pose(poses.OBSERVE_POSE)
         self.assertEqual(set(p), set(poses.JOINTS))
         for j in poses.JOINTS:
             self.assertIsInstance(p[j], float)
         if poses.POSES_ARE_TAUGHT:
             self.assertNotEqual(p, poses.pose(),
-                                "OBSERVE is at mechanical centre, which aims "
-                                "at the carpet; re-teach it")
+                                f"{poses.OBSERVE_POSE} is at mechanical "
+                                "centre, which aims at the carpet; re-teach it")
+
+    def test_the_logging_pose_comes_from_the_constant(self):
+        """It was hard-coded as "OBSERVE" in eight places -- the dashboard, the
+        survey, both probes, main and find -- and then had to change, because a
+        daylight sweep found OBSERVE was the ONE pose that could not see the
+        desk (sd 15.5, nothing detected at any base_yaw from 60 to 110) while
+        being the pose the whole logging pipeline read from.
+
+        Asserts the constant exists, names a real taught pose, and that main
+        reads it rather than a literal.
+        """
+        self.assertIn(poses.OBSERVE_POSE, poses.POSES)
+        src = (Path(__file__).resolve().parents[1]
+               / "avi_bot" / "main.py").read_text()
+        self.assertIn("poses_mod.OBSERVE_POSE", src)
+        self.assertNotIn('POSES.get("OBSERVE")', src)
 
     def test_the_poses_in_use_were_taught_on_the_arm(self):
         """Not a rule, a record. If config/poses.toml goes missing the fallback

@@ -145,15 +145,16 @@ class Avi:
         """Answer where something is, and look at it when that is knowable.
 
         The centre angles are NOT optional and NOT defaulted. The logger
-        records object positions only from OBSERVE, so a stored image position
-        means nothing without OBSERVE's own angles -- and OBSERVE moved from
-        base_yaw 90 to 60 when it was retaught, which would have put every
-        answer a third of a frame out had the old default survived.
+        records object positions only from one pose, so a stored image position
+        means nothing without that pose's own angles -- and the pose has both
+        moved (OBSERVE from base_yaw 90 to 60) and been replaced (OBSERVE to
+        ATTENTIVE, because OBSERVE turned out to face a blank wall). Either
+        change would have silently invalidated a hard-coded default.
         """
         if self.arm is None or not hasattr(self.arm, "db"):
             return "I can't see the desk right now.", None
         cam = self.arm.config.camera
-        observe = poses_mod.POSES.get("OBSERVE") or {}
+        observe = poses_mod.POSES.get(poses_mod.OBSERVE_POSE) or {}
         finder = find_mod.Finder(
             self.arm.db, cam["yaw_deg_per_frame"],
             wrist_deg_per_frame=cam.get("wrist_deg_per_frame", 32.2),

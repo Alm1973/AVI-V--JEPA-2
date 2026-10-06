@@ -151,6 +151,27 @@ FALLBACK_POSES = {
     "REST":      pose(shoulder=125.0, wrist=60.0),
 }
 
+# The pose the logger observes from. Named ONCE, because it was hard-coded as
+# "OBSERVE" in eight places across the dashboard, main, find and the probes, and
+# changing it meant finding all eight.
+#
+# It is ATTENTIVE, not OBSERVE, and that is a measurement rather than a
+# preference. Sweeping every taught pose on 2026-10-06 in daylight and reading
+# what the detector saw:
+#
+#     TALL       sd 65.5   laptop 0.94
+#     ATTENTIVE  sd 62.9   laptop 0.51, mug 0.30, book 0.20
+#     HOME       sd 63.2   laptop 0.70, mug 0.29
+#     OBSERVE    sd 15.5   NOTHING, at any base_yaw from 60 to 110
+#     LOW        sd 13.0   nothing
+#     REST       sd 47.0   nothing
+#
+# OBSERVE was the one pose that could not see the desk, and it was the pose the
+# entire logging pipeline read from -- so every sighting, the room map and the
+# survey were recording a blank wall. ATTENTIVE sees the most objects of any
+# pose, which is what an observation pose is for.
+OBSERVE_POSE = "ATTENTIVE"
+
 POSES_PATH = Path(__file__).resolve().parents[2] / "config" / "poses.toml"
 
 
