@@ -53,6 +53,7 @@ from avi_bot.personality import (attention as att_mod,            # noqa: E402
 from avi_bot import env as env_mod                                # noqa: E402
 from avi_bot.perception import parallax                           # noqa: E402
 from avi_bot.perception import depth as depth_mod                 # noqa: E402
+from avi_bot.perception import dome as dome_mod                   # noqa: E402
 from avi_bot.perception import roommap as roommap_mod             # noqa: E402
 
 # Keys from .env, once, at import. The dashboard is what runs on the MSI, so
@@ -1153,6 +1154,12 @@ def make_handler(st):
             elif self.path == "/detect_debug":
                 floor = float(body.get("min_conf", 0.05))
                 self._json(detect_debug(arm, latest, floor))
+            elif self.path == "/build_dome":
+                self._json(build_dome(
+                    arm, latest,
+                    step=float(body.get("step", 5.0)),
+                    min_conf=float(body.get("min_conf", 0.40)),
+                    prefer=body.get("prefer", "OBSERVE")))
             elif self.path == "/probe_depth":
                 self._json(probe_depth(
                     arm, latest,
@@ -1412,6 +1419,138 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                            p.yaw, p.wrist, (lo, hi), (wlo, whi)),
                        "near": arm.roommap.nearest_anchor(p.yaw, p.wrist)[0]}
                       for p, w in known]}
+
+
+def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
+               prefer="OBSERVE", frames=2):
+    """Learn the dome's joint-to-direction map from the arm's own motion.
+
+    What Shaurya asked for: establish a dome with TALL at the top, then move
+    the servos and derive the rest of the frame from what that motion does to
+    the view. Each joint is moved ALONE by a known amount while a fixed
+    landmark is tracked; how far the landmark slid IS that joint's effect on
+    the look direction. It is the measurement that produced
+    wrist_deg_per_frame, generalised to all four joints and solved together.
+
+    Moving one joint at a time is not a convenience. If shoulder and elbow
+    always move together their individual gains are not identifiable, and a
+    fit would return an arbitrary split of one real number -- dome._fit_pitch
+    refuses rather than inventing the split, and this is how the data is kept
+    separable in the first place.
+
+    Steps are small and the arm is returned to where it started. shoulder and
+    elbow have never been exercised by a probe before, and they swing the
+    whole arm rather than just the camera.
+    """
+    if arm.detector is None:
+        from detector import DeskDetector
+        arm.detector = DeskDetector()
+    taught = load_taught() or {}
+    if dome_mod.POLE not in taught:
+        return {"error": f"{dome_mod.POLE} is not taught; the dome has no "
+                         f"pole. Teach it on the calibrate page first.",
+                "taught": sorted(taught)}
+
+    start = arm.snapshot()
+    if prefer in taught:
+        arm.set_pose(taught[prefer])
+        time.sleep(settle)
+
+    def best_landmark():
+        """The strongest non-person box, and where it is."""
+        frame = _frame(latest)
+        if frame is None:
+            return None
+        got = [d for d in arm.detector.everything(frame, min_conf=min_conf)
+               if d["label"] != "person"]
+        if not got:
+            return None
+        return max(got, key=lambda d: d["conf"])
+
+    def find(label):
+        """Where `label` is now, averaged over a couple of frames."""
+        xs, ys = [], []
+        for _ in range(frames):
+            frame = _frame(latest)
+            if frame is None:
+                continue
+            for d in arm.detector.everything(frame, min_conf=min_conf):
+                if d["label"] == label:
+                    xs.append(d["cx"])
+                    ys.append(d["cy"])
+                    break
+        if not xs:
+            return None
+        return sum(xs) / len(xs), sum(ys) / len(ys)
+
+    anchor_det = best_landmark()
+    if anchor_det is None:
+        arm.set_pose(start)
+        return {"error": "no landmark to track; nothing detected above "
+                         f"{min_conf}. Put something recognisable in view.",
+                "hint": "a laptop, a bottle or a mug works"}
+    label = anchor_det["label"]
+
+    samples, lost = [], []
+    for joint in ("base_yaw", "shoulder", "elbow", "wrist"):
+        lo, hi = arm.config.soft_limits(joint)
+        home = arm.snapshot()
+        for signed in (+step, -step):
+            target = home[joint] + signed
+            if not (lo <= target <= hi):
+                lost.append(f"{joint}{signed:+.0f}: outside {lo:.0f}..{hi:.0f}")
+                continue
+            before_j = arm.snapshot()
+            at_before = find(label)
+            if at_before is None:
+                lost.append(f"{joint}{signed:+.0f}: lost {label} before moving")
+                continue
+            arm.set(joint, target)
+            time.sleep(settle)
+            after_j = arm.snapshot()
+            at_after = find(label)
+            arm.set(joint, home[joint])
+            time.sleep(settle)
+            if at_after is None:
+                lost.append(f"{joint}{signed:+.0f}: {label} left the frame")
+                continue
+            samples.append((before_j, after_j,
+                            at_after[0] - at_before[0],
+                            at_after[1] - at_before[1]))
+    arm.set_pose(start)
+
+    limits = {j: arm.config.soft_limits(j)
+              for j in ("base_yaw", "shoulder", "elbow", "wrist")}
+    d = dome_mod.Dome(taught, limits=limits)
+    before_gains = dict(d.gains)
+    learned = d.learn(samples)
+
+    out = {"landmark": label, "step": step, "samples": len(samples),
+           "lost": lost, "gains_before": before_gains,
+           "learned": {k: round(v, 4) for k, v in learned.items()},
+           "still_assumed": d.unknown(),
+           "azimuth_limits": [round(v, 1) for v in d.azimuth_limits()]}
+    if not learned:
+        out["why_nothing"] = (
+            "no gain was identifiable. Either too few usable samples, or the "
+            "joints did not move independently enough to separate them.")
+        log(f"build_dome: {len(samples)} samples, nothing identifiable")
+        return out
+
+    # Where the taught poses sit on the dome, in HIS terms, as the check that
+    # the frame came out sane: TALL at 0, REST far below, the desk poses
+    # bunched together.
+    places = {}
+    for name, pose in taught.items():
+        try:
+            az, el = d.direction_of(pose)
+            places[name] = {"azimuth": round(az, 1), "elevation": round(el, 1)}
+        except dome_mod.OffDome as exc:
+            places[name] = {"off_dome": str(exc)}
+    out["poses_on_dome"] = places
+    log(f"build_dome: learned {out['learned']} from {len(samples)} samples "
+        f"on {label}")
+    return out
 
 
 def probe_depth(arm, latest, swing=24.0, steps=7, settle=1.6,
