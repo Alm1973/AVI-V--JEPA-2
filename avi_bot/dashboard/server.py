@@ -1551,6 +1551,9 @@ def detect_debug(arm, latest, min_conf=0.05):
             "n": len(found), "found": found[:25]}
 
 
+# A box within this many pixels of the frame edge is treated as cut off.
+EDGE_PX = 6
+
 # Detections this weak are still reported, never recorded. The point is to
 # tell "the wall is empty" apart from "the desk was there at 0.22".
 REPORT_FLOOR = 0.10
@@ -1675,10 +1678,24 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                         [d["label"], round(d["conf"], 2)])
                     continue
                 looked["kept"].append([d["label"], round(d["conf"], 2)])
-                dy, dw = arm.roommap.direction_of(d["cx"], d["cy"], yaw, wrist)
-                sightings.append((roommap_mod.canonical_label(d["label"]),
-                                  round(dy, 2), round(dw, 2),
-                                  round(float(d["conf"]), 3)))
+                # A box cut off by the frame edge covers only the visible part
+                # of the object, so its centre is pulled toward the middle of
+                # the frame and the "direction" depends on which stop saw it.
+                # The first desk scan split the laptop, the backpack and a pen
+                # into pairs 13-16 degrees apart that way. Those boxes stay
+                # out of the snapshot; an object is still caught from the
+                # stops that see it whole.
+                fh, fw = frame.shape[:2]
+                clipped = (d["cx"] - d["w"] / 2 <= EDGE_PX
+                           or d["cx"] + d["w"] / 2 >= fw - EDGE_PX
+                           or d["cy"] - d["h"] / 2 <= EDGE_PX
+                           or d["cy"] + d["h"] / 2 >= fh - EDGE_PX)
+                if not clipped:
+                    dy, dw = arm.roommap.direction_of(d["cx"], d["cy"],
+                                                      yaw, wrist)
+                    sightings.append((roommap_mod.canonical_label(d["label"]),
+                                      round(dy, 2), round(dw, 2),
+                                      round(float(d["conf"]), 3)))
                 try:
                     arm.roommap.observe(
                         d["label"], d["cx"], d["cy"], yaw, wrist,
