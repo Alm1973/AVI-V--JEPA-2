@@ -39,12 +39,36 @@ class JointConfig:
         """What the arm can actually do. Gesture durations derive from this."""
         return float(self.meta.get("achievable_deg_s", self.speed_cap))
 
+    # Deliberately not a usable fallback. The old defaults here were 29.0 and
+    # 60.0 -- the first wrong by 2.9x, the second by nearly 2x, both since
+    # measured. A plausible-looking wrong constant is worse than a missing
+    # one: the look-at loop still converges with it, so the error shows up as
+    # an arm that hunts rather than as a failure anybody notices.
+    CAMERA_UNSET = {"yaw_deg_per_frame": None, "wrist_deg_per_frame": None,
+                    "wrist_measured": False, "unset": True}
+
     @property
     def camera(self):
         """Closed-loop look-at gains, in commanded degrees per frame."""
-        return self.raw.get("camera", {"yaw_deg_per_frame": 29.0,
-                                       "wrist_deg_per_frame": 60.0,
-                                       "wrist_measured": False})
+        return self.raw.get("camera", dict(self.CAMERA_UNSET))
+
+    @property
+    def kinematics(self):
+        """Lengths and gains needed to turn angles into POSITIONS.
+
+        Unmeasured by default and says so, because depth from this rig is only
+        metric if someone physically measured the baseline. `measured = false`
+        means callers get relative answers or an exception, never a number
+        derived from a placeholder.
+        """
+        got = dict(self.raw.get("kinematics", {}))
+        got.setdefault("measured", False)
+        for k in ("camera_radius_m", "camera_height_m", "camera_faces"):
+            got.setdefault(k, 0.0)
+        if not got["measured"]:
+            got["why"] = ("kinematics are unmeasured: camera_radius_m is the "
+                          "stereo baseline and has to come off a ruler")
+        return got
 
     def soft_limits(self, joint):
         j = self.joints[joint]

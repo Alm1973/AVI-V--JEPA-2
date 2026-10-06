@@ -52,6 +52,7 @@ from avi_bot.personality import (attention as att_mod,            # noqa: E402
                                  behaviors, mood as mood_mod)
 from avi_bot import env as env_mod                                # noqa: E402
 from avi_bot.perception import parallax                           # noqa: E402
+from avi_bot.perception import depth as depth_mod                 # noqa: E402
 from avi_bot.perception import roommap as roommap_mod             # noqa: E402
 
 # Keys from .env, once, at import. The dashboard is what runs on the MSI, so
@@ -1152,6 +1153,12 @@ def make_handler(st):
             elif self.path == "/detect_debug":
                 floor = float(body.get("min_conf", 0.05))
                 self._json(detect_debug(arm, latest, floor))
+            elif self.path == "/probe_depth":
+                self._json(probe_depth(
+                    arm, latest,
+                    swing=float(body.get("swing", 24.0)),
+                    steps=int(body.get("steps", 7)),
+                    min_conf=float(body.get("min_conf", 0.35))))
             elif self.path in ("/probe_parallax", "/probe_static"):
                 self._json(probe_parallax(
                     arm, latest, swing=float(body.get("swing", 15.0)),
@@ -1405,6 +1412,101 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                            p.yaw, p.wrist, (lo, hi), (wlo, whi)),
                        "near": arm.roommap.nearest_anchor(p.yaw, p.wrist)[0]}
                       for p, w in known]}
+
+
+def probe_depth(arm, latest, swing=24.0, steps=7, settle=1.6,
+                min_conf=0.35, frames=2):
+    """Pan once, track everything, and report range per object.
+
+    Also settles the open question in config/joints.toml [kinematics]. The
+    apparent shift rate is s = g * (1 + (r/rho) cos eta): rotation, which is
+    the same for everything, plus parallax, which is not. So:
+
+      * if base_yaw really UNDER-TRAVELS its command, every object in the
+        scene shifts at nearly the same rate and the spread is small;
+      * if the 0.62 is parallax, rates differ by tens of per cent between a
+        desk object and the far wall.
+
+    One pan decides it, and the answer is `rate_spread` below. Nothing here
+    needs the kinematics to be measured: the ORDERING is calibration-free,
+    which is why it is reported even when ranges cannot be.
+    """
+    if arm.detector is None:
+        from detector import DeskDetector
+        arm.detector = DeskDetector()
+    start = arm.snapshot()
+    lo, hi = arm.config.soft_limits("base_yaw")
+    here = start["base_yaw"]
+    half = swing / 2.0
+    a, b = max(lo, here - half), min(hi, here + half)
+    if b - a < depth_mod.MIN_SWING_DEG:
+        return {"error": f"only {b - a:.1f} deg of yaw available here; "
+                         f"need {depth_mod.MIN_SWING_DEG}",
+                "hint": "move base_yaw toward the middle of its range first"}
+
+    fov = arm.config.camera.get("fov_deg") or 52.0
+    tracks, seen_at = {}, {}
+    yaws = [a + (b - a) * i / (steps - 1) for i in range(steps)]
+    for yaw in yaws:
+        arm.set("base_yaw", yaw)
+        time.sleep(settle)
+        for _ in range(frames):
+            frame = _frame(latest)
+            if frame is None:
+                continue
+            for d in arm.detector.everything(frame, min_conf=min_conf):
+                if d["label"] == "person":
+                    continue        # people move; a moving point has no range
+                # One detection per label per stop. Two boxes of the same
+                # class at one stop cannot be told apart without a tracker,
+                # and guessing the correspondence is how a nonlinear fit --
+                # and a wrong depth -- gets made.
+                if seen_at.get(d["label"]) == yaw:
+                    continue
+                seen_at[d["label"]] = yaw
+                tracks.setdefault(
+                    d["label"], depth_mod.Track(d["label"], fov)).add(
+                        yaw, d["cx"])
+    arm.set_pose(start)
+
+    out = {"swing": round(b - a, 1), "stops": steps, "fov_deg": fov,
+           "labels": {k: len(v.xs) for k, v in tracks.items()}}
+    if not tracks:
+        out["error"] = "nothing detected across the pan"
+        return out
+    try:
+        order, info = depth_mod.ordering(list(tracks.values()))
+    except depth_mod.NotMeasurable as exc:
+        out["error"] = str(exc)
+        return out
+    out["nearest_first"] = [[k, round(v, 4)] for k, v in order]
+    out["rejected"] = info["rejected"]
+
+    rates = [v for _, v in order]
+    if len(rates) >= 2:
+        spread = (max(rates) - min(rates)) / max(rates)
+        out["rate_spread"] = round(spread, 4)
+        out["reading"] = (
+            "rates differ across the scene, so the 0.62 in [camera] is "
+            "largely PARALLAX and yaw_deg_per_frame is distance-dependent"
+            if spread > 0.12 else
+            "rates agree across the scene, so the 0.62 is the joint "
+            "UNDER-TRAVELLING its command, as config/joints.toml assumes")
+
+    kin = arm.config.kinematics
+    out["kinematics_measured"] = bool(kin.get("measured"))
+    if kin.get("measured") and kin.get("camera_radius_m"):
+        got, rinfo = depth_mod.ranges(list(tracks.values()),
+                                      r=float(kin["camera_radius_m"]))
+        out["ranges_m"] = {
+            k: (None if v["range"] is None else round(v["range"], 3))
+            for k, v in got.items()}
+        out["range_info"] = {k: v for k, v in rinfo.items() if k != "rates"}
+    else:
+        out["why_no_ranges"] = kin.get("why", "camera_radius_m is 0")
+    log(f"probe_depth: {len(tracks)} tracks, spread "
+        f"{out.get('rate_spread')}, {out.get('reading', '')[:60]}")
+    return out
 
 
 def probe_parallax(arm, latest, swing=15.0, settle=1.8, min_conf=0.35,

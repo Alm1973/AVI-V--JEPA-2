@@ -262,3 +262,53 @@ yaw_deg_per_frame = 83.9   # MEASURED 2026-10-05, replaces a wrong 29.0
 # nobody here has measured.
 wrist_deg_per_frame = 32.2   # MEASURED 2026-10-05
 wrist_measured = true
+
+[kinematics]
+# For turning joint angles into POSITIONS rather than directions. All
+# UNMEASURED; every one is a ruler or protractor job, and nothing downstream
+# may guess a value -- depth.py refuses rather than inventing a number.
+measured = false
+
+# Horizontal distance from the base rotation axis to the camera lens, at the
+# OBSERVE shape (shoulder 84, elbow 95). This is the STEREO BASELINE: when
+# base_yaw turns, the camera swings along an arc of this radius, and that arc
+# is what makes depth recoverable from one camera. Metres.
+camera_radius_m = 0.0
+
+# Lens height above the desk, metres. Only needed for full 3D positions, not
+# for range.
+camera_height_m = 0.0
+
+# Does the camera look OUTWARD from the base axis, or back across the desk?
+# Sets the sign of the parallax term, and therefore whether a near object
+# appears to move faster or slower than the far wall. +1 outward, -1 inward.
+camera_faces = 0
+
+# THE OPEN QUESTION THIS SECTION EXISTS TO SETTLE.
+#
+# The [camera] section above reads the yaw/wrist asymmetry -- wrist 32.2
+# deg/frame against a ~31 deg vertical FOV (about 1:1), yaw 83.9 against a ~52
+# deg horizontal FOV (0.62) -- as base_yaw under-travelling its command. There
+# is a second explanation that fits the same numbers, and the measurement never
+# distinguished them.
+#
+# The apparent shift rate is s = g * (1 + (r/rho) cos eta): rotation plus
+# parallax. The WRIST axis passes almost through the camera, so its r is near
+# zero, there is no parallax, and s = g ~ 1. The BASE axis is an arm's length
+# from the camera, so r is large and the parallax term is substantial. The
+# asymmetry is exactly what the geometry predicts with NO under-travel at all:
+# with the camera looking back across the desk the term subtracts, and
+# s = 1 - r/rho = 0.62 puts the calibration landmark at rho ~ 0.47 m, which is
+# a desk distance.
+#
+# So `yaw_deg_per_frame = 83.9` may not be a property of the joint. It may be
+# the value for whichever object was in frame on 2026-10-05, in which case it
+# is wrong for everything at any other distance.
+#
+# THE EXPERIMENT: pan once while tracking two objects at clearly different
+# distances (a mug and the far wall). Under-travel predicts both move at
+# nearly the same rate; parallax predicts rates differing by tens of per cent
+# -- a simulated mug at 0.45 m and wall at 4 m differ by 33%. POST /probe_depth
+# runs it. Until then, treat 83.9 as a value that worked for tracking rather
+# than as a measured joint constant; the closed loop converges either way,
+# because it corrects whatever error it observes.
