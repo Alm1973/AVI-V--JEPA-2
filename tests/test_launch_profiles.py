@@ -29,6 +29,9 @@ LEARNED_STORES = {
     "assistant/latent_log.py": ("PROFILES", "latents-dev.db", "latents.db"),
     "avi_bot/dashboard/server.py": ("ROOMMAP_PROFILES", "roommap-dev.json",
                                     "roommap.json"),
+    # When he is at the desk: as much "about him" as anything here.
+    "avi_bot/perception/presence.py": ("PROFILES", "presence-dev.db",
+                                       "presence.db"),
 }
 
 

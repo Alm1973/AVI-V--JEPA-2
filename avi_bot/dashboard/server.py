@@ -54,6 +54,7 @@ from avi_bot import env as env_mod                                # noqa: E402
 from avi_bot.perception import parallax                           # noqa: E402
 from avi_bot.perception import depth as depth_mod                 # noqa: E402
 from avi_bot.perception import dome as dome_mod                   # noqa: E402
+from avi_bot.perception import presence as presence_mod           # noqa: E402
 from avi_bot.skills import find as find_mod                       # noqa: E402
 from avi_bot.perception import roommap as roommap_mod             # noqa: E402
 
@@ -190,6 +191,9 @@ class Arm:
         # better one than either measurement on its own: the object has to be
         # in one place, so the constant that puts it there is correct.
         self.roommap = roommap_mod.RoomMap(*self.frame_constants(config))
+        # When he is at the desk, learned by watching. Launch-day rule: the
+        # dev store unless AVI_PROFILE=live, same as the map and the latents.
+        self.presence = presence_mod.Presence(self.presence_path())
         self.load_roommap()
         # Live-tunable, so a value can be changed and watched without a push
         # and a restart. Chasing a confidence floor through a deploy cycle each
@@ -234,6 +238,69 @@ class Arm:
         self.note(f"event {name}"
                   + (f" ({target})" if target else "")
                   + f" -> {self.mood.emotion()}")
+
+    @staticmethod
+    def presence_path():
+        profile = os.environ.get("AVI_PROFILE", "dev")
+        name = presence_mod.PROFILES.get(profile)
+        if name is None:
+            raise ValueError(f"unknown profile {profile!r}")
+        d = os.path.join(os.environ.get("USERPROFILE", "."), "avi-remote")
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, name)
+
+    # The pose that looks at his seat. Absence only counts from here: not
+    # seeing him while the camera points at the ceiling is not evidence that
+    # he has gone. ATTENTIVE is the pose taught as "looking at where you sit".
+    SEAT_VIEW = "ATTENTIVE"
+    SEAT_TOLERANCE_DEG = 12.0
+
+    # What a person at the desk looks like to the detector. The false "person"
+    # boxes measured on 2026-10-06 were thin strips along the top edge of the
+    # frame at high tilt -- one was 347x109, 15% of the frame height. Someone
+    # sitting at the desk fills far more than that.
+    PERSON_MIN_CONF = 0.40
+    PERSON_MIN_HEIGHT = 0.25
+
+    def view_ok_for_presence(self):
+        seat = (load_taught() or {}).get(self.SEAT_VIEW)
+        if not seat:
+            return False
+        now = self.snapshot()
+        return all(abs(float(now[j]) - float(seat[j])) <= self.SEAT_TOLERANCE_DEG
+                   for j in poses.JOINTS if j in seat)
+
+    def presence_loop(self, latest, deadline, period=20.0):
+        """Look for him every `period` seconds and learn when he is here.
+
+        Arrivals and departures now fire the mood events that used to need a
+        button press, so AVI's mood follows whether he is actually there.
+        Stores a yes/no and a confidence per look -- never a frame.
+        """
+        while not self.stop.is_set() and time.time() < deadline:
+            time.sleep(period)
+            try:
+                frame, _ = _frame(latest)
+                if frame is None:
+                    continue
+                if self.detector is None:
+                    from detector import DeskDetector
+                    self.detector = DeskDetector()
+                h = frame.shape[0]
+                people = [d for d in self.detector.everything(
+                              frame, min_conf=self.PERSON_MIN_CONF)
+                          if d["label"] == "person"
+                          and d["h"] >= self.PERSON_MIN_HEIGHT * h]
+                conf = max((d["conf"] for d in people), default=None)
+                event = self.presence.sample(
+                    bool(people), conf=conf,
+                    view_ok=self.view_ok_for_presence())
+                if event:
+                    self.mood_event(event)
+                    self.note(f"presence: {event}")
+            except Exception as exc:
+                self.note(f"presence error (continuing): {exc!r}")
+                time.sleep(5.0)
 
     def track_loop(self, latest, deadline, period=0.4):
         """Offer person detections to attention, while tracking is on.
@@ -1077,6 +1144,7 @@ def make_handler(st):
                 "latent_ms": arm.latent_ms,
                 "latent_error": arm.latent_error,
                 "map_places": len(arm.roommap.known()),
+                "presence": arm.presence.summary(),
                 "map_known": [
                     {"label": p.label, "yaw": round(p.yaw, 1),
                      "wrist": round(p.wrist, 1), "seen": p.count,
@@ -1194,6 +1262,15 @@ def make_handler(st):
             elif self.path == "/detect_debug":
                 floor = float(body.get("min_conf", 0.05))
                 self._json(detect_debug(arm, latest, floor))
+            elif self.path == "/presence":
+                pr = arm.presence
+                self._json({"summary": pr.summary(),
+                            "routine": pr.routine(),
+                            "sessions": [[round(a), None if b is None
+                                          else round(b)]
+                                         for a, b in pr.sessions()[-20:]],
+                            "seat_view": arm.SEAT_VIEW,
+                            "looking_at_seat": arm.view_ok_for_presence()})
             elif self.path == "/find":
                 self._json(find_object(arm, (body.get("name") or "").strip(),
                                        look=bool(body.get("look", True))))
@@ -2403,6 +2480,8 @@ def main():
                      daemon=True).start()
     threading.Thread(target=arm.run, daemon=True).start()
     threading.Thread(target=arm.track_loop, args=(latest, deadline),
+                     daemon=True).start()
+    threading.Thread(target=arm.presence_loop, args=(latest, deadline),
                      daemon=True).start()
     threading.Thread(target=arm.latent_loop, args=(latest, deadline),
                      daemon=True).start()
