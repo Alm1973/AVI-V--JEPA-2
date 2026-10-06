@@ -950,3 +950,24 @@ accident). Needs one length -- see below.
 **Only ONE ruler number is now needed for metric 3D**: lens height above the
 desk at TALL's shape, OR the lens's horizontal offset from the base axis. The
 ratio between them (~0.35) is already measured.
+
+### base_yaw goes silent under sustained work (2026-10-06 ~16:30 and ~16:42)
+Twice, partway through a dense survey, base_yaw stopped moving: commands went
+out, nothing in the log, the WRIST kept moving, and every stop showed the same
+picture. The first time eight stops filed one pen under eight yaws. The
+firmware has no stall cutoff (it keeps writing PWM), so this is the servo or
+its supply -- consistent with the current-limited UBEC, since the base moves
+the whole arm. Confirmed directly: /probe_backlash read 0.02 deg against 13.1
+an hour earlier. The survey now registers each settled stop against the last
+one and refuses to file a stop where a 5+ deg turn changed nothing; two in a
+row end it (`horizon.stuck`). **The 5 V 4 A supply is the likely fix.**
+
+### Desk positions and words (`world.on_plane`, `perception/spatial.py`)
+A box's bottom edge, projected onto the desk with the lens offset corrected,
+gives a position in lens heights. Desk snapshots carry it; `POST /desk_layout`
+lists objects nearest-first with a sentence each, and /find appends it:
+"In front of and left of the laptop, nearer to me." Viewpoint is AVI's (his
+seat is not measured), units relative until the lens height is. Things above
+level (the "mug" at wrist 164) get no desk position -- they are not on this
+desk plane. From the clean survey: pen 2.4, laptop 3.7, backpacks 2.7 and 4.0
+lens heights from the base axis.
