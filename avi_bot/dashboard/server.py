@@ -52,6 +52,7 @@ from avi_bot.personality import (attention as att_mod,            # noqa: E402
                                  behaviors, mood as mood_mod)
 from avi_bot import env as env_mod                                # noqa: E402
 from avi_bot.perception import parallax                           # noqa: E402
+from avi_bot.perception import roommap as roommap_mod             # noqa: E402
 
 # Keys from .env, once, at import. The dashboard is what runs on the MSI, so
 # if this does not happen here the cloud route is quietly unavailable there
@@ -167,6 +168,14 @@ class Arm:
         self.latent_count = 0
         self.latent_ms = None
         self.latent_error = None
+        # Where things are, as directions the arm can be commanded to. AVI is
+        # bolted to a desk and cannot walk, so it never needs metres -- it
+        # needs to know which way to turn. Loaded from disk so a survey is
+        # worth doing once rather than every restart.
+        self.roommap = roommap_mod.RoomMap(
+            float(config.camera["yaw_deg_per_frame"]),
+            float(config.camera["wrist_deg_per_frame"]))
+        self.load_roommap()
         # Live-tunable, so a value can be changed and watched without a push
         # and a restart. Chasing a confidence floor through a deploy cycle each
         # time is the slow way to find it.
@@ -303,6 +312,26 @@ class Arm:
                 self.note(f"tracking error (continuing): {exc!r}")
                 time.sleep(1.0)
             time.sleep(period)
+
+    ROOMMAP_PATH = os.path.join(os.environ.get("USERPROFILE", "."),
+                                "avi-remote", "roommap.json")
+
+    def load_roommap(self):
+        try:
+            with open(self.ROOMMAP_PATH) as f:
+                self.roommap = roommap_mod.RoomMap.from_dict(json.load(f))
+        except Exception:
+            pass          # no map yet is the normal first case
+
+    def save_roommap(self):
+        try:
+            os.makedirs(os.path.dirname(self.ROOMMAP_PATH), exist_ok=True)
+            with open(self.ROOMMAP_PATH, "w") as f:
+                json.dump(self.roommap.to_dict(), f, indent=1)
+            return True
+        except Exception as exc:
+            self.note(f"could not save the room map: {exc!r}")
+            return False
 
     def latent_loop(self, latest, deadline, period=15.0):
         """One V-JEPA latent every `period` seconds, while enabled.
@@ -975,6 +1004,13 @@ def make_handler(st):
                 "latent_count": arm.latent_count,
                 "latent_ms": arm.latent_ms,
                 "latent_error": arm.latent_error,
+                "map_places": len(arm.roommap.known()),
+                "map_known": [
+                    {"label": p.label, "yaw": round(p.yaw, 1),
+                     "wrist": round(p.wrist, 1), "seen": p.count,
+                     "conf": round(p.best_conf, 2),
+                     "near": arm.roommap.nearest_anchor(p.yaw, p.wrist)[0]}
+                    for p, w in arm.roommap.known()[:12]],
                 "track_label": arm.track_label,
                 "mood_events": ["praise", "scold", "arrived", "left",
                                 "task_ok", "task_failed", "new_object",
@@ -1107,6 +1143,19 @@ def make_handler(st):
                 arm.attention.drop("face")
                 arm.note(f"tracking target: {arm.track_label or 'person'}")
                 self._json({"ok": True, "track_label": arm.track_label})
+            elif self.path == "/survey":
+                self._json(run_survey(
+                    arm, latest,
+                    levels=body.get("wrist_levels"),
+                    min_conf=float(body.get("min_conf", 0.30)),
+                    pose=body.get("pose", "OBSERVE"),
+                    settle=float(body.get("settle", 1.8)),
+                    frames=int(body.get("frames", 2))))
+            elif self.path == "/forget_map":
+                n = len(arm.roommap.places)
+                arm.roommap.places = []
+                arm.save_roommap()
+                self._json({"ok": True, "forgot": n})
             elif self.path == "/latents":
                 want = bool(body.get("on", not arm.latents.is_set()))
                 arm.latents.set() if want else arm.latents.clear()
@@ -1206,6 +1255,95 @@ def detect_debug(arm, latest, min_conf=0.05):
     return {"frame": [w, h], "min_conf": min_conf, "light": lit,
             "dark": lit["mean"] < 30.0,
             "n": len(found), "found": found[:25]}
+
+
+def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
+               frames=2, pose="OBSERVE"):
+    """Look around the room on purpose and write down what is where.
+
+    This is the "look around" behaviour with a point to it. The stops come
+    from the map itself, stepping by a frame width minus an overlap so nothing
+    sitting on a seam is missed, and sweeping boustrophedon so the arm does
+    not travel the whole width back between rows.
+
+    Every detection is recorded as a DIRECTION -- the (yaw, wrist) that would
+    centre it -- because that is the only thing a desk-bound robot can act on.
+    The taught poses are anchored first, so the result can be described in
+    Shaurya's own terms rather than in commanded degrees.
+    """
+    if arm.detector is None:
+        from detector import DeskDetector
+        arm.detector = DeskDetector()
+    taught = load_taught()
+    for name, joints in (taught or {}).items():
+        if "base_yaw" in joints and "wrist" in joints:
+            arm.roommap.anchor(name, joints["base_yaw"], joints["wrist"])
+
+    # Shoulder and elbow are held FIXED for the whole survey, from a pose
+    # that faces the desk. They cannot vary: the camera rides three links,
+    # so the same (yaw, wrist) aims somewhere else once the shoulder moves,
+    # and every sighting would be filed under a direction the robot cannot
+    # reproduce. The map records the shape it was built at and refuses to
+    # mix, so this is enforced rather than hoped for.
+    if pose and taught and pose in taught:
+        arm.set("shoulder", taught[pose]["shoulder"])
+        arm.set("elbow", taught[pose]["elbow"])
+        time.sleep(settle)
+    shape = arm.snapshot()
+
+    lo, hi = arm.config.soft_limits("base_yaw")
+    wlo, whi = arm.config.soft_limits("wrist")
+    if not levels:
+        # Three bands around where the taught poses look, clamped to limits.
+        levels = [max(wlo, 125.0), 148.0, min(whi, 170.0)]
+    levels = [max(wlo, min(whi, float(v))) for v in levels]
+    stops = arm.roommap.survey_stops((lo, hi), levels)
+
+    start = arm.snapshot()
+    seen, visited = 0, 0
+    for yaw, wrist in stops:
+        arm.set("base_yaw", yaw)
+        arm.set("wrist", wrist)
+        time.sleep(settle)
+        for _ in range(frames):
+            frame = _frame(latest)
+            if frame is None:
+                continue
+            visited += 1
+            for d in arm.detector.everything(frame, min_conf=min_conf):
+                if d["label"] == "person":
+                    # People move. Mapping where a person was is mapping
+                    # nothing, and would poison the one thing this map is for.
+                    continue
+                try:
+                    arm.roommap.observe(
+                        d["label"], d["cx"], d["cy"], yaw, wrist,
+                        conf=d["conf"], px_size=max(d["w"], d["h"]),
+                        shoulder=shape["shoulder"], elbow=shape["elbow"])
+                except roommap_mod.Unreachable as exc:
+                    arm.set_pose(start)
+                    return {"error": str(exc),
+                            "hint": "POST /forget_map to rebuild at this shape"}
+                seen += 1
+    arm.set_pose(start)
+    arm.roommap.forget_stale()
+    saved = arm.save_roommap()
+    known = arm.roommap.known()
+    unconfirmed = [p for p in arm.roommap.places if not p.confirmed]
+    log(f"survey: {len(stops)} stops, {seen} sightings, "
+        f"{len(known)} confirmed, {len(unconfirmed)} seen once")
+    return {"stops": len(stops), "frames": visited, "sightings": seen,
+            "saved": saved, "levels": levels, "min_conf": min_conf,
+            "shape": {"shoulder": shape["shoulder"], "elbow": shape["elbow"]},
+            "unconfirmed": len(unconfirmed),
+            "known": [{"label": p.label, "yaw": round(p.yaw, 1),
+                       "wrist": round(p.wrist, 1), "seen": p.count,
+                       "views": len(p.stops),
+                       "conf": round(p.best_conf, 2),
+                       "reachable": arm.roommap.reachable(
+                           p.yaw, p.wrist, (lo, hi), (wlo, whi)),
+                       "near": arm.roommap.nearest_anchor(p.yaw, p.wrist)[0]}
+                      for p, w in known]}
 
 
 def probe_parallax(arm, latest, swing=15.0, settle=1.8, min_conf=0.35,

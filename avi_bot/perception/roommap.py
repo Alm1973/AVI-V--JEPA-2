@@ -19,6 +19,13 @@ would exceed the depth. Apparent box size gives a better distance cue per
 object over time (the same mug, bigger, is nearer) and that is recorded for
 later rather than converted into a false metre figure now.
 
+A MAP IS ONLY VALID FOR ONE SHOULDER AND ELBOW. The camera rides the end of a
+three-link arm, so where it POINTS depends on shoulder and elbow as well as on
+wrist -- the same (yaw, wrist) aims somewhere different if the shoulder has
+moved. So the map records the configuration it was built at and refuses to
+mix. Surveying across the taught poses would have silently violated this,
+since each one sets all four joints.
+
 THE UNITS ARE COMMANDED DEGREES, NOT REAL ONES. base_yaw under-travels its
 command by roughly a third (see config/joints.toml), so these are not angles
 anyone could measure with a protractor. They are exactly the right units
@@ -43,12 +50,25 @@ HALF_LIFE_S = 6 * 3600.0
 # Below this total weight an entry is not worth reporting.
 MIN_WEIGHT = 0.35
 
+# Distinct VIEWPOINTS a place needs before it is believed. Not sightings:
+# the first survey took two frames per stop and every place came back "seen
+# 2x", which looked like confirmation and was the same picture twice. Two
+# frames from one pose agree about a hallucination as readily as about a mug.
+MIN_STOPS = 2
+
+# A place whose direction falls outside the arm's reach is still a true fact
+# about the room and a useless instruction, so it is kept and flagged rather
+# than silently clamped -- commanding it would be clamped by the limiter and
+# the robot would stare confidently at the wrong thing.
+class Unreachable(Exception):
+    pass
+
 
 class Place:
     """One object's believed direction, as an angle pair."""
 
     __slots__ = ("label", "yaw", "wrist", "weight", "first_at", "last_at",
-                 "count", "best_conf", "px_size")
+                 "count", "best_conf", "px_size", "stops")
 
     def __init__(self, label, yaw, wrist, at, conf=0.0, px_size=None):
         self.label = label
@@ -60,25 +80,43 @@ class Place:
         self.count = 1
         self.best_conf = float(conf)
         self.px_size = px_size
+        self.stops = set()
 
     def decayed(self, now):
         age = max(0.0, now - self.last_at)
         return self.weight * (0.5 ** (age / HALF_LIFE_S))
 
+    @property
+    def confirmed(self):
+        """Seen from at least MIN_STOPS different viewpoints."""
+        return len(self.stops) >= MIN_STOPS
+
     def __repr__(self):
         return (f"<Place {self.label} yaw={self.yaw:.1f} wrist={self.wrist:.1f} "
-                f"seen {self.count}x conf<={self.best_conf:.2f}>")
+                f"seen {self.count}x from {len(self.stops)} views "
+                f"conf<={self.best_conf:.2f}"
+                f"{'' if self.confirmed else ' UNCONFIRMED'}>")
 
 
 class RoomMap:
+    # How far shoulder or elbow may differ before the map no longer applies.
+    # Tight, because a few degrees at the shoulder swings the camera's aim by
+    # much more than a few degrees at the wrist.
+    CONFIG_TOLERANCE_DEG = 3.0
+
     def __init__(self, yaw_deg_per_frame=83.9, wrist_deg_per_frame=32.2,
-                 frame=(1280, 720), clock=time.time):
+                 frame=(1280, 720), clock=time.time, shoulder=None,
+                 elbow=None):
         self.yaw_deg_per_frame = float(yaw_deg_per_frame)
         self.wrist_deg_per_frame = float(wrist_deg_per_frame)
         self.frame = frame
         self.clock = clock
         self.places = []
         self.anchors = {}          # taught pose name -> (yaw, wrist)
+        # The arm configuration this map describes. None until the first
+        # observation fixes it.
+        self.shoulder = shoulder
+        self.elbow = elbow
 
     # --- geometry --------------------------------------------------------
     def direction_of(self, cx, cy, yaw, wrist):
@@ -100,10 +138,34 @@ class RoomMap:
         return math.hypot(a[0] - b[0], a[1] - b[1])
 
     # --- building --------------------------------------------------------
+    def valid_for(self, shoulder, elbow):
+        """Does this map describe the arm's current shape?"""
+        if self.shoulder is None or shoulder is None:
+            return True            # nothing recorded yet, or not told
+        return (abs(self.shoulder - float(shoulder))
+                <= self.CONFIG_TOLERANCE_DEG
+                and abs(self.elbow - float(elbow))
+                <= self.CONFIG_TOLERANCE_DEG)
+
     def observe(self, label, cx, cy, yaw, wrist, conf=0.0, px_size=None,
-                at=None):
-        """Record one detection. Returns the Place it landed in."""
+                at=None, shoulder=None, elbow=None):
+        """Record one detection. Returns the Place it landed in.
+
+        Raises if the arm's shoulder or elbow has moved away from the shape
+        this map was built at, because the same (yaw, wrist) then aims
+        somewhere else entirely and the sighting would be filed under a
+        direction the robot cannot reproduce.
+        """
         at = self.clock() if at is None else float(at)
+        if shoulder is not None:
+            if self.shoulder is None:
+                self.shoulder, self.elbow = float(shoulder), float(elbow)
+            elif not self.valid_for(shoulder, elbow):
+                raise Unreachable(
+                    f"map was built at shoulder {self.shoulder:.1f} elbow "
+                    f"{self.elbow:.1f}; the arm is at {shoulder:.1f}/"
+                    f"{elbow:.1f}, so the same yaw and wrist point elsewhere")
+        viewpoint = (round(float(yaw), 1), round(float(wrist), 1))
         want = self.direction_of(cx, cy, yaw, wrist)
         for place in self.places:
             if place.label != label:
@@ -119,11 +181,13 @@ class RoomMap:
             place.weight = total
             place.last_at = at
             place.count += 1
+            place.stops.add(viewpoint)
             place.best_conf = max(place.best_conf, float(conf))
             if px_size:
                 place.px_size = px_size
             return place
         place = Place(label, want[0], want[1], at, conf=conf, px_size=px_size)
+        place.stops.add(viewpoint)
         self.places.append(place)
         return place
 
@@ -140,7 +204,7 @@ class RoomMap:
         now = self.clock() if now is None else now
         best, best_w = None, 0.0
         for place in self.places:
-            if place.label != label:
+            if place.label != label or not place.confirmed:
                 continue
             w = place.decayed(now)
             if w > best_w:
@@ -148,6 +212,28 @@ class RoomMap:
         if best is None or best_w < MIN_WEIGHT:
             return None
         return best.yaw, best.wrist, best_w
+
+    def reachable(self, yaw, wrist, yaw_limits, wrist_limits):
+        """Can the arm actually point there?"""
+        return (yaw_limits[0] <= yaw <= yaw_limits[1]
+                and wrist_limits[0] <= wrist <= wrist_limits[1])
+
+    def look_at(self, label, yaw_limits, wrist_limits, now=None):
+        """Where to point to see `label`. Raises Unreachable if it is outside.
+
+        Deliberately an exception rather than a clamped value: a clamped
+        command makes the robot stare confidently at the wrong thing, and the
+        caller should say "it is further round than I can turn" instead.
+        """
+        got = self.where_is(label, now=now)
+        if got is None:
+            return None
+        yaw, wrist, weight = got
+        if not self.reachable(yaw, wrist, yaw_limits, wrist_limits):
+            raise Unreachable(
+                f"{label} lies at yaw {yaw:.1f} wrist {wrist:.1f}, outside "
+                f"yaw {yaw_limits} wrist {wrist_limits}")
+        return yaw, wrist, weight
 
     def nearest_anchor(self, yaw, wrist):
         """Which taught pose a direction is closest to, for describing it.
@@ -165,7 +251,8 @@ class RoomMap:
         """Everything worth reporting, strongest first."""
         now = self.clock() if now is None else now
         live = [(p, p.decayed(now)) for p in self.places]
-        live = [(p, w) for p, w in live if w >= MIN_WEIGHT]
+        live = [(p, w) for p, w in live
+                if w >= MIN_WEIGHT and p.confirmed]
         live.sort(key=lambda pw: -pw[1])
         return live
 
@@ -219,6 +306,7 @@ class RoomMap:
         return {"yaw_deg_per_frame": self.yaw_deg_per_frame,
                 "wrist_deg_per_frame": self.wrist_deg_per_frame,
                 "frame": list(self.frame),
+                "shoulder": self.shoulder, "elbow": self.elbow,
                 "anchors": {k: list(v) for k, v in self.anchors.items()},
                 "places": [{"label": p.label, "yaw": round(p.yaw, 2),
                             "wrist": round(p.wrist, 2),
@@ -226,14 +314,16 @@ class RoomMap:
                             "first_at": p.first_at, "last_at": p.last_at,
                             "count": p.count,
                             "best_conf": round(p.best_conf, 3),
-                            "px_size": p.px_size}
+                            "px_size": p.px_size,
+                            "stops": [list(v) for v in sorted(p.stops)]}
                            for p in self.places]}
 
     @classmethod
     def from_dict(cls, data, clock=time.time):
         m = cls(yaw_deg_per_frame=data.get("yaw_deg_per_frame", 83.9),
                 wrist_deg_per_frame=data.get("wrist_deg_per_frame", 32.2),
-                frame=tuple(data.get("frame", (1280, 720))), clock=clock)
+                frame=tuple(data.get("frame", (1280, 720))), clock=clock,
+                shoulder=data.get("shoulder"), elbow=data.get("elbow"))
         m.anchors = {k: tuple(v) for k, v in (data.get("anchors") or {}).items()}
         for row in data.get("places") or []:
             place = Place(row["label"], row["yaw"], row["wrist"],
@@ -243,5 +333,6 @@ class RoomMap:
             place.weight = row.get("weight", 1.0)
             place.last_at = row.get("last_at", place.first_at)
             place.count = row.get("count", 1)
+            place.stops = {tuple(v) for v in (row.get("stops") or [])}
             m.places.append(place)
         return m
