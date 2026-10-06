@@ -27,10 +27,10 @@ wrist = 87.5
 # counts 250 411 269 373   taught 2026-10-05T17:59:21
 
 [OBSERVE]
-base_yaw = 90.0
+base_yaw = 60.0
 shoulder = 84.0
 elbow = 95.0
-wrist = 136.0
+wrist = 147.9
 # counts 250 384 438 482   taught 2026-10-05T17:48:57
 
 [ATTENTIVE]
