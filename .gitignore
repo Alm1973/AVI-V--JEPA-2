@@ -14,3 +14,4 @@ logs/
 *.key
 *.pem
 taught_poses.json
+.venv/
