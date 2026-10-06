@@ -36,3 +36,25 @@ class DeskDetector:
                                "box": (x1, y1, x2, y2)})
         candidates.sort(key=lambda c: -c["conf"])
         return candidates, person_conf
+
+    def person(self, frame):
+        """Returns ({box, conf, cx, cy}, ...) for the best person, or None.
+
+        detect() reports only a person's CONFIDENCE and drops the box, which is
+        all the logger needs. look_at needs the box: it steers from the box's
+        offset from image centre, so the geometry is the whole point. Kept as a
+        separate method rather than widening detect()'s return, so nothing that
+        already unpacks two values has to change.
+        """
+        res = self.model.predict(frame, conf=self.conf, verbose=False)[0]
+        best = None
+        for b in res.boxes:
+            if self.model.names[int(b.cls.item())] != "person":
+                continue
+            conf = float(b.conf.item())
+            if best is not None and conf <= best["conf"]:
+                continue
+            x1, y1, x2, y2 = (float(v) for v in b.xyxy[0].tolist())
+            best = {"box": (x1, y1, x2, y2), "conf": conf,
+                    "cx": (x1 + x2) / 2.0, "cy": (y1 + y2) / 2.0}
+        return best

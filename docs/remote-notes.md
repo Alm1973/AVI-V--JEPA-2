@@ -794,3 +794,53 @@ moves. One run settles it.
 
 Until then `config/joints.toml` keeps `sign = -1` for `base_yaw`, which is what
 his hands-on report implies, and `look_at` must not ship on it.
+
+## 2026-10-05 19:40 — base_yaw's sign is settled, by testing the loop
+
+Four attempts to measure the direction from scene features failed. Tracking a
+person worked on the first try, because a detector returns one box with a
+position: there is nothing to average and no correspondence to lose.
+
+`sign = -1` is CORRECT, and `look_at` can ship on it. The closed loop started
+0.247 of a frame off centre and corrected toward zero:
+
+    offset  +0.247  ->  correction -7.4 deg  ->  offset -0.001
+    offset  -0.293  ->  correction +8.8 deg  ->  offset +0.030
+
+A backwards sign makes the first correction take the error further out, not
+through zero. That is the property that matters and it is unambiguous, unlike
+any question phrased as "which way is right".
+
+**A second number fell out of it: about 29 COMMANDED degrees of yaw move the
+image by one frame width.** Measured twice, 29.8 and 27.2. The C270 is
+specified at 60 degrees diagonal, roughly 52 horizontal on a 16:9 frame, so
+this is about half what the datasheet implies. The cause is confounded — either
+a narrower effective field of view or the yaw under-travelling what it is
+commanded — and these measurements cannot separate them. For a feedback loop
+that does not matter: look_at outputs commanded degrees and observes frame
+fractions, so a constant calibrated in exactly those units is the right one to
+keep, and separating the causes would not change a single correction. This
+answers BUILD_SPEC section 16's "the C270's field of view is needed for look-at
+gains; measure it instead of assuming."
+
+Using 60 made the loop apply twice the intended gain, which is why it
+oscillated +0.247 / -0.293 / +0.030 rather than settling.
+
+**Two of my own test bugs, both worth recording.**
+
+The second run of the check reported DIVERGED when the loop was working. He was
+already centred, so every offset was between +0.020 and +0.065 — noise — and
+the verdict compared |last| against |first| as a ratio: 0.026 over 0.020 is
+"1.3x growth" and means nothing whatsoever. A convergence test now refuses to
+judge unless it starts at least 0.12 of a frame off centre.
+
+The open-loop half of the check is unreliable and is now documented as a
+cross-check only. It reported 0.8 % and 2.9 % of a frame for an 8 degree move
+that should give 28 %, almost certainly because a person sitting at a desk
+shifts over the three seconds the measurement takes. A single snapshot of a
+moving target was always the wrong instrument; the closed loop is the right one.
+
+**Also found:** nobody is visible from the OBSERVE pose. That is correct rather
+than broken — OBSERVE was taught aimed at the desk SURFACE, for logging object
+positions. ATTENTIVE is the pose aimed at where he sits, and the check now
+searches the taught poses rather than giving up.

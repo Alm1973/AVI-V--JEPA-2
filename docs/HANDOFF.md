@@ -11,7 +11,7 @@ Updated 2026-10-05, end of the first hardware day.
 |---|---|
 | **M0** remote ops | **done.** Wake, sleep, deploy, run-as-task, GPU, camera, all over SSH. |
 | **M1** motion foundation | **done.** Firmware v2 flashed, all 4 joints driven, 6 poses taught on the arm, all 13 gestures verified moving on hardware, dashboard folded. |
-| **M2** personality core | **started.** Mood engine written and tested. Attention, behaviour selection and beeps not started. |
+| **M2** personality core | **mostly done.** Mood, idle behaviour selection and the chirp synthesizer are written and tested, and M2's own acceptance test passes. Attention (5.3) and wiring it all into the dashboard are left. |
 | M3–M7 | not started. |
 
 Everything is reachable from the Mac. Nobody has had to sit at the MSI since
@@ -57,8 +57,13 @@ take 16 s. Long travel now uses `ease_in_out` and the overshoot is a separate
 fixed-size leg.
 
 **Directions, measured and settled:**
-- `base_yaw` sign is **−1** in config, but see §4 — it is the one direction not
-  properly verified.
+- `base_yaw` sign is **−1**, and that is now **confirmed** by closing the loop
+  on a tracked person: starting 0.247 of a frame off centre, the correction
+  took the error through zero rather than further out. `look_at` can ship on it.
+- **About 29 commanded degrees of yaw move the image one frame width** —
+  measured, against the ~52° the C270's datasheet implies. Use this for
+  look-at gains; using 60 made the loop apply twice the intended gain and it
+  oscillated instead of settling.
 - **Lower shoulder degrees raise the arm** (ATTENTIVE 29.5 raised, REST 150
   folded).
 - **Higher wrist degrees tilt the camera UP** (REST, camera-down, is 30.5).
@@ -122,30 +127,9 @@ until `frame.mean() >= 1.0`; keep that.
 
 ## 4. Open questions
 
-**`base_yaw`'s sign is not verified, and `look_at` must not ship until it is.**
-`look_at` is a feedback loop: with the sign backwards it accelerates away from
-whatever it is tracking instead of settling. His calibration table says count
-460 is far right (⇒ sign +1); driving the arm he reported A and D reversed
-(⇒ sign −1, which is what is set). The likely cause is that "right" means
-opposite things in the two observations — the arm's own right versus the
-direction the scene slides in a wrist-mounted camera's picture.
-
-**Three visual attempts to settle it all failed, and the method was the
-problem, not the scene.** Phase correlation returned peak responses of 0.00–0.07
-(no peak at all) and gave two opposite commands the same sign. Dense Farneback
-flow disagreed with itself by 17–78 px between repeats of the same move. But
-**template matching with the arm still shows only 4 px of noise at match scores
-of 0.98**, against ~46 px for a 10° wrist move. So the next attempt should use
-`cv2.matchTemplate`, not flow, and `assistant/direction_check.py` should be
-rewritten onto it.
-
-**Test the loop, not the geometry.** `look_at` only cares whether its
-correction converges. Put a person or object in frame, run the closed loop, and
-watch whether the error shrinks or grows; if it grows, flip the sign. That
-cannot be confused by which frame "right" refers to, and it tests the thing
-that matters instead of a proxy. Needs M3's detector — which already exists on
-the MSI as part of the logger, so **if Shaurya is at the desk, one run of YOLO
-person detection plus a few degrees of yaw settles it today.**
+**Resolved today:** `base_yaw`'s sign, by closing the loop on a tracked person
+rather than measuring geometry. See `remote-notes.md` for the four scene-feature
+methods that failed first and why none of them should be tried again.
 
 Also open:
 - Can the arm beat 27 °/s with the new supply? All gesture sizing depends on it.
@@ -154,6 +138,10 @@ Also open:
   leave) versus copying thumbnails to the Mac — his call, the camera faces his
   room.
 - Weekend desk hours, for the observer schedule and wake timers.
+- Is the ~29°/frame figure a narrow field of view or the yaw under-travelling
+  what it is commanded? Confounded, and it does not matter for `look_at`, which
+  is calibrated in exactly those units. It WOULD matter for anything that needs
+  a real angle, so separate them before trusting yaw as a measurement.
 
 ## 5. Owed by Shaurya
 
