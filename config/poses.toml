@@ -1,36 +1,30 @@
-# Named poses, TAUGHT ON THE REAL ARM by Shaurya on 2026-10-05 with
-# assistant/calibrate.py. These replace a hand-written table that was invented
-# from geometry nobody had measured, and whose TALL and LOW both leaned the arm
-# down because the shoulder's two ends are both down with upright in the middle.
+# Named poses, TAUGHT ON THE REAL ARM by Shaurya with assistant/calibrate.py.
+# Re-teach with `./runHome teach`, then `./runHome pull`, then regenerate this.
 #
-# Degrees are logical, 0..180, as config/joints.toml defines them. Re-teach any
-# of these with `./runHome teach`, then `./runHome pull`, and edit here.
+# These replace a hand-written table invented from geometry nobody had
+# measured, whose TALL and LOW both leaned the arm down.
 #
-# WHAT THE DATA SAYS ABOUT DIRECTION, which is worth more than the earlier
-# guesses: REST is "camera down" at wrist 30.5 and OBSERVE looks at the desk at
-# wrist 136, so HIGHER WRIST DEGREES TILT THE CAMERA UP. An earlier reading of
-# a two-position sweep concluded the opposite and was wrong. Likewise the
-# shoulder: ATTENTIVE is raised and alert at 29.5 while REST and LOW are folded
-# at 150 and 154, so LOWER SHOULDER DEGREES RAISE THE ARM.
-
-
-[meta]
-# Pose names that are deliberately, or at least knowingly, the same position.
-# Anything NOT listed here and duplicated fails the test suite, because two
-# names for one position is almost always an unfinished teach -- and any
-# gesture that moves to it becomes a silent no-op.
+# Degrees are logical, 0..180, as config/joints.toml defines them.
 #
-# TALL was saved without the arm being moved off HOME, so `perk_up` currently
-# has nothing to rise to. Needs re-teaching: shoulder lower than HOME's 78.4
-# (lower raises the arm) and the camera up.
-known_duplicates = ["HOME==TALL"]
+# DIRECTIONS, read off this data rather than inferred:
+#   HIGHER wrist degrees tilt the camera UP.  REST, described as camera-down,
+#   is wrist 30.5; TALL, alert, is 176. An earlier reading of a two-position
+#   sweep concluded the opposite and was wrong.
+#   LOWER shoulder degrees RAISE the arm.  ATTENTIVE, raised and alert, is
+#   29.5; REST and LOW, folded, are 150 and 154.
+#
+# Note that TALL and HOME sit at almost the same shoulder angle (78.4 vs 72.5)
+# and differ mainly in the wrist, 176 against 87.5. Alertness here is carried
+# by where the camera looks rather than by how tall the arm stands, which fits
+# an arm whose shoulder has little usable travel and whose camera is the
+# expressive end.
 
 [HOME]
 base_yaw = 90.0
-shoulder = 78.4
-elbow = 93.9
-wrist = 176.0
-# counts 250 397 436 571   taught 2026-10-05T17:39:36
+shoulder = 72.5
+elbow = 48.5
+wrist = 87.5
+# counts 250 411 269 373   taught 2026-10-05T17:59:21
 
 [OBSERVE]
 base_yaw = 90.0
@@ -49,9 +43,9 @@ wrist = 131.0
 [TALL]
 base_yaw = 90.0
 shoulder = 78.4
-elbow = 93.9
+elbow = 88.0
 wrist = 176.0
-# counts 250 397 436 571   taught 2026-10-05T17:39:49
+# counts 250 397 422 571   taught 2026-10-05T17:58:16
 
 [LOW]
 base_yaw = 90.0
