@@ -48,7 +48,9 @@ SYNONYMS = {
     "cans": "headphones", "bottle": "water bottle",
     "water": "water bottle", "charger": "charger", "cable": "charger",
     "wallet": "wallet", "pen": "pen", "pencil": "pen", "book": "book",
-    "notebook": "notebook", "remote": "remote",
+    # notebook -> book: the detector cannot tell them apart, and the room
+    # map files both as book (roommap.LABEL_ALIASES).
+    "notebook": "book", "remote": "remote",
 }
 
 

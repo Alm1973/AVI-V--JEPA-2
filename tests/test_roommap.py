@@ -530,3 +530,27 @@ class BigThingsCannotBePinnedPrecisely(unittest.TestCase):
         m.observe("laptop", 640, 360, 40.0, 150.0, conf=0.9, px_size=500)
         m.observe("laptop", 640, 360, 140.0, 150.0, conf=0.9, px_size=500)
         self.assertEqual(len(m.places), 2)
+
+
+class OneObjectOneName(unittest.TestCase):
+    """The detector says "book" and "notebook" -- or "mug" and "cup" -- for the
+    same thing from one frame to the next. Measured: one survey stop logged
+    book:0.43, notebook:0.35, book:0.43, notebook for a single object."""
+
+    def test_synonyms_land_in_one_place(self):
+        m, _ = fresh()
+        m.observe("notebook", 640, 360, 136.0, 158.7, conf=0.35)
+        m.observe("book", 640, 360, 136.0, 158.7, conf=0.43)
+        m.observe("cup", 640, 360, 90.0, 150.0, conf=0.3)
+        m.observe("mug", 640, 360, 90.0, 150.0, conf=0.5)
+        self.assertEqual(sorted(p.label for p in m.places), ["book", "mug"])
+
+    def test_either_name_finds_it(self):
+        m, _ = fresh()
+        sight(m, "cup", 90.0, 150.0)
+        self.assertIsNotNone(m.where_is("mug"))
+        self.assertIsNotNone(m.where_is("cup"))
+
+    def test_unrelated_labels_are_untouched(self):
+        self.assertEqual(rm.canonical_label("  Laptop "), "laptop")
+        self.assertEqual(rm.canonical_label("pen"), "pen")

@@ -40,6 +40,19 @@ import time
 # generous enough to survive box jitter and tight enough to tell a mug from
 # the laptop beside it.
 #
+# The detector's vocabulary has near-synonyms it cannot reliably tell apart,
+# and one object split across two of them in a real survey: a single stop
+# logged "book:0.43, notebook:0.35, book:0.43, notebook" for the same thing.
+# The map files both under one name rather than pretending to a distinction the
+# instrument cannot make. cup/mug is the other pair in settings.DESK_OBJECTS.
+LABEL_ALIASES = {"cup": "mug", "notebook": "book"}
+
+
+def canonical_label(label):
+    label = " ".join((label or "").split()).lower()
+    return LABEL_ALIASES.get(label, label)
+
+
 # A FLOOR, not the whole rule. See same_deg(): a fixed threshold mapped one
 # laptop as two places 20 degrees apart, because a large object's box centre
 # sits near the middle of the frame across several tilt rows at once and each
@@ -253,6 +266,7 @@ class RoomMap:
         direction the robot cannot reproduce.
         """
         at = self.clock() if at is None else float(at)
+        label = canonical_label(label)
         if shoulder is not None:
             if self.shoulder is None:
                 self.shoulder, self.elbow = float(shoulder), float(elbow)
@@ -300,6 +314,7 @@ class RoomMap:
         Returns (yaw, wrist, confidence_in_the_position).
         """
         now = self.clock() if now is None else now
+        label = canonical_label(label)
         best, best_w = None, 0.0
         for place in self.places:
             if place.label != label or not place.confirmed:
