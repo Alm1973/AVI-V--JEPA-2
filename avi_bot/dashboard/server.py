@@ -50,7 +50,13 @@ from avi_bot.motion import (backends, engine, gestures, poses,     # noqa: E402
                             safety)
 from avi_bot.personality import (attention as att_mod,            # noqa: E402
                                  behaviors, mood as mood_mod)
+from avi_bot import env as env_mod                                # noqa: E402
 from avi_bot.perception import parallax                           # noqa: E402
+
+# Keys from .env, once, at import. The dashboard is what runs on the MSI, so
+# if this does not happen here the cloud route is quietly unavailable there
+# while testing fine from the Mac, where the key was exported by hand.
+_LOADED_KEYS = env_mod.load()
 from avi_bot.voice import beeps as beeps_mod                      # noqa: E402
 
 TAUGHT_PATH = os.path.join(os.environ.get("USERPROFILE", "."),

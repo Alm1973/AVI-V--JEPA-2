@@ -20,6 +20,7 @@ policy by being reached through the local rules instead of the model.
 """
 import time
 
+from . import env as env_mod                                   # noqa: F401
 from . import numbers, scheduler as sched_mod                   # noqa: F401
 from .brain import context as context_mod
 from .brain import providers, router as router_mod, speech, tools
@@ -48,6 +49,13 @@ class Avi:
 
         self.store = memdb.Store(db_path, clock=clock)
         self.policy = speech.SpeechPolicy()
+        # Before the chain is built, or it reads an environment that has no
+        # keys in it and reports "groq: no key" -- which looks exactly like a
+        # rate limit and sends every turn to the local fallback.
+        if env is None:
+            self.loaded_keys = env_mod.load()
+        else:
+            self.loaded_keys = []
         self.budget = providers.Budget()
         self.chain = providers.Chain(budget=self.budget, send=send, env=env)
         self.router = router_mod.Router(chain=self.chain, policy=self.policy,
