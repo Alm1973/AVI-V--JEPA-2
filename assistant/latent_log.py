@@ -79,11 +79,16 @@ class Encoder:
 
     def __init__(self, model_id=MODEL_ID):
         import torch
-        from transformers import AutoModel, AutoVideoProcessor
+        from transformers import AutoVideoProcessor
+        import encoders
         self._torch = torch
         self.model_id = model_id
         self.proc = AutoVideoProcessor.from_pretrained(model_id)
-        self.model = AutoModel.from_pretrained(model_id, dtype=torch.float16)
+        # encoders.load RAISES if any weight would be randomly initialised.
+        # That guard matters more than it looks: a half-initialised encoder has
+        # all the right shapes, so it benchmarks identically and fills the
+        # database with confident garbage that nothing downstream can detect.
+        self.model = encoders.load(model_id, dtype=torch.float16)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = self.model.to(self.device).eval()
         # Mean over the token axis. V-JEPA 2 emits (1, 2048, 1024) for a
