@@ -16,6 +16,8 @@ Returns an Intent (tool name plus arguments), or None.
 """
 import re
 
+from .. import numbers
+
 WORD_NUMBERS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
     "seven": 7, "eight": 8, "nine": 9, "ten": 10, "fifteen": 15,
@@ -62,11 +64,16 @@ def _minutes(text):
         return max(1, round(int(m.group(1)) / 60))
     if t.startswith("half"):
         return 30
-    for word, n in WORD_NUMBERS.items():
-        if re.fullmatch(rf"{word}\s*(m|min|mins|minute|minutes)?", t):
-            return n
-        if re.fullmatch(rf"{word}\s*(h|hr|hour|hours)", t):
-            return n * 60
+    # Spoken numbers. Transcripts write "twenty five minutes", never "25", so
+    # a parser that only reads digits works typed and fails spoken -- the
+    # harder bug to notice, since the typed path is the one tried by hand.
+    m = re.fullmatch(r"(?P<n>[a-z][a-z\s-]*?)\s*"
+                     r"(?P<unit>m|mins?|minutes?|h|hrs?|hours?)?", t)
+    if m:
+        n = numbers.words_to_int(m.group("n"), allow_quantifiers=True)
+        if n:
+            unit = (m.group("unit") or "m").lower()
+            return n * 60 if unit.startswith("h") else n
     return None
 
 

@@ -15,3 +15,10 @@ logs/
 *.pem
 taught_poses.json
 .venv/
+
+# TTS voice models: 63 MB each, downloaded on demand by
+# assistant/make_audio_fixtures.py. The generated WAV fixtures ARE committed
+# (they are small and the tests need them); the model is not.
+models/
+*.onnx
+*.onnx.json

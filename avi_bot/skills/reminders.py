@@ -23,6 +23,8 @@ said at 6pm it means 5am tomorrow. Nobody sets a reminder for the past.
 import datetime as dt
 import re
 
+from .. import numbers
+
 UNITS = {
     "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
     "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
@@ -58,7 +60,10 @@ _UNIT_RE = "|".join(sorted((re.escape(u) for u in UNITS), key=len,
 # number then failed to parse, and parse() bails on the first match rather
 # than hunting for a second reading. Listing the words removes the ambiguity
 # instead of relying on backtracking to resolve it.
-_NUM_RE = "|".join(sorted((re.escape(w) for w in WORDS), key=len,
+_NUM_WORDS = (set(WORDS) | set(numbers.ONES) | set(numbers.TENS)
+              | {f"{t} {o}" for t in numbers.TENS for o in numbers.ONES
+                 if 1 <= numbers.ONES[o] <= 9})
+_NUM_RE = "|".join(sorted((re.escape(w) for w in _NUM_WORDS), key=len,
                           reverse=True))
 _IN = re.compile(
     rf"^in\s+(?P<n>\d+|{_NUM_RE})\s*"
@@ -76,10 +81,16 @@ _HALF = re.compile(r"^in\s+half\s+an?\s+hour$", re.I)
 
 
 def _number(text):
+    """Digits, single words, or compounds like 'twenty five'.
+
+    Transcripts spell numbers out, so 'in twenty five minutes' has to work --
+    see avi_bot/numbers.py for how that was found.
+    """
     t = " ".join(text.split()).lower()
     if t.isdigit():
         return int(t)
-    return WORDS.get(t)
+    got = numbers.words_to_int(t, allow_quantifiers=True)
+    return got if got is not None else WORDS.get(t)
 
 
 def parse(phrase, now):

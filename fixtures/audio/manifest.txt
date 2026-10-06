@@ -1,0 +1,10 @@
+wake_hey_jarvis	Hey Jarvis.
+wake_hey_jarvis_then_command	Hey Jarvis, set a timer for five minutes.
+cmd_timer	Set a timer for five minutes.
+cmd_lamp_off	Turn the lamp off.
+cmd_where_phone	Where is my phone?
+cmd_focus	Focus for twenty five minutes.
+cmd_schedule	What is on my schedule today?
+cmd_time	What time is it?
+no_wake_word	The weather is quite warm this afternoon.
+near_miss_jarvis	I was reading about Jarvis in a comic book.
