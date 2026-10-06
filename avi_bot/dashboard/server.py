@@ -1422,7 +1422,7 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
 
 
 def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
-               prefer="OBSERVE", frames=2, magnitudes=None):
+               prefer="OBSERVE", frames=9, magnitudes=None):
     """Learn the dome's joint-to-direction map from the arm's own motion.
 
     What Shaurya asked for: establish a dome with TALL at the top, then move
@@ -1468,7 +1468,19 @@ def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
         return max(got, key=lambda d: d["conf"])
 
     def find(label):
-        """Where `label` is now, averaged over a couple of frames."""
+        """Where `label` is now: the MEDIAN over several frames.
+
+        Measured on the real arm, a laptop's box centre scatters by 12 to 21
+        px between frames -- the box edges wobble as the detector's confidence
+        moves, and a large object's centre moves with them. At a 2 degree step
+        base_yaw only shifts the view ~15 px, so the noise was the same size
+        as the signal and its gain came back as 0.21, 0.24, 0.51 and 0.68 on
+        four runs of the same arm.
+
+        Median rather than mean because the failure is an occasional box
+        snapping to a different extent, which is an outlier rather than
+        Gaussian noise, and one of those drags a mean a long way.
+        """
         xs, ys = [], []
         for _ in range(frames):
             frame = _frame(latest)
@@ -1479,9 +1491,10 @@ def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
                     xs.append(d["cx"])
                     ys.append(d["cy"])
                     break
-        if not xs:
+        if len(xs) < 3:
             return None
-        return sum(xs) / len(xs), sum(ys) / len(ys)
+        mid = lambda v: sorted(v)[len(v) // 2]
+        return mid(xs), mid(ys)
 
     anchor_det = best_landmark()
     if anchor_det is None:
@@ -1496,11 +1509,18 @@ def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
     # how base_yaw came back as 0.21, 0.24, 0.51 and 0.68 from the same arm
     # on four runs. More magnitudes give the residual something to say.
     mags = [float(m) for m in (magnitudes or (step, step * 2, step * 3))]
+    # base_yaw gets BIGGER steps than the pitch joints, and that asymmetry is
+    # measured rather than aesthetic. Per degree it moves the view three to
+    # five times less than shoulder or elbow do, so the same step gives it a
+    # far worse signal-to-noise ratio -- while it also has the most headroom
+    # (20..160) to take a larger one without losing the landmark.
+    per_joint = {"base_yaw": [m * 4.0 for m in mags]}
     samples, lost = [], []
     for joint in ("base_yaw", "shoulder", "elbow", "wrist"):
         lo, hi = arm.config.soft_limits(joint)
         home = arm.snapshot()
-        for signed in [s for m in mags for s in (+m, -m)]:
+        for signed in [s for m in per_joint.get(joint, mags)
+                       for s in (+m, -m)]:
             target = home[joint] + signed
             if not (lo <= target <= hi):
                 lost.append(f"{joint}{signed:+.0f}: outside {lo:.0f}..{hi:.0f}")
@@ -1531,6 +1551,7 @@ def build_dome(arm, latest, step=5.0, settle=1.8, min_conf=0.40,
     learned = d.learn(samples)
 
     out = {"landmark": label, "step": step, "magnitudes": mags,
+           "magnitudes_base_yaw": per_joint["base_yaw"], "frames": frames,
            "samples": len(samples), "fit": d.fit,
            "residuals": d.residuals,
            "diagnosis": {j: d.diagnose(j)
