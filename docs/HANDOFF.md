@@ -829,3 +829,39 @@ max 0.27, p 0.0005, nearest neighbour 100% adjacent. **V-JEPA's space is
 organised by viewing direction.** Not yet shown: that this beats raw pixels
 (adjacent tilts overlap, so any appearance representation may do the same).
 The pixel-baseline sweep is the next result.
+
+## 2026-10-06 ~14:30: flashed, the NAT64 trap, and AVI starts learning *him*
+
+**Firmware reflashed remotely** (`scripts/remote/flash.ps1`), at his request:
+COM5 auto-detected as Uno, 10414 bytes written and **10414 verified by
+avrdude read-back**, boot banner `start mode READBACK` (holds position at boot,
+no lurch), query returned exactly the prior position. Wrist soft-min 20 is now
+on the board as well as the host.
+
+**The "hung dashboard" was NAT64, not the flash.** He moved from school wifi
+to a T-Mobile hotspot (IPv6-only + NAT64). macOS rewrote the IPv4 literal
+100.x.y.z into 2607:7700:0:32::644b:b126 and sent it over cellular, past
+Tailscale. ssh/sftp/nc kept working, so it looked exactly like a wedged
+server. **Use the MagicDNS name for HTTP** (`MSI_HTTP` in common.sh) or `curl -4`.
+
+**V-JEPA beats raw pixels.** Shuffled sweep, same controls and null: V-JEPA
+partial r 0.727 (null max 0.248); 32x18 mean-centred thumbnails 0.184 (null
+max 0.343 -- not distinguishable from chance). Gap +0.543. First measured
+evidence the representation carries viewing direction beyond raw appearance.
+Limit: thumbnails are a weak baseline; a learned single-frame model (DINOv2,
+the VLM's vision tower) is the next comparison, to ask whether *video* matters.
+
+**Mug:** found and centred within 6% on re-test; the earlier miss is not
+reproducible and no cause is claimed. Found instead: the detector vocabulary
+has near-synonyms (mug/cup, book/notebook) and book/notebook visibly split one
+object. The map now files them under one name.
+
+**Presence — AVI learns when he is at the desk** (`perception/presence.py`,
+`GET /presence`). Looks every 20 s. Absence only counts from the seat view
+(ATTENTIVE); hysteresis 2 to arrive / 6 to leave; arrivals and departures now
+fire the mood events automatically (they were buttons). Learns sessions,
+presence by hour (with look counts), today's minutes, and a usual arrival time
+once 3+ arrivals exist. presence-dev.db, in the launch-day test.
+**The empty chair scores 0.38-0.39 as a person** (a static 602x660 box, >90%
+of the frame) -- it was counted once at a 0.40 floor. Floor is now 0.50.
+**Unvalidated with him in the chair** -- expect 0.6+; check this first.
