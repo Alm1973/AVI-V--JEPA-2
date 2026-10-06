@@ -70,9 +70,26 @@ def _rate():
     return _CFG.achievable
 
 
-def _kf(name, keys, duration, ease="ease_in_out"):
-    """A keyframe curve that shrinks its amplitude to fit what the arm can do."""
-    return KeyframeMove(name, keys, duration, ease, max_rate=_rate())
+# Gestures give up TEMPO rather than SIZE when the arm cannot keep up.
+#
+# This was the other way round, and it was wrong on this hardware. The arm
+# manages 27 deg/s against the 60 the gesture table was written for, so
+# shrinking put everything at about 45% amplitude -- fidget commanding 2.7
+# degrees, shake 4.5 -- and Shaurya's verdict on watching it idle was "kinda
+# just standing there... not doing much". An invisible shake communicates
+# nothing, so a slow visible one is strictly better.
+#
+# The shrink strategy is kept because the mechanism is right even though
+# nothing uses it today: a gesture whose rhythm genuinely cannot be slowed
+# would want it. And the stretch reverses itself -- the factor comes from
+# achievable_deg_s, so raising that after the 5 V 4 A supply goes in returns
+# every gesture to its specified tempo with no code change.
+DEFAULT_FIT = "stretch"
+
+
+def _kf(name, keys, duration, ease="ease_in_out", fit=DEFAULT_FIT):
+    """A keyframe curve fitted to what the arm can actually do."""
+    return KeyframeMove(name, keys, duration, ease, max_rate=_rate(), fit=fit)
 
 
 def _pose(name, target, duration, ease="ease_in_out"):

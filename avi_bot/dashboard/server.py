@@ -113,13 +113,21 @@ class Arm:
         self.sent = dict(self.target)
         self.events = []
         self.engine = engine.MotionEngine(config, backend, start_pose=self.target)
+        # Breathing is 2 degrees rather than the default 1.5, and it moves the
+        # wrist as well as the shoulder, because the camera is on the wrist:
+        # a bob there is visible in the feed, which is how this gets reviewed.
+        self.engine.breathing.amp = 2.0
         self.mood = mood_mod.Mood()
         self.selector = behaviors.BehaviourSelector()
         self.attention = att_mod.Attention(config)
         self.idle_mode = threading.Event()
         self.last_behaviour = None
-        # Breathing and saccades belong to the personality engine in M2. Here
-        # they would add motion nobody asked for while a pose is being set.
+        # Off while poses are being set -- motion nobody asked for makes a
+        # slider impossible to land -- and ON while idling, where they are the
+        # whole difference between a robot that is alive and one that is
+        # switched off. BUILD_SPEC 6.2 calls them continuous secondary layers;
+        # leaving them at zero in idle mode was why the first idle run read as
+        # "kinda just standing there".
         for layer in self.engine.layers:
             layer.weight = 0.0
 
@@ -148,6 +156,30 @@ class Arm:
                   + (f" ({target})" if target else "")
                   + f" -> {self.mood.emotion()}")
 
+    def set_alive(self, on):
+        """Breathing and saccades: the layers that make stillness read as calm
+        rather than as powered down."""
+        self.engine.breathing.weight = 1.0 if on else 0.0
+        self.engine.saccades.weight = 1.0 if on else 0.0
+
+    def tune_alive(self):
+        """Scale the idle layers by mood, per BUILD_SPEC 5.5.
+
+        Arousal drives how often the eyes flick and how deep the breath is; a
+        sleepy robot breathes slowly and deeply and barely glances around, an
+        excited one does the opposite. This is the part that makes stillness
+        itself expressive, which matters a great deal on an arm too slow for
+        big gestures.
+        """
+        m = self.mood
+        self.engine.breathing.freq = 0.10 + 0.10 * m.arousal
+        self.engine.breathing.depth = 1.6 - 0.6 * m.arousal
+        self.engine.saccades.sigma = 0.8 + 2.2 * m.arousal
+        self.engine.saccades.min_gap = 3.5 - 2.5 * m.arousal
+        self.engine.saccades.max_gap = 7.0 - 3.5 * m.arousal
+        if m.emotion() == "sleepy":
+            self.engine.breathing.depth *= gestures.DOZE_BREATH
+
     def run_idle(self, now):
         """One step of BUILD_SPEC 5.4's idle policy.
 
@@ -155,7 +187,10 @@ class Arm:
         interrupted a running gesture would make the robot look indecisive
         rather than alive.
         """
-        if not self.idle_mode.is_set() or self.engine.busy():
+        if not self.idle_mode.is_set():
+            return
+        self.tune_alive()
+        if self.engine.busy():
             return
         if not self.selector.due(now):
             return
@@ -646,7 +681,9 @@ def make_handler(st):
             elif self.path == "/idle":
                 want = bool(body.get("on", not arm.idle_mode.is_set()))
                 arm.idle_mode.set() if want else arm.idle_mode.clear()
-                arm.note("idle behaviour on" if want else "idle behaviour off")
+                arm.set_alive(want)
+                arm.note("idle behaviour on, breathing" if want
+                         else "idle behaviour off, holding still")
                 self._json({"ok": True, "idle": want})
             elif self.path == "/cancel":
                 arm.engine.clear()

@@ -53,8 +53,10 @@ class KeyframeMove(Move):
     offset. Missing joints are 0. Interpolation between frames uses `ease`.
     """
 
-    def __init__(self, name, keys, duration, ease="ease_in_out", max_rate=None):
+    def __init__(self, name, keys, duration, ease="ease_in_out", max_rate=None,
+                 fit="shrink"):
         self.name = name
+        self.fit = fit
         self.duration = float(duration)
         self.keys = sorted(((float(t), dict(v)) for t, v in keys),
                            key=lambda kv: kv[0])
@@ -83,15 +85,26 @@ class KeyframeMove(Move):
         return worst
 
     def _fit(self, max_rate):
-        """Shrink the amplitudes until the peak fits, keeping the timing.
+        """Make the curve fit `max_rate`, by shrinking it or by slowing it.
 
-        Timing is what makes a gesture read as that gesture -- a nod's rhythm
-        is the nod. Amplitude is only how far it goes, and BUILD_SPEC calls the
-        amplitudes starting points. So when the arm is too slow, this gives up
-        size rather than rhythm.
+        Two strategies, because there is no single right answer on an arm this
+        slow:
+
+        "shrink" keeps the timing and gives up size. Right for a communicative
+        beat whose rhythm IS the message -- a nod that takes three seconds is
+        not a nod.
+
+        "stretch" keeps the size and gives up tempo. Right for idle ambience,
+        where the point is to be visible at all. Shrinking those was a mistake:
+        fidget ended up commanding 2.7 degrees, which on this arm is
+        indistinguishable from standing still, and Shaurya said so -- "kinda
+        just standing there... not doing much".
         """
         peak = self.peak_rate()
         if peak <= max_rate or peak <= 0:
+            return
+        if self.fit == "stretch":
+            self.duration *= peak / max_rate
             return
         self.scale = max_rate / peak
         self.keys = [(ta, {j: v * self.scale for j, v in va.items()})
