@@ -1,190 +1,167 @@
-"""The parallax test, checked against the numbers that motivated it."""
+"""The parallax test, against the numbers measured on the real arm.
+
+The case that matters most is the last one: the arm's own hardware and
+Shaurya overlap in the image, which is what killed the first design, and the
+replacement has to handle both at once without rejecting him.
+"""
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from avi_bot.perception import parallax                      # noqa: E402
-from avi_bot.perception.parallax import (StaticRejector,      # noqa: E402
-                                         MIN_EXPECTED_PX,
-                                         STATIC_FRACTION,
-                                         MOVING_FRACTION)
+from avi_bot.perception import parallax as px                 # noqa: E402
+from avi_bot.perception.parallax import (ParallaxTracker,      # noqa: E402
+                                         REAL, ATTACHED, UNKNOWN)
 
 W = 1280
-YAW_PER_FRAME = 29.0        # measured; config/joints.toml [camera]
+DPF = 83.9                  # MEASURED; config/joints.toml [camera]
+PX_PER_DEG = W / DPF        # 15.26
 
 
 def fresh(t0=1000.0):
-    return StaticRejector(YAW_PER_FRAME), t0
+    return ParallaxTracker(DPF), t0
 
 
-# --- the measured case -----------------------------------------------------
-# 2026-10-05, from the tracker's own log: base_yaw swung across 40.4 -> 56.9
-# degrees while a 0.56-0.72 confidence box sat at x = 1023..1072. The real
-# detections of Shaurya in the same run were at 0.75-0.89.
-HARDWARE = [(40.4, 1004), (49.9, 1000), (56.9, 1046), (56.2, 1044),
-            (53.9, 1042), (47.4, 1048), (45.2, 1048), (55.0, 1066),
-            (56.2, 1047), (55.4, 1033), (54.8, 1030), (56.3, 1028),
-            (53.9, 1036), (53.0, 1023), (56.4, 1015), (43.4, 1033)]
+def det(cx, conf=0.8):
+    return {"cx": float(cx), "conf": conf}
 
 
-
-
-class Parallax(unittest.TestCase):
-    def test_learns_the_arms_own_hardware(self):
-        r, t = fresh()
-        for i, (yaw, cx) in enumerate(HARDWARE):
-            r.observe(yaw, cx, W, t=t + i * 0.4)
-        assert r.zones, f"never learned a static zone from {r.describe()}"
-        assert r.is_static(1035, t=t + 10), r.describe()
-
-
-
-    def test_rejects_it_after_learning(self):
-        r, t = fresh()
-        for i, (yaw, cx) in enumerate(HARDWARE):
-            r.observe(yaw, cx, W, t=t + i * 0.4)
-        assert not r.accept(1040, t=t + 10)
-        assert r.rejected == 1
-
-
-
-    def test_a_real_person_passes(self):
-        """Someone standing still while the arm pans slides across the frame."""
-        r, t = fresh()
-        # Person fixed in the room at the yaw where they appear centred.
-        def cx_of(yaw):
-            return W / 2.0 + (yaw - 90.0) / YAW_PER_FRAME * W
-        accepted = 0
-        for i, yaw in enumerate([90.0, 95.0, 100.0, 95.0, 90.0, 85.0]):
-            cx = cx_of(yaw)
-            if r.accept(cx, t=t + i * 0.4):
-                accepted += 1
-            r.observe(yaw, cx, W, t=t + i * 0.4)
-        assert accepted == 6, r.describe()
-        assert not r.zones, r.describe()
-
-
-
-    def test_small_pans_prove_nothing(self):
-        """Under the minimum the shift is comparable to box jitter, so no verdict."""
-        r, t = fresh()
-        small = MIN_EXPECTED_PX / W * YAW_PER_FRAME * 0.5
-        for i in range(8):
-            r.observe(90.0 + (i % 2) * small, 1035, W, t=t + i * 0.4)
-        assert not r.zones, (f"judged a {small:.1f} deg pan: {r.describe()}")
-        assert r.accept(1035, t=t + 10)
-
-
-
-    def test_moving_clears_a_learned_zone(self):
-        """A person who walks into a static zone is not censored forever."""
-        r, t = fresh()
-        for i, (yaw, cx) in enumerate(HARDWARE):
-            r.observe(yaw, cx, W, t=t + i * 0.4)
-        assert r.is_static(1035, t=t + 10)
-        # Now something at that position DOES move with the camera.
-        t2 = t + 12
-        r.observe(90.0, 1035, W, t=t2)
-        r.observe(80.0, 1035 - 10.0 / YAW_PER_FRAME * W, W, t=t2 + 0.4)
-        assert not r.is_static(1035, t=t2 + 1), r.describe()
-
-
-
-    def test_zones_expire(self):
-        r, t = fresh()
-        for i, (yaw, cx) in enumerate(HARDWARE):
-            r.observe(yaw, cx, W, t=t + i * 0.4)
-        assert r.is_static(1035, t=t + 10)
-        # The TTL runs from the evidence, not from the start of the run.
-        learned = max(z.at for z in r.zones)
-        assert not r.is_static(1035, t=learned + parallax.ZONE_TTL_S + 1)
-
-
-
-    def test_one_marginal_pairing_cannot_censor_the_frame(self):
-        """A zone needs CONFIRMATIONS pairings before it rejects anything.
-
-        Measured at HOME on 2026-10-05: three zones were learned, but only
-        x=1109 was strong (0 px of movement across a 30 deg pan, expected 458).
-        The other two rested on a single 14 px and 45 px reading of an expected
-        229 -- and they sat at x=555 and x=692, bracketing the x=618..639 where
-        Shaurya actually sits. One weak pairing must not blacklist his seat.
-        """
-        r, t = fresh()
-        # Exactly one pairing: two sightings at one spot across a real pan.
-        r.observe(90.0, 600, W, t=t)
-        r.observe(105.0, 614, W, t=t + 0.4)
-        self.assertTrue(r.zones, "should have noticed it")
-        self.assertFalse(r.zones[0].confirmed)
-        self.assertTrue(r.accept(600, t=t + 1),
-                        "rejected on a single pairing")
-        # A second independent pairing confirms it.
-        r.observe(90.0, 607, W, t=t + 1)
-        self.assertTrue(r.zones[0].confirmed, r.describe())
-        self.assertFalse(r.accept(600, t=t + 2))
-
-    def test_rejection_radius_spares_where_he_sits(self):
-        """Learning is generous, rejecting is not -- the errors are not
-        symmetric. A zone at 555 must not reach a detection at 618."""
-        from avi_bot.perception import parallax as px
-        self.assertLess(px.REJECT_PX, px.SAME_PX)
-        r, t = fresh()
-        for i in range(3):
-            r.observe(90.0, 555, W, t=t + i)
-            r.observe(105.0, 550, W, t=t + i + 0.4)
-        self.assertTrue(r.zones[0].confirmed)
-        self.assertFalse(r.accept(555, t=t + 10), "should reject its own spot")
-        self.assertTrue(r.accept(618, t=t + 10),
-                        "must not reach the seat at 618")
-
-    def test_a_drifting_box_is_not_rigidly_attached(self):
-        """Pairs that drift are two objects, not one static one.
-
-        At HOME on 2026-10-05 the real arm hardware was found at x = 1109,
-        1109, 1109 -- zero drift across a 30 degree pan. The spurious zones in
-        the same runs drifted 14, 36 and 45 px, and one of them landed at
-        x = 657, close enough to Shaurya's seat at 618 to censor him. The ratio
-        test passed all of them; an absolute ceiling does not.
-        """
-        from avi_bot.perception import parallax as px
-        r, t = fresh()
-        drift = px.MAX_STATIC_DRIFT_PX + 11      # the measured 36 px case
-        for i in range(4):
-            r.observe(90.0, 657, W, t=t + i)
-            r.observe(105.0, 657 + drift, W, t=t + i + 0.4)
-        self.assertFalse(r.zones, f"learned a drifting pair: {r.describe()}")
-        self.assertTrue(r.accept(618, t=t + 10), "censored his seat")
-
-    def test_zero_drift_is_still_learned(self):
-        """The real case must survive the tightening: x=1109, 0 px of 458."""
-        r, t = fresh()
-        for i in range(3):
-            r.observe(75.0, 1109, W, t=t + i * 2)
-            r.observe(105.0, 1109, W, t=t + i * 2 + 0.4)
-        self.assertTrue(r.zones, "lost the one case that was certain")
-        self.assertTrue(r.zones[0].confirmed, r.describe())
-        self.assertFalse(r.accept(1109, t=t + 20))
-
-    def test_nothing_known_passes(self):
-        """The default is to accept: a dropped frame is cheap, a lock-on is not."""
-        r, t = fresh()
-        assert r.accept(640, t=t)
-        assert r.rejected == 0
-
-
-
-    def test_expected_px_matches_the_measurement(self):
-        """17 degrees of pan should move a real target about 750 px at 1280."""
+class Geometry(unittest.TestCase):
+    def test_px_per_deg_matches_the_measurement(self):
         r, _ = fresh()
-        assert 700 <= r.expected_px(16.5, W) <= 780, r.expected_px(16.5, W)
+        self.assertAlmostEqual(r.px_per_deg(W), 15.26, places=1)
+
+    def test_a_pan_must_be_big_enough_to_judge(self):
+        """The two hypotheses have to separate before a match means anything."""
+        need = px.MIN_SEPARATION_PX / PX_PER_DEG
+        self.assertGreater(need, 5.0, "a 5 degree pan should prove nothing")
+        self.assertLess(need, 15.0, "but 15 degrees must be enough to judge")
 
 
+class Verdicts(unittest.TestCase):
+    def test_arm_hardware_is_called_attached(self):
+        """Measured at HOME: x = 1109, 1109, 1109 across a 30 degree pan that
+        should have moved a real object 458 px."""
+        r, t = fresh()
+        for i, yaw in enumerate((75.0, 90.0, 105.0, 90.0)):
+            out = r.classify([det(1109, 0.5)], yaw, W, t=t + i * 0.5)
+        self.assertEqual(out[0]["parallax"], ATTACHED, r.describe())
+        self.assertFalse(r.accept(out[0]))
 
-    def test_thresholds_leave_a_gap(self):
-        """A candidate between the two fractions must not flip a zone either way."""
-        assert STATIC_FRACTION < MOVING_FRACTION
+    def test_a_real_object_is_called_real(self):
+        """A fixed object in the room slides by d_yaw * px_per_deg."""
+        r, t = fresh()
+        cx, out = 640.0, None
+        prev = 90.0
+        for i, yaw in enumerate((90.0, 105.0, 90.0, 75.0)):
+            cx -= (yaw - prev) * PX_PER_DEG
+            prev = yaw
+            out = r.classify([det(cx, 0.5)], yaw, W, t=t + i * 0.5)
+        self.assertEqual(out[0]["parallax"], REAL, r.describe())
+        self.assertTrue(r.accept(out[0]))
+
+    def test_no_pan_means_no_verdict(self):
+        r, t = fresh()
+        out = None
+        for i in range(5):
+            out = r.classify([det(900, 0.5)], 90.0, W, t=t + i * 0.4)
+        self.assertEqual(out[0]["parallax"], UNKNOWN, r.describe())
+
+    def test_a_small_pan_still_means_no_verdict(self):
+        r, t = fresh()
+        out = None
+        for i, yaw in enumerate((90.0, 93.0, 90.0, 93.0, 90.0)):
+            out = r.classify([det(900, 0.5)], yaw, W, t=t + i * 0.4)
+        self.assertEqual(out[0]["parallax"], UNKNOWN, r.describe())
+
+    def test_one_pairing_is_not_enough(self):
+        r, t = fresh()
+        r.classify([det(1109, 0.5)], 75.0, W, t=t)
+        out = r.classify([det(1109, 0.5)], 105.0, W, t=t + 0.5)
+        self.assertEqual(out[0]["parallax"], UNKNOWN,
+                         "acted on a single pairing")
+
+
+class FallingBack(unittest.TestCase):
+    def test_unknown_falls_back_to_confidence(self):
+        """The arm is usually still, so UNKNOWN is the common case and
+        refusing it would mean never seeing him while holding position."""
+        r, _ = fresh()
+        self.assertTrue(r.accept({"cx": 640, "conf": 0.80, "parallax": UNKNOWN}))
+        self.assertFalse(r.accept({"cx": 640, "conf": 0.60, "parallax": UNKNOWN}))
+
+    def test_real_beats_a_low_score(self):
+        """Proven to be in the room, so confidence stops being the gate."""
+        r, _ = fresh()
+        self.assertTrue(r.accept({"cx": 640, "conf": 0.45, "parallax": REAL}))
+
+    def test_attached_is_rejected_however_confident(self):
+        r, _ = fresh()
+        self.assertFalse(r.accept({"cx": 640, "conf": 0.99,
+                                   "parallax": ATTACHED}))
+
+
+class TheCaseThatKilledTheFirstDesign(unittest.TestCase):
+    def test_he_is_kept_while_overlapping_hardware_is_rejected(self):
+        """Hardware at x=632 and him at x=618-639 -- 14 px apart.
+
+        The region-based version blacklisted x=632 with 8 pairings and would
+        have thrown him away with it. Here the verdict belongs to a track, and
+        the two tracks separate the moment the arm pans, because only one of
+        them moves.
+        """
+        r, t = fresh()
+        him = 625.0
+        prev = 90.0
+        out = None
+        for i, yaw in enumerate((90.0, 105.0, 90.0, 75.0, 90.0)):
+            him -= (yaw - prev) * PX_PER_DEG
+            prev = yaw
+            # Both in frame at once, starting 7 px apart.
+            out = r.classify([det(him, 0.80), det(632, 0.55)],
+                             yaw, W, t=t + i * 0.5)
+        by_track = {d["cx"]: d["parallax"] for d in out}
+        hardware = [p for cx, p in by_track.items() if abs(cx - 632) < 1]
+        person = [p for cx, p in by_track.items() if abs(cx - 632) >= 1]
+        self.assertEqual(hardware, [ATTACHED], r.describe())
+        self.assertEqual(person, [REAL], r.describe())
+        kept = [d for d in out if r.accept(d)]
+        self.assertEqual(len(kept), 1)
+        self.assertNotAlmostEqual(kept[0]["cx"], 632.0, places=0)
+
+    def test_nothing_is_rejected_for_where_it_sits(self):
+        """No position is ever blacklisted, so a fresh detection anywhere --
+        including on top of known hardware -- starts with a clean slate."""
+        r, t = fresh()
+        for i, yaw in enumerate((75.0, 105.0, 75.0, 105.0)):
+            r.classify([det(1109, 0.5)], yaw, W, t=t + i * 0.5)
+        self.assertTrue(r.attached_tracks(), "should know about the hardware")
+        # Same place, but after the track has expired: judged afresh. The TTL
+        # runs from the LAST sighting, not from the start of the run.
+        later = max(k.at for k in r.tracks) + px.TRACK_TTL_S + 1
+        out = r.classify([det(1109, 0.85)], 90.0, W, t=later)
+        self.assertEqual(out[0]["parallax"], UNKNOWN)
+        self.assertTrue(r.accept(out[0]), "rejected on position alone")
+
+
+class Housekeeping(unittest.TestCase):
+    def test_tracks_expire(self):
+        r, t = fresh()
+        r.classify([det(500)], 90.0, W, t=t)
+        self.assertTrue(r.tracks)
+        r.classify([], 90.0, W, t=r.tracks[0].at + px.TRACK_TTL_S + 1)
+        self.assertFalse(r.tracks)
+
+    def test_two_detections_cannot_claim_one_track(self):
+        r, t = fresh()
+        r.classify([det(640)], 90.0, W, t=t)
+        out = r.classify([det(645, 0.9), det(650, 0.8)], 90.0, W, t=t + 0.4)
+        self.assertEqual(len({d["track"] for d in out}), 2)
+
+    def test_empty_input_is_fine(self):
+        r, t = fresh()
+        self.assertEqual(r.classify([], 90.0, W, t=t), [])
 
 
 if __name__ == "__main__":

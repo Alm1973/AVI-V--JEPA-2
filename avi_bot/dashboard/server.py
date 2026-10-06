@@ -131,7 +131,7 @@ class Arm:
         # itself, at 0.75 it found nothing in 84 frames. Parallax separates the
         # same two things by a factor of thirty, so the floor can come back
         # down and geometry can do the rejecting. See avi_bot/perception.
-        self.rejector = parallax.StaticRejector(
+        self.rejector = parallax.ParallaxTracker(
             float(config.camera["yaw_deg_per_frame"]))
         # Track a named desk object instead of a person. The whole look-at
         # loop -- detector, attention, steering, spring -- is identical; only
@@ -150,8 +150,13 @@ class Arm:
         # Live-tunable, so a value can be changed and watched without a push
         # and a restart. Chasing a confidence floor through a deploy cycle each
         # time is the slow way to find it.
-        self.tune = {"min_conf": 0.70, "gain": att_mod.GAIN,
-                     "period": 0.4, "deadband": att_mod.DEADBAND_FRAC}
+        # min_conf is now the DETECTOR's floor and should be low, so parallax
+        # gets to see the candidates it needs to judge. trust_conf is the
+        # separate gate for candidates parallax could not judge, which is the
+        # common case because the arm is usually holding still.
+        self.tune = {"min_conf": 0.35, "gain": att_mod.GAIN,
+                     "period": 0.4, "deadband": att_mod.DEADBAND_FRAC,
+                     "trust_conf": 0.75}
         # Off while poses are being set -- motion nobody asked for makes a
         # slider impossible to land -- and ON while idling, where they are the
         # whole difference between a robot that is alive and one that is
@@ -240,10 +245,9 @@ class Arm:
                     # test the filter against itself.
                     live = found
                 else:
-                    for c in found:
-                        self.rejector.observe(yaw, c["cx"], w)
-                    live = [c for c in found
-                            if self.rejector.accept(c["cx"])]
+                    self.rejector.classify(found, yaw, w)
+                    live = [c for c in found if self.rejector.accept(
+                        c, min_conf_unknown=float(self.tune["trust_conf"]))]
                 p = None
                 for c in live:
                     # Continuity is real evidence -- a person does not
@@ -763,10 +767,11 @@ def make_handler(st):
                 "track_hits": arm.track_hits,
                 "track_misses": arm.track_misses,
                 "tune": arm.tune,
-                "static_zones": [round(z.cx)
-                                 for z in arm.rejector.confirmed_zones()],
-                "static_why": arm.rejector.describe(),
-                "static_rejected": arm.rejector.rejected,
+                "attached": [round(k.cx)
+                             for k in arm.rejector.attached_tracks()],
+                "parallax_why": arm.rejector.describe(),
+                "parallax_rejected": arm.rejector.rejected,
+                "parallax_accepted": arm.rejector.accepted,
                 "track_label": arm.track_label,
                 "mood_events": ["praise", "scold", "arrived", "left",
                                 "task_ok", "task_failed", "new_object",
@@ -860,18 +865,17 @@ def make_handler(st):
                 self._json({"ok": True, "tune": arm.tune})
             elif self.path == "/reset_counts":
                 arm.track_hits = arm.track_misses = 0
-                arm.rejector.rejected = 0
-                arm.rejector.zones = []
-                arm.rejector.history = []
+                arm.rejector.rejected = arm.rejector.accepted = 0
+                arm.rejector.tracks = []
                 self._json({"ok": True})
             elif self.path == "/detect_debug":
                 floor = float(body.get("min_conf", 0.05))
                 self._json(detect_debug(arm, latest, floor))
-            elif self.path == "/probe_static":
-                self._json(probe_static(
+            elif self.path in ("/probe_parallax", "/probe_static"):
+                self._json(probe_parallax(
                     arm, latest, swing=float(body.get("swing", 15.0)),
-                    min_conf=float(body.get("min_conf", 0.45)),
-                    frames=int(body.get("frames", 4))))
+                    min_conf=float(body.get("min_conf", 0.35)),
+                    frames=int(body.get("frames", 3))))
             elif self.path in ("/probe_wrist", "/probe_yaw"):
                 wrist = self.path == "/probe_wrist"
                 self._json(probe_axis(
@@ -981,56 +985,50 @@ def detect_debug(arm, latest, min_conf=0.05):
             "n": len(found), "found": found[:25]}
 
 
-def probe_static(arm, latest, swing=15.0, settle=1.8, min_conf=0.45,
-                 frames=4):
-    """Pan the base deliberately and learn which candidates do not move.
+def probe_parallax(arm, latest, swing=15.0, settle=1.8, min_conf=0.35,
+                   frames=3):
+    """Pan on purpose and report what each candidate turns out to be.
 
     The passive version only learns while the arm happens to be panning, and
-    the failure it exists to prevent is exactly the one where the arm has
-    saturated and STOPPED panning. So this asks the question on purpose: a
-    swing either side of here, every person candidate recorded at each yaw,
-    and whatever stayed put gets blacklisted.
+    the failure this exists to prevent is exactly the one where the arm has
+    saturated and STOPPED panning. So this asks the question deliberately.
 
-    `swing` has a floor set by geometry, not by taste: the shift has to be
-    bigger than detection-box jitter before standing still means anything.
+    `swing` has a floor set by geometry: the two hypotheses -- moved with the
+    pan, or did not move -- have to separate by more than detection jitter
+    before a match between them means anything.
     """
     if arm.detector is None:
         from detector import DeskDetector
         arm.detector = DeskDetector()
-    need = (parallax.MIN_EXPECTED_PX / 1280.0) * arm.rejector.yaw_deg_per_frame
+    need = parallax.MIN_SEPARATION_PX / arm.rejector.px_per_deg(1280)
     if swing < need:
-        return {"error": f"swing {swing} deg is too small to prove anything; "
-                         f"need at least {need:.1f}"}
+        return {"error": f"swing {swing} deg is too small to tell the two "
+                         f"hypotheses apart; need at least {need:.1f}"}
     start = arm.snapshot()
     lo, hi = arm.config.soft_limits("base_yaw")
     here = start["base_yaw"]
-    stops = [here, max(lo, here - swing), min(hi, here + swing), here]
+    stops = [here, max(lo, here - swing), min(hi, here + swing), here,
+             max(lo, here - swing)]
     seen = []
     for yaw in stops:
         arm.set("base_yaw", yaw)
         time.sleep(settle)
-        # Several frames per stop. A candidate sitting at the confidence
-        # floor flickers, and one frame per stop found it at only one of four
-        # yaw positions -- which leaves nothing to pair it against and so
-        # proves nothing either way.
         for _ in range(frames):
             frame = _frame(latest)
             if frame is None:
                 continue
             w = frame.shape[1]
-            for c in arm.detector.people(frame, min_conf=min_conf):
-                arm.rejector.observe(yaw, c["cx"], w)
+            found = arm.detector.people(frame, min_conf=min_conf)
+            arm.rejector.classify(found, yaw, w)
+            for c in found:
                 seen.append({"yaw": round(yaw, 1), "cx": round(c["cx"]),
-                             "conf": round(c["conf"], 2)})
+                             "conf": round(c["conf"], 2),
+                             "verdict": c["parallax"], "track": c["track"]})
     arm.set_pose(start)
-    log(f"probe_static: {len(seen)} sightings, {len(arm.rejector.zones)} static")
+    log(f"probe_parallax: {len(seen)} sightings, "
+        f"{len(arm.rejector.attached_tracks())} attached")
     return {"swing": swing, "sightings": seen,
-            # Only CONFIRMED zones can reject, so those are what "static"
-            # means here; `why` still lists every zone with its pairing count,
-            # because an unconfirmed one is the interesting thing to look at.
-            "static": [round(z.cx) for z in arm.rejector.confirmed_zones()],
-            "seen_but_unconfirmed": [round(z.cx) for z in arm.rejector.zones
-                                     if not z.confirmed],
+            "attached": [round(k.cx) for k in arm.rejector.attached_tracks()],
             "why": arm.rejector.describe()}
 
 

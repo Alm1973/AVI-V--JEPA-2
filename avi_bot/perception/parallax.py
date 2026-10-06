@@ -1,244 +1,196 @@
 """Tell a person in the room from the robot's own hardware in shot.
 
-The camera is bolted to the arm, so anything else bolted to the arm -- a servo
-horn, a cable loop, the bracket's edge -- sits at a FIXED position in the image
-however far the arm swings. A real person does the opposite: pan the base by
-`d` degrees and they slide across the frame by `d / yaw_deg_per_frame` of its
-width.
+The camera is bolted to the arm, so anything else bolted to the arm sits at a
+FIXED position in the image however far the arm swings, while a real object in
+the room slides across the frame by `d_yaw / yaw_deg_per_frame` of its width.
+That difference is worth a factor of thirty where confidence is worth nothing:
+measured 2026-10-05, Shaurya scored 0.75-0.89 and the arm's own hardware
+scored 0.41-0.72, two ranges a threshold cannot separate -- at 0.70 the
+tracker locked onto itself and saturated, at 0.75 it found nothing in 84
+frames.
 
-Measured on 2026-10-05, and the reason this file exists: base_yaw swung from 40
-to 57 degrees -- 17 degrees, which is 0.59 of a frame, about 750 px at 1280 --
-while a detection box sat at x = 1035 +- 25 px. That box scored 0.56-0.72 and
-Shaurya scored 0.75-0.89, two ranges close enough that a confidence floor
-cannot separate them reliably: at 0.70 the hardware got through and the tracker
-locked onto itself, and at 0.75 the detector reported 0 hits in 84 frames.
-Parallax separates the same two things by a factor of thirty.
+WHY THIS IS THE SECOND DESIGN
+The first version blacklisted image REGIONS: positions where something had
+been seen to not move. It demonstrably worked -- it caught the hardware at
+x = 1109, 1109, 1109, zero drift across a 30 degree pan that should have moved
+it 458 px -- and it still had to be thrown away, because a later run learned a
+confirmed zone at x = 632 and HE SITS AT x = 618..639. The arm's own structure
+overlaps his seat in the image, so any filter that rejects regions will
+eventually reject him. No amount of threshold tuning fixes that; the unit of
+judgement was simply wrong.
 
-What this module does NOT do is decide whether a detection is a person. It
-answers one narrow question -- does this image position move when the camera
-does -- and the answer is only ever used to REJECT. A candidate nothing is
-known about passes, because the cost of dropping a real frame is one missed
-update on a gaze that is sticky for two seconds, and the cost of accepting the
-arm is a feedback loop chasing an error it can never reduce.
+So the verdict now attaches to a TRACK, never to a position, and the test is
+POSITIVE: a candidate is believed to be a real object because it was seen to
+move as the pan predicts, rather than being disbelieved for sitting somewhere
+suspicious.
+
+HOW THE MATCHING ITSELF DISCRIMINATES
+Given a pan of d_yaw since a track was last seen, there are exactly two places
+its next sighting can be:
+
+    real in the room  ->  last_cx - d_yaw * px_per_deg
+    bolted to the arm ->  last_cx
+
+Whichever the new detection is closer to is both the match AND the verdict.
+One comparison does both jobs, and when the two predictions are too close
+together to tell apart -- a small pan -- the honest answer is no verdict,
+which is what gets returned.
 """
+import itertools
 import time
 
-# How far the base must have turned between two sightings before their
-# separation says anything. Below this the expected shift is comparable to
-# detection-box jitter (+-25 px measured) and the test would be noise.
-MIN_EXPECTED_PX = 200.0
+# Matching tolerance. Detection boxes jitter by this sort of amount between
+# frames even when nothing moves.
+MATCH_PX = 70.0
 
-# A sighting pair counts as static when it moved less than this fraction of
-# what the pan should have moved it. Well clear of both ends: real targets come
-# in near 1.0, the arm's own hardware near 0.03.
-STATIC_FRACTION = 0.25
+# The two hypotheses have to be at least this far apart before the match can
+# mean anything, or a detection would be assigned to whichever happened to be
+# marginally nearer by chance. Two tolerances, so neither hypothesis can be
+# claimed by a detection that fits both.
+MIN_SEPARATION_PX = 2 * MATCH_PX
 
-# ... AND by no more than this many pixels in absolute terms. The ratio alone
-# is too lenient, and the hardware itself says why. Measured at HOME on
-# 2026-10-05, the genuine arm hardware was found at x = 1109, 1109, 1109 --
-# ZERO drift across a 30 degree pan. The three suspect zones in the same runs
-# drifted 14, 36 and 45 px, which is what you get from pairing two DIFFERENT
-# objects that happen to lie near the same x when detections are sparse and
-# jittery. One of those landed at x = 657, inside the rejection radius of the
-# x = 618..639 where Shaurya sits, which is the one outcome this filter must
-# never produce.
-#
-# Something RIGIDLY bolted to the camera cannot move in the image at all
-# beyond box jitter, so requiring that is a far stronger statement than a
-# ratio. Scene noise with the arm still measured 4 px; detection boxes jitter
-# more like 10-25.
-MAX_STATIC_DRIFT_PX = 25.0
+# Votes a track needs before its verdict is acted on. One pairing is not
+# enough: in the region-based version a single marginal pairing was what
+# blacklisted his seat.
+VOTES_NEEDED = 2
 
-# Only MAGNITUDES are compared, never directions. "Did it move" is the whole
-# question, and a person walking the other way is still moving. The one case
-# this misreads is someone travelling with the pan at exactly the rate that
-# holds them still in frame, which is transient and clears itself the moment
-# they stop.
-# ... and as confirmed real above this fraction, which is what clears a zone
-# again. The gap between the two is deliberate: a candidate in between leaves
-# the zone exactly as it was rather than flipping it on weak evidence.
-MOVING_FRACTION = 0.60
+# A track with no sighting for this long is forgotten.
+TRACK_TTL_S = 8.0
 
-# Two sightings this close in the image are treated as the same thing. Sized
-# from box jitter, not from the object.
-SAME_PX = 60.0
-
-# ... but REJECTION uses a tighter radius than learning, because the two errors
-# are not symmetric. Matching generously only risks learning a zone; rejecting
-# generously risks throwing away Shaurya. Measured 2026-10-05 at HOME: zones
-# were learned at x = 555 and 692 while he sits around x = 618-639, so a 60 px
-# rejection radius reaches to within 3 px of his seat and a 40 px one does not.
-REJECT_PX = 40.0
-
-# How many independent pairings a zone needs before it is allowed to reject
-# anything. One marginal pairing is not enough to censor part of the frame:
-# of the three zones found at HOME, x=1109 was proved by 0 px of movement
-# across a 30 degree pan and the other two rested on a single 14 px and 45 px
-# reading of an expected 229. The strong one survives this; the weak ones have
-# to earn it.
-CONFIRMATIONS = 2
-
-# A static zone stops being trusted this long after the evidence for it. The
-# arm's hardware does not move, but the camera's tilt and the arm's pose change
-# which part of it is in frame, so a zone learned in one pose should not
-# silently censor a different one forever.
-ZONE_TTL_S = 180.0
-
-# Sightings older than this are dropped. Long enough to span a slow pan, short
-# enough that a person who has walked across the room is not compared against
-# where they used to be.
-HISTORY_S = 20.0
+# Verdicts.
+REAL = "real"             # moved with the pan: something in the room
+ATTACHED = "attached"     # did not move: part of the arm
+UNKNOWN = "unknown"       # not enough pan to say
 
 
-class Sighting:
-    __slots__ = ("t", "yaw", "cx", "width")
+class Track:
+    __slots__ = ("id", "cx", "yaw", "at", "votes", "note", "seen")
 
-    def __init__(self, t, yaw, cx, width):
-        self.t = float(t)
+    def __init__(self, tid, cx, yaw, at):
+        self.id = tid
+        self.cx = float(cx)
         self.yaw = float(yaw)
-        self.cx = float(cx)
-        self.width = float(width)
-
-
-class StaticZone:
-    __slots__ = ("cx", "at", "evidence", "seen")
-
-    def __init__(self, cx, at, evidence):
-        self.cx = float(cx)
         self.at = float(at)
-        self.evidence = evidence      # (d_yaw, d_cx, expected_px) that proved it
-        self.seen = 1                 # independent pairings supporting it
+        self.votes = {REAL: 0, ATTACHED: 0}
+        self.note = None
+        self.seen = 1
 
     @property
-    def confirmed(self):
-        return self.seen >= CONFIRMATIONS
+    def verdict(self):
+        for name in (REAL, ATTACHED):
+            if self.votes[name] >= VOTES_NEEDED and \
+                    self.votes[name] > self.votes[other(name)]:
+                return name
+        return UNKNOWN
 
     def __repr__(self):
-        d_yaw, d_cx, exp = self.evidence
-        return (f"<StaticZone x={self.cx:.0f} "
-                f"yaw moved {d_yaw:+.1f} deg, box moved {d_cx:+.0f} px of "
-                f"{exp:.0f} expected, {self.seen} pairing(s)"
-                f"{'' if self.confirmed else ', UNCONFIRMED'}>")
+        return (f"<Track {self.id} x={self.cx:.0f} {self.verdict} "
+                f"real={self.votes[REAL]} attached={self.votes[ATTACHED]}"
+                f"{' ' + self.note if self.note else ''}>")
 
 
-class StaticRejector:
+def other(name):
+    return ATTACHED if name == REAL else REAL
+
+
+class ParallaxTracker:
     def __init__(self, yaw_deg_per_frame, clock=time.time):
         self.yaw_deg_per_frame = float(yaw_deg_per_frame)
         self.clock = clock
-        self.history = []
-        self.zones = []
+        self.tracks = []
+        self._ids = itertools.count(1)
         self.rejected = 0
+        self.accepted = 0
 
     # --- geometry --------------------------------------------------------
-    def expected_px(self, d_yaw, width):
-        """How far a real-world point should slide for a `d_yaw` degree pan."""
+    def px_per_deg(self, width):
         if not self.yaw_deg_per_frame:
             return 0.0
-        return abs(d_yaw) / self.yaw_deg_per_frame * float(width)
+        return float(width) / self.yaw_deg_per_frame
 
-    # --- learning --------------------------------------------------------
-    def observe(self, yaw, cx, width, t=None):
-        """Record a sighting and update what is known about static positions.
+    def predictions(self, track, yaw, width):
+        """Where this track should appear, under each hypothesis."""
+        d_yaw = float(yaw) - track.yaw
+        shift = d_yaw * self.px_per_deg(width)
+        # Measured sign: raising base_yaw moves a fixed landmark LEFT, so a
+        # real object's cx falls as yaw rises.
+        return {REAL: track.cx - shift, ATTACHED: track.cx}, abs(shift)
 
-        Two separate questions, against two different partners in the history,
-        because they need different partners to mean anything:
+    # --- the one call the caller needs -----------------------------------
+    def classify(self, detections, yaw, width, t=None):
+        """Attach a verdict to each detection. Does not drop anything.
 
-        STATIC asks "has something sat at this image position across a real
-        pan". That needs the partner at the SAME image position with the
-        LARGEST yaw difference available -- the biggest pan is the strongest
-        evidence, and an earlier version that simply took the first matching
-        entry compared a 1-degree pan and learned nothing.
-
-        MOVING asks "did this thing slide the way a real object would". That
-        needs the partner NEAREST IN TIME, because it is a claim about one
-        object's motion, and over a long gap there is no reason to think the
-        two sightings are the same object at all.
-
-        Returns the StaticZone this sighting created or refreshed, or None.
+        `detections` is a list of dicts with a "cx". Each gets "parallax" (one
+        of REAL / ATTACHED / UNKNOWN) and "track" added in place, and the list
+        is returned for convenience.
         """
         t = self.clock() if t is None else float(t)
-        now = Sighting(t, yaw, cx, width)
         self._expire(t)
+        taken = set()
+        for det in sorted(detections, key=lambda d: -d.get("conf", 0.0)):
+            cx = float(det["cx"])
+            best = None
+            for track in self.tracks:
+                if track.id in taken:
+                    continue
+                preds, sep = self.predictions(track, yaw, width)
+                for name, want in preds.items():
+                    gap = abs(cx - want)
+                    if gap > MATCH_PX:
+                        continue
+                    # A small pan leaves the two predictions on top of each
+                    # other, so a match cannot be read as evidence either way.
+                    verdict = name if sep >= MIN_SEPARATION_PX else UNKNOWN
+                    if best is None or gap < best[0]:
+                        best = (gap, track, verdict, sep, want)
+            if best is None:
+                track = Track(next(self._ids), cx, yaw, t)
+                self.tracks.append(track)
+                det["parallax"] = UNKNOWN
+                det["track"] = track.id
+                continue
+            gap, track, verdict, sep, want = best
+            taken.add(track.id)
+            if verdict != UNKNOWN:
+                track.votes[verdict] += 1
+                track.note = (f"moved {cx - track.cx:+.0f} px of "
+                              f"{-(want - track.cx):+.0f} predicted")
+            track.cx = cx
+            track.yaw = float(yaw)
+            track.at = t
+            track.seen += 1
+            det["parallax"] = track.verdict
+            det["track"] = track.id
+        return detections
 
-        found = None
-        same_place = [o for o in self.history if abs(o.cx - now.cx) <= SAME_PX]
-        if same_place:
-            best = max(same_place, key=lambda o: abs(now.yaw - o.yaw))
-            d_yaw = now.yaw - best.yaw
-            expected = self.expected_px(d_yaw, width)
-            if expected >= MIN_EXPECTED_PX:
-                moved = abs(now.cx - best.cx)
-                if (moved / expected < STATIC_FRACTION
-                        and moved <= MAX_STATIC_DRIFT_PX):
-                    found = self._mark((best.cx + now.cx) / 2.0, t,
-                                       (d_yaw, now.cx - best.cx, expected))
+    def accept(self, det, min_conf_unknown=0.75):
+        """Should this detection be believed?
 
-        if found is None:
-            self._clear_if_moving(now)
-        self.history.append(now)
-        return found
-
-    def _clear_if_moving(self, now):
-        """A candidate that slid as a real object would clears its zone.
-
-        Nearest in time, and only that one: this is a statement about a single
-        object's motion between two frames, so comparing against a sighting
-        from fifteen seconds ago would be comparing two different things.
+        ATTACHED is rejected outright -- it is the arm. REAL is accepted. And
+        UNKNOWN, which is the common case because the arm is usually not
+        panning, falls back to confidence: that is the only evidence available,
+        and refusing everything unproven would mean the robot could not see
+        him while holding still.
         """
-        if not self.history:
-            return
-        prev = max(self.history, key=lambda o: o.t)
-        d_yaw = now.yaw - prev.yaw
-        expected = self.expected_px(d_yaw, now.width)
-        if expected < MIN_EXPECTED_PX:
-            return
-        if abs(now.cx - prev.cx) / expected < MOVING_FRACTION:
-            return
-        # It moved. Clear zones at either end of the slide, since whatever is
-        # there demonstrably travels with the camera.
-        self.zones = [z for z in self.zones
-                      if abs(z.cx - prev.cx) > SAME_PX
-                      and abs(z.cx - now.cx) > SAME_PX]
-
-    def _mark(self, cx, t, evidence):
-        for z in self.zones:
-            if abs(z.cx - cx) <= SAME_PX:
-                z.cx = (z.cx + cx) / 2.0
-                z.at = t
-                z.seen += 1
-                # Keep whichever evidence is strongest, since that is what a
-                # human reading the log needs to judge the zone.
-                if abs(evidence[1]) / evidence[2] < \
-                        abs(z.evidence[1]) / z.evidence[2]:
-                    z.evidence = evidence
-                return z
-        z = StaticZone(cx, t, evidence)
-        self.zones.append(z)
-        return z
-
-    def _expire(self, t):
-        self.history = [s for s in self.history if t - s.t <= HISTORY_S]
-        self.zones = [z for z in self.zones if t - z.at <= ZONE_TTL_S]
-
-    # --- using -----------------------------------------------------------
-    def is_static(self, cx, t=None):
-        """True when this image position is known not to move with the camera."""
-        t = self.clock() if t is None else float(t)
-        self._expire(t)
-        return any(abs(z.cx - float(cx)) <= REJECT_PX
-                   for z in self.zones if z.confirmed)
-
-    def accept(self, cx, t=None):
-        """is_static inverted, counting what it throws away. Use this in a loop."""
-        if self.is_static(cx, t=t):
+        verdict = det.get("parallax", UNKNOWN)
+        if verdict == ATTACHED:
             self.rejected += 1
             return False
-        return True
+        if verdict == REAL:
+            self.accepted += 1
+            return True
+        ok = float(det.get("conf", 0.0)) >= min_conf_unknown
+        self.accepted += int(ok)
+        self.rejected += int(not ok)
+        return ok
+
+    def _expire(self, t):
+        self.tracks = [k for k in self.tracks if t - k.at <= TRACK_TTL_S]
 
     def describe(self):
-        if not self.zones:
-            return "no static zones learned"
-        return "; ".join(repr(z) for z in self.zones)
+        if not self.tracks:
+            return "no tracks"
+        return "; ".join(repr(k) for k in self.tracks)
 
-    def confirmed_zones(self):
-        return [z for z in self.zones if z.confirmed]
+    def attached_tracks(self):
+        return [k for k in self.tracks if k.verdict == ATTACHED]
