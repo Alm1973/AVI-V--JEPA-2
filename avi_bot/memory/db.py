@@ -27,7 +27,14 @@ CREATE TABLE IF NOT EXISTS facts (
   created_at REAL NOT NULL,
   source     TEXT NOT NULL DEFAULT 'him',
   used_at    REAL,
-  uses       INTEGER NOT NULL DEFAULT 0
+  uses       INTEGER NOT NULL DEFAULT 0,
+  -- Retrieval and usefulness are NOT the same thing, and conflating them is
+  -- why a fact store fills with trivia. `uses` counts times retrieved;
+  -- `cites` counts times the reply actually drew on it. Reflective Memory
+  -- Management (arXiv 2503.08026) reports >10% on exactly this distinction:
+  -- refine RETRIEVAL from what was cited, not from what was fetched.
+  cites      INTEGER NOT NULL DEFAULT 0,
+  cited_at   REAL
 );
 CREATE TABLE IF NOT EXISTS reminders (
   id      INTEGER PRIMARY KEY,
@@ -96,8 +103,8 @@ class Store:
             # the last thing to forget.
             row = self.db.execute(
                 "SELECT id, text FROM facts"
-                " ORDER BY uses ASC, COALESCE(used_at, created_at) ASC"
-                " LIMIT 1").fetchone()
+                " ORDER BY cites ASC, uses ASC,"
+                " COALESCE(used_at, created_at) ASC LIMIT 1").fetchone()
             if row:
                 dropped = row["text"]
                 self.db.execute("DELETE FROM facts WHERE id=?", (row["id"],))
@@ -123,20 +130,24 @@ class Store:
         matching facts" into the prompt, and a recall that returns more than
         the prompt can carry just moves the truncation somewhere less careful.
         """
+        # Ranked by CITATIONS first. A fact retrieved ten times and never
+        # drawn on is worse than one cited once: it has been crowding the
+        # prompt for free.
+        order = "cites DESC, uses DESC, created_at DESC"
         if query:
             words = [w for w in query.lower().split() if len(w) > 2]
             if words:
                 clause = " OR ".join("LOWER(text) LIKE ?" for _ in words)
                 rows = self.db.execute(
                     f"SELECT * FROM facts WHERE {clause}"
-                    f" ORDER BY uses DESC, created_at DESC LIMIT ?",
+                    f" ORDER BY {order} LIMIT ?",
                     [f"%{w}%" for w in words] + [limit]).fetchall()
             else:
                 rows = []
         else:
             rows = self.db.execute(
-                "SELECT * FROM facts ORDER BY uses DESC, created_at DESC"
-                " LIMIT ?", (limit,)).fetchall()
+                f"SELECT * FROM facts ORDER BY {order} LIMIT ?",
+                (limit,)).fetchall()
         now = self.clock()
         for r in rows:
             self.db.execute(
@@ -144,6 +155,38 @@ class Store:
                 (now, r["id"]))
         self.db.commit()
         return [r["text"] for r in rows]
+
+    def cite(self, texts):
+        """Mark the facts a reply actually drew on. Returns how many matched.
+
+        Called AFTER the reply exists, which is the only time this is knowable.
+        Retrieval is a guess about relevance; a citation is evidence of it, and
+        only evidence should steer what reaches the prompt next time.
+        """
+        if isinstance(texts, str):
+            texts = [texts]
+        now = self.clock()
+        n = 0
+        for text in texts or []:
+            text = " ".join((text or "").split())
+            if not text:
+                continue
+            cur = self.db.execute(
+                "UPDATE facts SET cites = cites + 1, cited_at = ?"
+                " WHERE text = ?", (now, text))
+            n += cur.rowcount
+        self.db.commit()
+        return n
+
+    def dead_weight(self, min_uses=3):
+        """Facts retrieved repeatedly and never once cited.
+
+        These are the ones to drop first when the store is full: they are
+        actively costing prompt budget and have never earned it.
+        """
+        return [r["text"] for r in self.db.execute(
+            "SELECT text FROM facts WHERE cites = 0 AND uses >= ?"
+            " ORDER BY uses DESC", (min_uses,))]
 
     # --- reminders -------------------------------------------------------
     def add_reminder(self, due_ts, text, kind="reminder"):

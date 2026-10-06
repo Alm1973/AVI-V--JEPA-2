@@ -87,6 +87,62 @@ class Facts(unittest.TestCase):
                 self.store.remember(bad)
 
 
+class Citations(unittest.TestCase):
+    """Retrieval is a guess about relevance; a citation is evidence of it.
+
+    Reflective Memory Management (arXiv 2503.08026) reports >10% on exactly
+    this distinction, and the cheap version is one column.
+    """
+
+    def setUp(self):
+        self.clock = Clock()
+        self.store = memdb.Store(clock=self.clock)
+        self.addCleanup(self.store.close)
+
+    def test_a_cited_fact_outranks_a_merely_retrieved_one(self):
+        self.store.remember("he has chemistry on Tuesdays")
+        self.store.remember("he has chemistry homework somewhere")
+        for _ in range(5):                      # both retrieved repeatedly
+            self.store.recall("chemistry")
+        self.store.cite("he has chemistry homework somewhere")
+        self.assertEqual(self.store.recall("chemistry", limit=1),
+                         ["he has chemistry homework somewhere"])
+
+    def test_citing_something_unknown_is_harmless(self):
+        self.assertEqual(self.store.cite("a fact that was never stored"), 0)
+
+    def test_dead_weight_is_findable(self):
+        """Retrieved often, never cited: actively costing prompt budget."""
+        self.store.remember("a fact that never helps")
+        self.store.remember("a fact that does help")
+        for _ in range(4):
+            self.store.recall()
+        self.store.cite("a fact that does help")
+        dead = self.store.dead_weight(min_uses=3)
+        self.assertIn("a fact that never helps", dead)
+        self.assertNotIn("a fact that does help", dead)
+
+    def test_eviction_prefers_the_never_cited(self):
+        self.store.remember("cited once, keep me")
+        self.store.cite("cited once, keep me")
+        for i in range(memdb.MAX_FACTS - 1):
+            self.clock.tick()
+            self.store.remember(f"never cited filler {i}")
+        self.clock.tick()
+        _, dropped = self.store.remember("forcing an eviction")
+        self.assertIsNotNone(dropped)
+        self.assertNotEqual(dropped, "cited once, keep me")
+
+    def test_cite_accepts_a_list(self):
+        self.store.remember("one")
+        self.store.remember("two")
+        self.assertEqual(self.store.cite(["one", "two", "three"]), 2)
+
+    def test_blank_citations_are_skipped(self):
+        self.store.remember("real")
+        self.assertEqual(self.store.cite(["", "   ", None]), 0)
+
+
 class Reminders(unittest.TestCase):
     def setUp(self):
         self.clock = Clock()
