@@ -32,6 +32,9 @@ LEARNED_STORES = {
     # When he is at the desk: as much "about him" as anything here.
     "avi_bot/perception/presence.py": ("PROFILES", "presence-dev.db",
                                        "presence.db"),
+    # What changes on his desk, and whether he was there when it did.
+    "avi_bot/perception/desk_changes.py": ("PROFILES", "desk-dev.db",
+                                           "desk.db"),
 }
 
 

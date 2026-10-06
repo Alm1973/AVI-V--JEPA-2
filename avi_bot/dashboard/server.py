@@ -53,6 +53,7 @@ from avi_bot.personality import (attention as att_mod,            # noqa: E402
 from avi_bot import env as env_mod                                # noqa: E402
 from avi_bot.perception import parallax                           # noqa: E402
 from avi_bot.perception import depth as depth_mod                 # noqa: E402
+from avi_bot.perception import desk_changes as desk_mod           # noqa: E402
 from avi_bot.perception import dome as dome_mod                   # noqa: E402
 from avi_bot.perception import presence as presence_mod           # noqa: E402
 from avi_bot.skills import breaks as breaks_mod                   # noqa: E402
@@ -196,6 +197,7 @@ class Arm:
         # dev store unless AVI_PROFILE=live, same as the map and the latents.
         self.presence = presence_mod.Presence(self.presence_path())
         self.coach = breaks_mod.BreakCoach(self.presence)
+        self.desk = desk_mod.DeskLog(self.store_path(desk_mod.PROFILES))
         self.load_roommap()
         # Live-tunable, so a value can be changed and watched without a push
         # and a restart. Chasing a confidence floor through a deploy cycle each
@@ -242,14 +244,20 @@ class Arm:
                   + f" -> {self.mood.emotion()}")
 
     @staticmethod
-    def presence_path():
+    def store_path(profiles):
+        """A learned store's path under the launch-day rule: dev unless
+        AVI_PROFILE=live."""
         profile = os.environ.get("AVI_PROFILE", "dev")
-        name = presence_mod.PROFILES.get(profile)
+        name = profiles.get(profile)
         if name is None:
             raise ValueError(f"unknown profile {profile!r}")
         d = os.path.join(os.environ.get("USERPROFILE", "."), "avi-remote")
         os.makedirs(d, exist_ok=True)
         return os.path.join(d, name)
+
+    @classmethod
+    def presence_path(cls):
+        return cls.store_path(presence_mod.PROFILES)
 
     # The pose that looks at his seat. Absence only counts from here: not
     # seeing him while the camera points at the ceiling is not evidence that
@@ -1327,6 +1335,12 @@ def make_handler(st):
                                          for a, b in pr.sessions()[-20:]],
                             "seat_view": arm.SEAT_VIEW,
                             "looking_at_seat": arm.view_ok_for_presence()})
+            elif self.path == "/desk_scan":
+                self._json(desk_scan(arm, latest,
+                                     min_conf=float(body.get("min_conf", 0.30))))
+            elif self.path == "/desk_history":
+                self._json({"changes": arm.desk.history(
+                    label=body.get("label"), limit=int(body.get("limit", 50)))})
             elif self.path == "/find":
                 self._json(find_object(arm, (body.get("name") or "").strip(),
                                        look=bool(body.get("look", True))))
@@ -1626,6 +1640,11 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
     # 0.25 and lost it all to the floor, or saw only a person. Three different
     # problems, one number, and no way to tune the grid without knowing which.
     per_stop = []
+    # Every kept detection's DIRECTION, for desk_changes: the map merges and
+    # decays, which is wrong for "is the pen there NOW", so a desk scan
+    # snapshots what this survey actually saw. Labels canonicalised so a mug
+    # read as "cup" on one scan cannot pass for something new.
+    sightings, visited_stops = [], []
     for yaw, wrist in stops:
         arm.set("base_yaw", yaw)
         arm.set("wrist", wrist)
@@ -1649,6 +1668,10 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                         [d["label"], round(d["conf"], 2)])
                     continue
                 looked["kept"].append([d["label"], round(d["conf"], 2)])
+                dy, dw = arm.roommap.direction_of(d["cx"], d["cy"], yaw, wrist)
+                sightings.append((roommap_mod.canonical_label(d["label"]),
+                                  round(dy, 2), round(dw, 2),
+                                  round(float(d["conf"]), 3)))
                 try:
                     arm.roommap.observe(
                         d["label"], d["cx"], d["cy"], yaw, wrist,
@@ -1660,6 +1683,7 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                             "hint": "POST /forget_map to rebuild at this shape"}
                 seen += 1
         per_stop.append(looked)
+        visited_stops.append((float(yaw), float(wrist)))
     arm.set_pose(start)
     arm.roommap.forget_stale()
     saved = arm.save_roommap()
@@ -1675,6 +1699,7 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
     return {"stops": len(stops), "frames": visited, "sightings": seen,
             "saved": saved, "levels": levels, "min_conf": min_conf,
             "per_stop": per_stop, "blank_stops": blank,
+            "sightings": sightings, "visited_stops": visited_stops,
             "near_misses": near_misses, "report_floor": REPORT_FLOOR,
             "shape": {"shoulder": shape["shoulder"], "elbow": shape["elbow"]},
             "unconfirmed": len(unconfirmed),
@@ -1686,6 +1711,37 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                            p.yaw, p.wrist, (lo, hi), (wlo, whi)),
                        "near": arm.roommap.nearest_anchor(p.yaw, p.wrist)[0]}
                       for p, w in known]}
+
+
+def desk_scan(arm, latest, min_conf=0.30, el_step=10.0, az_step=16.0,
+              el_start=12.0, el_limit=52.0):
+    """Survey the desk band, snapshot it, and record what changed.
+
+    Logs whether he was at the desk at the time, because that column is what
+    turns "the backpack disappeared" into "the backpack leaves when he does".
+    Ends at the seat view so presence keeps counting afterwards.
+    """
+    here = arm.presence.here
+    res = run_survey(arm, latest, min_conf=min_conf, settle=1.0, frames=3,
+                     el_step=el_step, az_step=az_step, el_start=el_start,
+                     el_limit=el_limit)
+    seat = (load_taught() or {}).get(arm.SEAT_VIEW)
+    if seat:
+        arm.set_pose(seat)
+    if res.get("error"):
+        return res
+    objects = desk_mod.snapshot(res.get("sightings") or [])
+    half = (arm.roommap.yaw_deg_per_frame / 2.0,
+            arm.roommap.wrist_deg_per_frame / 2.0)
+    changes = arm.desk.record(objects, res.get("visited_stops") or [], half,
+                              here=here)
+    log(f"desk_scan: {len(objects)} objects, here={here}, changes "
+        + ("none yet (first scan)" if changes is None else
+           ", ".join(f"{k} {len(changes[k])}" for k in
+                     ("appeared", "disappeared", "moved"))))
+    return {"objects": objects, "changes": changes, "here": here,
+            "stops": res.get("stops"), "sightings": len(res.get("sightings")
+                                                         or [])}
 
 
 def find_object(arm, name, look=True):
