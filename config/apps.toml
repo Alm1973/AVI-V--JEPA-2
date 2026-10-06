@@ -1,0 +1,17 @@
+# Apps AVI may open. A WHITELIST, and the only one.
+#
+# BUILD_SPEC 9: "Whitelist in config/apps.toml (name -> path or URL) only" and
+# the test is that an unlisted app is refused. That is not bureaucracy: this is
+# a tool a language model can call with a string it chose, so without a
+# whitelist "open calculator" and "open anything else on the disk" are the same
+# capability. Names are matched case-insensitively after trimming.
+
+[apps]
+notes = "https://keep.google.com"
+calendar = "https://calendar.google.com"
+classroom = "https://classroom.google.com"
+drive = "https://drive.google.com"
+desmos = "https://www.desmos.com/calculator"
+calculator = "calc.exe"
+notepad = "notepad.exe"
+explorer = "explorer.exe"
