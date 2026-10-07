@@ -154,3 +154,26 @@ class RepliesAreMoreThanWords(unittest.TestCase):
         self.assertEqual(out["gesture"], "shake")
         self.assertEqual(done, ["shake"])
         h.brain.close()
+
+
+class EveryReplyHasABody(unittest.TestCase):
+    def test_every_brain_gesture_is_playable_or_deliberately_nothing(self):
+        from avi_bot.brain import schema
+        from avi_bot.motion import gestures
+        for g in schema.GESTURES:
+            with self.subTest(g):
+                self.assertIn(g, bh.ARM_GESTURE)
+                arm = bh.ARM_GESTURE[g]
+                if arm is not None:
+                    gestures.make(arm)          # raises if the arm lacks it
+
+    def test_every_beep_has_a_gesture_until_there_is_a_speaker(self):
+        from avi_bot.brain import schema
+        from avi_bot.motion import gestures
+        for e in schema.EMOTIONS:
+            with self.subTest(e):
+                gestures.make(bh.BEEP_GESTURE[e])
+
+    def test_a_timer_set_nods(self):
+        self.assertEqual(bh.body_move(None, "neutral"), "nod")
+        self.assertIsNone(bh.body_move(None, "neutral", have_speaker=True))

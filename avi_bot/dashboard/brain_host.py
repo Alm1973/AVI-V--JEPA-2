@@ -26,6 +26,38 @@ PEOPLE = {"me", "him", "shaurya", "you", "person", "here", "over here"}
 # Played with an announcement until there is a speaker to say it.
 CUE_GESTURE = "ahem"
 
+# The brain may ask for 19 gestures (schema.GESTURES); the arm's library has
+# 13, and a name it does not have fails in gestures.make. Nearest move it can
+# actually play; None means "nothing", which is what "still" asks for.
+ARM_GESTURE = {
+    "nod": "nod", "shake": "shake", "perk_up": "perk_up", "droop": "droop",
+    "celebrate": "celebrate", "ahem": "ahem", "yawn_wake": "yawn_wake",
+    "thinking": "thinking", "embarrassed": "embarrassed",
+    "curious_lean": "curious_lean",
+    "tilt": "curious_lean", "lean_in": "curious_lean",
+    "shrug": "embarrassed", "look_around": "thinking", "greet": "perk_up",
+    "glance_at_you": "perk_up", "fidget": "excited_wiggle",
+    "still": None, "breathe": None,
+}
+
+# Until the speakers arrive a beep is silence, so "timer set" acknowledged
+# nothing at all. Each beep's emotion as the gesture that reads the same.
+BEEP_GESTURE = {
+    "neutral": "nod", "happy": "nod", "affectionate": "nod",
+    "excited": "excited_wiggle", "proud": "celebrate",
+    "curious": "curious_lean", "alert": "perk_up",
+    "sad": "droop", "sulky": "droop", "confused": "shake", "sleepy": "doze",
+}
+
+
+def body_move(gesture, beep, have_speaker=False):
+    """The arm gesture for a reply, or None."""
+    if gesture:
+        return ARM_GESTURE.get(gesture)
+    if beep and not have_speaker:
+        return BEEP_GESTURE.get(beep)
+    return None
+
 
 class BrainArm:
     """The dashboard Arm, as avi_bot.main.Avi expects to drive it."""
@@ -102,12 +134,13 @@ class Host:
             self.note(f"brain turn failed: {exc!r}")
             return {"error": repr(exc)}
         reply = decision.reply
-        if reply.gesture and self.perform is not None:
+        move = body_move(reply.gesture, reply.beep)
+        if move and self.perform is not None:
             try:
-                self.perform(reply.gesture)
+                self.perform(move)
             except Exception as exc:
-                self.note(f"reply gesture {reply.gesture} failed: {exc!r}")
-        out = {"say": reply.say, "gesture": reply.gesture,
+                self.note(f"reply gesture {move} failed: {exc!r}")
+        out = {"say": reply.say, "gesture": move,
                "beep": reply.beep, "route": decision.route,
                "provider": decision.provider,
                "tools": [c[0] for c in decision.calls],
