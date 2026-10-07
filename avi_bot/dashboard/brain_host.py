@@ -89,8 +89,12 @@ class BrainArm:
 
 class Host:
     def __init__(self, make_brain, present=lambda: True, note=print,
-                 cue=None, clock=time.time, perform=None):
+                 cue=None, clock=time.time, perform=None, speaker=None):
         self._make = make_brain
+        # voice/output.Speaker, or None. When it is switched on, words are
+        # spoken and beeps chirped, and a beep no longer needs a gesture to
+        # stand in for it.
+        self.speaker = speaker
         # Plays a reply's gesture on the arm. A reply is say + beep + gesture,
         # and before this only the words came back: the shake of a confused
         # turn, the nod of a timer set, were decided and then dropped.
@@ -138,7 +142,13 @@ class Host:
             self.note(f"brain turn failed: {exc!r}")
             return {"error": repr(exc)}
         reply = decision.reply
-        move = body_move(reply.gesture, reply.beep)
+        voiced = bool(self.speaker is not None and self.speaker.enabled())
+        if voiced:
+            if reply.say:
+                self.speaker.say_later(reply.say)
+            elif reply.beep:
+                self.speaker.chirp_later(reply.beep)
+        move = body_move(reply.gesture, reply.beep, have_speaker=voiced)
         if move and self.perform is not None:
             try:
                 self.perform(move)
@@ -169,6 +179,10 @@ class Host:
         with self._turn:
             return self._deliver(brain)
 
+    def _speak(self, text):
+        if self.speaker is not None and self.speaker.enabled():
+            self.speaker.say_later(text)
+
     def announce(self, text, kind="found"):
         """Queue something to tell him when he is next at the desk."""
         self.pending.append({"kind": kind, "text": text,
@@ -179,6 +193,7 @@ class Host:
         if self.pending and self.present():
             item = self.pending.pop(0)
             self.note(f"AVI would say: {item['text']}")
+            self._speak(item["text"])
             if self.cue is not None:
                 try:
                     self.cue()
@@ -191,6 +206,7 @@ class Host:
         if ann is None or not self.present():
             return None
         self.note(f"AVI would say: {ann.text}")
+        self._speak(ann.text)
         if self.cue is not None:
             try:
                 self.cue()

@@ -61,6 +61,8 @@ from avi_bot.perception import world as world_mod                 # noqa: E402
 from avi_bot.dashboard import settings as settings_mod            # noqa: E402
 from avi_bot.dashboard import brain_host as brain_host_mod        # noqa: E402
 from avi_bot.dashboard import health as health_mod                # noqa: E402
+from avi_bot.voice import output as output_mod                    # noqa: E402
+from avi_bot.voice import tts as tts_mod                          # noqa: E402
 from avi_bot.perception import spatial as spatial_mod             # noqa: E402
 from avi_bot.perception import observations as observations_mod   # noqa: E402
 from avi_bot.perception import scan_policy as scan_policy_mod     # noqa: E402
@@ -534,8 +536,18 @@ class Arm:
                                 arm=body, mood=self.mood,
                                 observed=self.observed_notes)
 
+        model = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))), "assistant",
+            "en_US-amy-medium.onnx")
+        speaker = output_mod.Speaker(
+            voice=tts_mod.Voice(backends=[tts_mod.Piper(model=model),
+                                          tts_mod.Silent()]),
+            enabled=lambda: bool(settings_mod.load(settings_mod.path()).get(
+                "speak", False)),
+            note=self.note)
         host = self.brain_host = brain_host_mod.Host(
             make, present=lambda: bool(self.presence.here), note=self.note,
+            speaker=speaker,
             cue=lambda: self.play(brain_host_mod.CUE_GESTURE,
                                   " (announcement)"),
             perform=lambda g: self.play(g, " (reply)"))
@@ -1479,6 +1491,9 @@ def make_handler(st):
                     ends_in_s=max(0.0, deadline - time.time())))
             elif self.path == "/settings":
                 path = settings_mod.path()
+                if "speak" in body:
+                    settings_mod.save(path, "speak", bool(body["speak"]))
+                    arm.note("speaking: " + ("on" if body["speak"] else "off"))
                 every = body.get("desk_scan_every_min")
                 if every is not None:
                     try:
