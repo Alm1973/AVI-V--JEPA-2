@@ -2226,6 +2226,11 @@ def find_object(arm, name, look=True, latest=None):
     if where:
         text = f"{text} {where}"
     moved = False
+    scanning = getattr(arm, "survey_lock", None)
+    if look and scanning is not None and scanning.locked():
+        # A survey is sweeping the arm; moving it now would file the survey's
+        # next stops under a pose it never held. Answer from the map, stay put.
+        look = False
     if look and aim and aim.get("confident"):
         for joint in ("shoulder", "elbow", "base_yaw", "wrist"):
             if aim.get(joint) is None:
