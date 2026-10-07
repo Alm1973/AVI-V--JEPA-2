@@ -43,9 +43,12 @@ class Avi:
     def __init__(self, db_path=":memory:", clock=time.time,
                  arm=None, mood=None, ics_text=None, calendar_url=None,
                  lamp_host=None, apps_path=None, env=None,
-                 send=None, local_pick=None):
+                 send=None, local_pick=None, observed=None):
         self.clock = clock
         self.started_at = clock()
+        # Sentences AVI noticed by watching (presence, desk layout); see
+        # perception/observations.py. None when headless.
+        self.observed = observed
         # `arm` is the dashboard's Arm, or None in a headless test. Every use
         # of it is guarded, so the brain runs with no hardware at all.
         self.arm = arm
@@ -112,7 +115,8 @@ class Avi:
             "look_at": self._look_at,
             "play_emotion": self._play,
         }
-        handlers.update(memory_tools.make(self.store))
+        handlers.update(memory_tools.make(self.store,
+                                          observed=self.observed))
         handlers.update(focus_mod.make(self.focus))
         handlers.update(modes_mod.make(self.modes))
         handlers.update(lamp_mod.make(self.lamp))

@@ -1,0 +1,44 @@
+"""What AVI has noticed about him, as sentences it can say.
+
+The main directive is to learn about Shaurya by watching his surroundings and
+use it to help. Presence and the desk layout were being learned, but asked
+"what do you know about me" the brain answered only from what he had TOLD it
+-- so everything learned by watching was invisible to him. These are the
+watched half, phrased as things AVI noticed rather than facts it was given,
+and only as confident as the evidence: one day of arrivals is not a habit
+(presence.summary withholds usual_arrival_hour until there are three).
+"""
+from avi_bot import numbers
+
+
+def notes(presence=None, layout=None):
+    """Short sentences, most personal first. Either input may be None."""
+    out = []
+    p = presence or {}
+    if p.get("here") and p.get("for_minutes"):
+        out.append(f"You've been at the desk {int(p['for_minutes'])} "
+                   "minutes.")
+    elif p.get("today_minutes"):
+        out.append(f"You were at the desk {int(p['today_minutes'])} "
+                   "minutes today.")
+    if p.get("usual_arrival_hour") is not None:
+        h = float(p["usual_arrival_hour"])
+        import datetime as dt
+        at = dt.datetime(2000, 1, 1, int(h) % 24, int(round((h % 1) * 60)) % 60)
+        out.append(f"You usually sit down around "
+                   f"{numbers.clock_time(at, am_pm=True)}.")
+    for o in layout or []:
+        where = (o.get("where") or "").rstrip(".")
+        if where and o.get("label"):
+            out.append(f"Your {o['label']} was {where[0].lower()}{where[1:]}.")
+    return out
+
+
+def about(query, sentences):
+    """The noticed sentences that mention `query` (all of them if None)."""
+    if not query:
+        return list(sentences)
+    q = query.lower().strip()
+    words = [w for w in q.replace("?", "").split() if len(w) > 2]
+    return [s for s in sentences
+            if any(w in s.lower() for w in words or [q])]

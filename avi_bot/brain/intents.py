@@ -200,6 +200,44 @@ def _mute(m):
     return Intent("media", {"action": "mute"})
 
 
+# --- memory ---------------------------------------------------------------
+# Local, not left to the model: asked "what do you know about me", the cloud
+# model answered "I have no stored facts" WITHOUT calling the tool -- with a
+# fact stored and an afternoon of observations behind it. A question about
+# what AVI knows must never be answered from what the model guesses.
+_ABOUT_HIM = {"me", "myself", "shaurya", "him", "my stuff", "my things"}
+
+
+def _about(text):
+    q = (text or "").strip().rstrip("?").strip()
+    q = re.sub(r"^(?:my|the)\s+", "", q, flags=re.I)
+    return None if not q or q.lower() in _ABOUT_HIM else q
+
+
+@rule(r"^what\s+(?:do\s+you\s+know|have\s+you\s+(?:noticed|learned|"
+      r"learnt|seen))(?:\s+about\s+(?P<q>.+?))?\??$")
+@rule(r"^what\s+do\s+you\s+remember(?:\s+about\s+(?P<q>.+?))?\??$")
+def _what_do_you_know(m):
+    q = _about(m.groupdict().get("q"))
+    return Intent("what_do_you_know", {"query": q} if q else {},
+                  reason="answer")
+
+
+@rule(r"^remember\s+(?!to\s)(?:that\s+)?(?P<fact>.{3,280})$")
+def _remember(m):
+    return Intent("remember", {"text": m.group("fact").strip()})
+
+
+@rule(r"^forget\s+(?:that\s+|about\s+)?(?P<fact>.{2,280})$")
+def _forget(m):
+    return Intent("forget", {"text": m.group("fact").strip()})
+
+
+@rule(r"^what\s+timers?\s+(?:do\s+i\s+have|are\s+(?:on|set))\??$")
+def _which_timers(m):
+    return Intent("list_timers", {}, reason="answer")
+
+
 # --- finding things -------------------------------------------------------
 @rule(r"^(?:where(?:'s| is| are)\s+)(?:my\s+|the\s+)?(?P<what>.+?)\??$")
 @rule(r"^(?:have\s+you\s+seen\s+)(?:my\s+|the\s+)?(?P<what>.+?)\??$")

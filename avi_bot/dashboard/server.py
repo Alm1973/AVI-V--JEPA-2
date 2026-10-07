@@ -61,6 +61,7 @@ from avi_bot.perception import world as world_mod                 # noqa: E402
 from avi_bot.dashboard import settings as settings_mod            # noqa: E402
 from avi_bot.dashboard import brain_host as brain_host_mod        # noqa: E402
 from avi_bot.perception import spatial as spatial_mod             # noqa: E402
+from avi_bot.perception import observations as observations_mod   # noqa: E402
 from avi_bot.motion import backlash as backlash_mod               # noqa: E402
 from avi_bot.perception import presence as presence_mod           # noqa: E402
 from avi_bot.skills import breaks as breaks_mod                   # noqa: E402
@@ -476,6 +477,16 @@ class Arm:
     # The voice brain's memory: what he asked, reminders, things he told it.
     BRAIN_PROFILES = {"dev": "brain-dev.db", "live": "brain.db"}
 
+    def observed_notes(self):
+        """What AVI has noticed about him, for "what do you know about me"."""
+        try:
+            _, objects = self.desk.last()
+        except Exception:
+            objects = []
+        placed = [o for o in (objects or []) if "x" in o]
+        return observations_mod.notes(self.presence.summary(),
+                                      spatial_mod.layout(placed))
+
     def make_brain_host(self, latest):
         """The voice brain, built on first /ask (brain_host.py)."""
         def recall(name):
@@ -489,7 +500,8 @@ class Arm:
                 self, recall, lambda n, look: find_object(self, n, look=look),
                 seat_view=self.SEAT_VIEW)
             return main_mod.Avi(db_path=self.store_path(self.BRAIN_PROFILES),
-                                arm=body, mood=self.mood)
+                                arm=body, mood=self.mood,
+                                observed=self.observed_notes)
 
         return brain_host_mod.Host(
             make, present=lambda: bool(self.presence.here), note=self.note,
