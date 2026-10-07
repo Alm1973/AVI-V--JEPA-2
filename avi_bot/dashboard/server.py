@@ -62,6 +62,7 @@ from avi_bot.dashboard import settings as settings_mod            # noqa: E402
 from avi_bot.dashboard import brain_host as brain_host_mod        # noqa: E402
 from avi_bot.perception import spatial as spatial_mod             # noqa: E402
 from avi_bot.perception import observations as observations_mod   # noqa: E402
+from avi_bot.perception import scan_policy as scan_policy_mod     # noqa: E402
 from avi_bot.motion import backlash as backlash_mod               # noqa: E402
 from avi_bot.perception import presence as presence_mod           # noqa: E402
 from avi_bot.skills import breaks as breaks_mod                   # noqa: E402
@@ -177,6 +178,9 @@ class Arm:
         # collecting meant no POV page. Measured 2026-10-06 with YOLO already
         # resident: 5.38 GB of 6.44 free, and V-JEPA 2 ViT-L needs 0.74, so
         # they fit together and the turn-taking was never necessary.
+        # One survey at a time: a scheduled desk scan must never start while
+        # a /survey or a probe is sweeping the arm.
+        self.survey_lock = threading.Lock()
         self.latents = threading.Event()
         if settings_mod.load(settings_mod.path()).get("latents"):
             self.latents.set()          # it was on before the restart
@@ -300,6 +304,29 @@ class Arm:
         now = self.snapshot()
         return all(abs(float(now[j]) - float(seat[j])) <= self.SEAT_TOLERANCE_DEG
                    for j in poses.JOINTS if j in seat)
+
+    def scan_loop(self, latest, deadline, period=60.0):
+        """Scheduled desk scans, when switched on (perception/scan_policy).
+        Reads the switch every minute, so turning it on or off needs no
+        restart."""
+        while time.time() < deadline:
+            time.sleep(period)
+            try:
+                every = float(settings_mod.load(settings_mod.path()).get(
+                    "desk_scan_every_min", 0) or 0)
+                last_ts, _ = self.desk.last()
+                ok, why = scan_policy_mod.due(
+                    time.time(), last_ts, every, self.presence.here,
+                    time.localtime().tm_hour)
+                # paused is an Event: the object itself is always truthy.
+                if not ok or self.survey_lock.locked() or self.paused.is_set():
+                    continue
+                self.note(f"scheduled desk scan (every {every:.0f} min)")
+                res = desk_scan(self, latest)
+                if res.get("error"):
+                    self.note(f"scheduled desk scan failed: {res['error']}")
+            except Exception as exc:
+                self.note(f"scan loop: {exc!r}")
 
     def presence_loop(self, latest, deadline, period=20.0):
         """Look for him every `period` seconds and learn when he is here.
@@ -1424,6 +1451,21 @@ def make_handler(st):
             elif self.path == "/desk_scan":
                 self._json(desk_scan(arm, latest,
                                      min_conf=float(body.get("min_conf", 0.30))))
+            elif self.path == "/settings":
+                path = settings_mod.path()
+                every = body.get("desk_scan_every_min")
+                if every is not None:
+                    try:
+                        every = float(every)
+                    except (TypeError, ValueError):
+                        every = -1
+                    if not 0 <= every <= 1440:
+                        return self._json({"error": "desk_scan_every_min is "
+                                           "minutes, 0 (off) to 1440"}, 400)
+                    settings_mod.save(path, "desk_scan_every_min", every)
+                    arm.note(f"scheduled desk scans: "
+                             + (f"every {every:.0f} min" if every else "off"))
+                self._json(settings_mod.load(path))
             elif self.path == "/ask":
                 if brain is None:
                     self._json({"error": "no brain in this process"}, 503)
@@ -1716,9 +1758,22 @@ def _clipped(d, frame):
             or d["cy"] + d["h"] / 2 >= fh - EDGE_PX)
 
 
-def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
-               frames=2, pose=None, el_step=12.0, az_step=16.0,
-               el_limit=60.0, el_start=12.0):
+def run_survey(arm, latest, **kw):
+    """One survey at a time (arm.survey_lock); see _run_survey."""
+    lock = getattr(arm, "survey_lock", None)
+    if lock is None:
+        return _run_survey(arm, latest, **kw)
+    if not lock.acquire(blocking=False):
+        return {"error": "another survey is already running"}
+    try:
+        return _run_survey(arm, latest, **kw)
+    finally:
+        lock.release()
+
+
+def _run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
+                frames=2, pose=None, el_step=12.0, az_step=16.0,
+                el_limit=60.0, el_start=12.0):
     """Look around the room on purpose and write down what is where.
 
     This is the "look around" behaviour with a point to it. The stops come
@@ -3052,6 +3107,8 @@ def main():
     threading.Thread(target=arm.pause_loop, args=(latest, deadline),
                      daemon=True).start()
     threading.Thread(target=arm.latent_loop, args=(latest, deadline),
+                     daemon=True).start()
+    threading.Thread(target=arm.scan_loop, args=(latest, deadline),
                      daemon=True).start()
     brain = arm.make_brain_host(latest)
     threading.Thread(target=brain.loop, args=(deadline,),
