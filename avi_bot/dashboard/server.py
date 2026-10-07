@@ -58,6 +58,7 @@ from avi_bot.perception import desk_changes as desk_mod           # noqa: E402
 from avi_bot.perception import dome as dome_mod                   # noqa: E402
 from avi_bot.perception import horizon as horizon_mod             # noqa: E402
 from avi_bot.perception import world as world_mod                 # noqa: E402
+from avi_bot.dashboard import settings as settings_mod            # noqa: E402
 from avi_bot.perception import spatial as spatial_mod             # noqa: E402
 from avi_bot.motion import backlash as backlash_mod               # noqa: E402
 from avi_bot.perception import presence as presence_mod           # noqa: E402
@@ -175,6 +176,8 @@ class Arm:
         # resident: 5.38 GB of 6.44 free, and V-JEPA 2 ViT-L needs 0.74, so
         # they fit together and the turn-taking was never necessary.
         self.latents = threading.Event()
+        if settings_mod.load(settings_mod.path()).get("latents"):
+            self.latents.set()          # it was on before the restart
         self.latent_encoder = None
         self.latent_db = None
         self.latent_count = 0
@@ -1472,6 +1475,10 @@ def make_handler(st):
                 arm.latents.set() if want else arm.latents.clear()
                 if want:
                     arm.latent_error = None      # let a retry be possible
+                try:
+                    settings_mod.save(settings_mod.path(), "latents", want)
+                except OSError as exc:
+                    arm.note(f"could not remember latents={want}: {exc!r}")
                 arm.note("latents on" if want else "latents off")
                 self._json({"ok": True, "latents": want,
                             "count": arm.latent_count})
@@ -1697,6 +1704,17 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
         grid = dome.grid(el_step=float(el_step), az_step=float(az_step),
                          limit=float(el_limit), start=float(el_start))
         stops = [(p["base_yaw"], p["wrist"]) for _, _, p in grid]
+        # A stop closer to soft_min than the backlash can never get a full
+        # run-up, so it is never settled and everything it sees is thrown
+        # away. Visiting it anyway was ~18 of 99 moves per dense survey --
+        # servo work on a servo that stalls under sustained work. Objects out
+        # there are still seen at the left edge of the first settled column.
+        floor = lo + backlash_mod.YAW_BACKLASH_DEG
+        skipped = [st for st in stops if st[0] < floor]
+        stops = [st for st in stops if st[0] >= floor]
+        if skipped:
+            log(f"survey: skipping {len(skipped)} stops below yaw "
+                f"{floor:.0f}, which cannot be approached from below")
         shape_src = dome.pole_shape()
         arm.set("shoulder", shape_src["shoulder"])
         arm.set("elbow", shape_src["elbow"])

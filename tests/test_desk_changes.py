@@ -141,3 +141,31 @@ class DeskPositions(unittest.TestCase):
     def test_old_four_field_sightings_still_work(self):
         snap = dc.snapshot(seen("laptop", 94, 153))
         self.assertNotIn("x", snap[0])
+
+
+class FaintThingsAreNotNews(unittest.TestCase):
+    """The second real scan: a mug (2 hits, 0.34) and a backpack (2 hits,
+    0.31) "appeared" -- both there all along, just under the bar before."""
+
+    def setUp(self):
+        self.before = dc.snapshot(seen("laptop", 94, 153) + seen("pen", 34, 139))
+
+    def test_a_faint_newcomer_is_not_an_appearance(self):
+        after = self.before + dc.snapshot(seen("mug", 110, 160, n=2,
+                                               conf=0.34))
+        d = dc.diff(self.before, after, DESK, HALF)
+        self.assertEqual(d["appeared"], [])
+        self.assertIn("mug", d["faint"])
+
+    def test_a_faint_object_missing_is_not_a_disappearance(self):
+        before = self.before + dc.snapshot(seen("mug", 100, 150, n=2,
+                                                conf=0.34))
+        d = dc.diff(before, self.before, DESK, HALF)
+        self.assertEqual(d["disappeared"], [])
+        self.assertIn("mug", d["faint"])
+
+    def test_a_solid_newcomer_still_is(self):
+        after = self.before + dc.snapshot(seen("mug", 100, 150, n=4,
+                                               conf=0.6))
+        d = dc.diff(self.before, after, DESK, HALF)
+        self.assertEqual([a["label"] for a in d["appeared"]], ["mug"])

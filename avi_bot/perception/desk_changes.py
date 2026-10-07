@@ -26,6 +26,13 @@ SAME_DEG = 12.0          # one object if two sightings are this close in view
 MOVED_DEG = 15.0         # a matched object this far from before has moved
 MIN_CONF = 0.30          # a detection weaker than this does not enter a snapshot
 MIN_HITS = 2             # an object seen fewer times in one scan is a guess
+# Only SOLID objects can appear or disappear. The second real scan reported a
+# mug (2 hits, 0.34) and a backpack (2 hits, 0.31) as "appeared": both had
+# been there all along, just under the snapshot's bar the time before. A thing
+# hovering at the detector's edge flickers in and out of snapshots, and every
+# flicker would be a fake event in the history AVI learns his habits from.
+SOLID_HITS = 3
+SOLID_CONF = 0.40
 
 PROFILES = {"dev": "desk-dev.db", "live": "desk.db"}
 
@@ -110,16 +117,23 @@ def covered(direction, stops, half_width):
                for y, w in stops)
 
 
+def solid(obj):
+    """Seen often and clearly enough that its coming or going is news."""
+    return (obj.get("hits", 0) >= SOLID_HITS
+            and obj.get("conf", 0.0) >= SOLID_CONF)
+
+
 def diff(before, after, after_stops, half_width, moved_deg=MOVED_DEG,
          same_deg=SAME_DEG):
     """appeared / disappeared / moved / stayed between two snapshots.
 
     `after_stops` and `half_width` describe what the NEW scan could see, so a
     missing object is only called gone when the new scan looked at its place.
-    Objects that could not be checked are reported as `unchecked`.
+    Objects that could not be checked are reported as `unchecked`; ones too
+    faint for their presence or absence to mean anything, as `faint`.
     """
     out = {"appeared": [], "disappeared": [], "moved": [], "stayed": [],
-           "unchecked": []}
+           "unchecked": [], "faint": []}
     used = set()
     for b in before:
         match, best = None, None
@@ -140,15 +154,21 @@ def diff(before, after, after_stops, half_width, moved_deg=MOVED_DEG,
             else:
                 out["stayed"].append(b["label"])
             continue
-        if covered((b["yaw"], b["wrist"]), after_stops, half_width):
+        if not solid(b):
+            out["faint"].append(b["label"])
+        elif covered((b["yaw"], b["wrist"]), after_stops, half_width):
             out["disappeared"].append({"label": b["label"],
                                        "at": [b["yaw"], b["wrist"]]})
         else:
             out["unchecked"].append(b["label"])
     for i, a in enumerate(after):
-        if i not in used:
+        if i in used:
+            continue
+        if solid(a):
             out["appeared"].append({"label": a["label"],
                                     "at": [a["yaw"], a["wrist"]]})
+        else:
+            out["faint"].append(a["label"])
     return out
 
 
