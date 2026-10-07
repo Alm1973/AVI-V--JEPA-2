@@ -92,6 +92,9 @@ def snapshot(sightings, same_deg=SAME_DEG, min_conf=MIN_CONF,
             ys = sorted(p[1] for p in xys)
             o["x"], o["y"] = (round(xs[len(xs) // 2], 2),
                               round(ys[len(ys) // 2], 2))
+            zs = sorted(p[2] for p in xys if len(p) > 2 and p[2] is not None)
+            if zs:
+                o["height"] = round(zs[len(zs) // 2], 2)
         out.append(o)
     return out
 

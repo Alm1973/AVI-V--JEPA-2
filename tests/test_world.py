@@ -191,3 +191,21 @@ class OnTheDesk(unittest.TestCase):
 
     def test_level_or_above_is_not_on_the_desk(self):
         self.assertIsNone(VIEW.on_plane(640, 360, 90, 165))
+
+
+class HowTall(unittest.TestCase):
+    def test_a_box_standing_on_the_desk_has_its_height(self):
+        foot, top_h = (3.0, 0.5), 0.6         # a laptop screen, lens heights
+        yaw, wrist = 95, 145
+        phi = math.radians(VIEW.camera(yaw, wrist)[0])
+        cam = np.array([0.35 * math.cos(phi), 0.35 * math.sin(phi), 1.0])
+        top = np.array([foot[0], foot[1], top_h]) - cam
+        px, py = VIEW.pixel(top / np.linalg.norm(top), yaw, wrist)
+        self.assertAlmostEqual(
+            VIEW.height_over(px, py, foot, yaw, wrist, 0.35), top_h, places=6)
+
+    def test_something_flat_has_no_height(self):
+        foot = (2.0, -1.2)
+        px, py = VIEW.plane_pixel(foot, 60, 135, 0.35)
+        self.assertAlmostEqual(
+            VIEW.height_over(px, py, foot, 60, 135, 0.35), 0.0, places=6)

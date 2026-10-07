@@ -80,3 +80,13 @@ class TwoOfAKind(unittest.TestCase):
                 {"label": "backpack", "x": 3.7, "y": 1.4, "hits": 11},
                 {"label": "backpack", "x": 2.1, "y": -1.6, "hits": 5}]
         self.assertIn("ight of", sp.describe("backpack", desk))
+
+
+class OneRulerNumber(unittest.TestCase):
+    def test_no_height_means_no_metres(self):
+        self.assertNotIn("range_m", sp.layout(DESK)[0])
+
+    def test_a_measured_height_adds_metres(self):
+        row = sp.layout([dict(DESK[1], height=0.7)], lens_height_m=0.3)[0]
+        self.assertAlmostEqual(row["range_m"], round(row["range"] * 0.3, 2))
+        self.assertAlmostEqual(row["height_m"], 0.21)

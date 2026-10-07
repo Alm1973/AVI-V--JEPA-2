@@ -95,13 +95,20 @@ def describe(target, objects, landmarks=("laptop", "mug", "book")):
     return f"{rel['words'].capitalize()}{tail}."
 
 
-def layout(objects):
+def layout(objects, lens_height_m=0.0):
     """Every object's range from AVI and its place relative to each other,
-    for /desk_layout. Objects need "label", "x", "y"."""
+    for /desk_layout. Objects need "label", "x", "y". With a measured lens
+    height, metric fields are added alongside the relative ones."""
     out = []
     for o in objects:
-        out.append({"label": o["label"], "x": round(o["x"], 2),
-                    "y": round(o["y"], 2),
-                    "range": round(range_from_me(o), 2),
-                    "where": describe(o, objects)})
+        row = {"label": o["label"], "x": round(o["x"], 2),
+               "y": round(o["y"], 2), "height": o.get("height"),
+               "range": round(range_from_me(o), 2),
+               "where": describe(o, objects)}
+        if lens_height_m:
+            row["range_m"] = round(metres(row["range"], lens_height_m), 2)
+            if row["height"] is not None:
+                row["height_m"] = round(metres(row["height"],
+                                               lens_height_m), 2)
+        out.append(row)
     return sorted(out, key=lambda r: r["range"])

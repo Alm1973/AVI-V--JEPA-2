@@ -414,3 +414,9 @@ self_view_wrist = 44.0
 # metric.
 camera_faces = "outward"
 offset_over_height = 0.35
+# THE ONE RULER NUMBER. Lens height above the desk surface at TALL, metres.
+# Everything 3D is in units of it until it is set; set it and /desk_layout
+# and /find report metres. A provisional, prior-based guess from the laptop
+# screen standing 0.63-0.72 lens heights tall (a typical open screen is
+# 0.22-0.25 m) is ~0.3 m -- NOT measured, so it is not entered here.
+lens_height_m = 0.0

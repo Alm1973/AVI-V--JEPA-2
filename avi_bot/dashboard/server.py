@@ -1359,10 +1359,16 @@ def make_handler(st):
             elif self.path == "/desk_layout":
                 ts, objects = arm.desk.last()
                 placed = [o for o in (objects or []) if "x" in o]
-                self._json({"scanned_at": ts, "units": "lens heights above "
-                            "the desk (unmeasured: relative only)",
+                lens_m = float(arm.config.raw.get("horizon", {}).get(
+                    "lens_height_m", 0.0) or 0.0)
+                self._json({"scanned_at": ts,
+                            "units": ("lens heights above the desk, and "
+                                      f"metres (lens at {lens_m} m)"
+                                      if lens_m else
+                                      "lens heights above the desk "
+                                      "(unmeasured: relative only)"),
                             "viewpoint": "AVI's, from its base",
-                            "objects": spatial_mod.layout(placed),
+                            "objects": spatial_mod.layout(placed, lens_m),
                             "unplaced": [o["label"] for o in (objects or [])
                                          if "x" not in o]})
             elif self.path == "/desk_history":
@@ -1813,13 +1819,19 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
                     # heights -- the object's foot, not its middle.
                     view = arm.roommap.view
                     if view is not None:
+                        off = float(arm.config.raw.get("horizon", {}).get(
+                            "offset_over_height", 0.0))
                         xy = view.on_plane(
-                            d["cx"], d["cy"] + d["h"] / 2.0, yaw, wrist,
-                            float(arm.config.raw.get("horizon", {}).get(
-                                "offset_over_height", 0.0)))
+                            d["cx"], d["cy"] + d["h"] / 2.0, yaw, wrist, off)
                         if xy is not None:
-                            row = row + ((round(xy[0], 3),
-                                          round(xy[1], 3)),)
+                            # And how tall: its top edge, standing over
+                            # that foot.
+                            z = view.height_over(
+                                d["cx"], d["cy"] - d["h"] / 2.0, xy, yaw,
+                                wrist, off)
+                            row = row + ((round(xy[0], 3), round(xy[1], 3),
+                                          None if z is None
+                                          else round(z, 3)),)
                     sightings.append(row)
                 try:
                     arm.roommap.observe(

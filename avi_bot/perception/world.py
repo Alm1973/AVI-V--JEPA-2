@@ -126,6 +126,24 @@ class View:
         return (float(offset_over_height * math.cos(phi) + t * d[0]),
                 float(offset_over_height * math.sin(phi) + t * d[1]))
 
+    def height_over(self, px, py, foot, yaw, wrist, offset_over_height=0.0):
+        """How high above the desk a pixel is, if it sits straight above the
+        desk point `foot` (lens heights; the lens is at 1.0).
+
+        For a box: `foot` from on_plane(bottom-centre), (px, py) its
+        top-centre. Assumes the object stands upright over its foot -- true
+        for a mug or a laptop screen, rough for a leaning backpack.
+        """
+        d = self.ray(px, py, yaw, wrist)
+        phi = math.radians(self.camera(yaw, wrist)[0])
+        cam = (offset_over_height * math.cos(phi),
+               offset_over_height * math.sin(phi))
+        reach = math.hypot(foot[0] - cam[0], foot[1] - cam[1])
+        flat = math.hypot(float(d[0]), float(d[1]))
+        if flat < 1e-9:
+            return None
+        return 1.0 + reach * float(d[2]) / flat
+
     def plane_pixel(self, xy, yaw, wrist, offset_over_height=0.0):
         """Inverse of on_plane: where a desk point (in lens heights) lands in
         the picture, or None if behind the camera."""

@@ -971,3 +971,34 @@ seat is not measured), units relative until the lens height is. Things above
 level (the "mug" at wrist 164) get no desk position -- they are not on this
 desk plane. From the clean survey: pen 2.4, laptop 3.7, backpacks 2.7 and 4.0
 lens heights from the base axis.
+
+### 3D is done up to one ruler number (2026-10-06 ~17:10)
+Every desk object now has (x, y, height) in lens heights, from AVI's base:
+`POST /desk_layout`. Two live scans 10 min apart agree to 0.1-0.24 h. Live:
+
+| object | range | height | where |
+|---|---|---|---|
+| pen | 2.30 h | 0.04 h | in front of and left of the laptop, nearer to me |
+| laptop | 3.41 h | 0.63 h | left of the backpack |
+| backpack | 3.86 h | 0.74 h | right of the laptop, farther from me |
+
+/find says it: "The desk, around 4:58. In front of and left of the laptop,
+nearer to me." Set `[horizon] lens_height_m` (ruler: lens to desk surface at
+TALL) and both report metres too. **Provisional, not entered:** the laptop
+screen standing 0.63-0.72 h tall, against a typical 0.22-0.25 m open screen,
+puts the lens at ~0.3 m.
+
+Also fixed: /find crashed on the MSI for every object it had seen --
+`strftime("%-I")` is invalid on Windows (Mac tests could not see it); same bug
+in reminders more than an hour out. `numbers.clock_time()`, plus a test that
+fails on any "%-X" in the robot's code.
+
+base_yaw recovered from its stall after ~13 min idle with no reset (backlash
+then read 14.95, repeat 0.8): it rests itself, i.e. heat or supply sag, not a
+latch. Long dense surveys back to back trigger it; desk scans (35 stops) have
+been fine.
+
+**What is left for 3D:** the ruler number; parallax correction in the
+DIRECTION map (desk positions already correct for it); measuring [horizon]
+at ATTENTIVE's shape (one roll measurement) if the seat view ever needs world
+directions.
