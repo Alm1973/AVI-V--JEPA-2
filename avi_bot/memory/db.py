@@ -78,7 +78,11 @@ CREATE TABLE IF NOT EXISTS provider_usage (
 
 class Store:
     def __init__(self, path=":memory:", clock=time.time):
-        self.db = sqlite3.connect(path)
+        # Hosted in the dashboard, each HTTP request runs on its own thread
+        # and the scheduler ticks on another; the default per-thread check
+        # failed every turn after the first. Turns are serialised by the
+        # host (dashboard/brain_host.py), so sharing the connection is safe.
+        self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         self.db.commit()

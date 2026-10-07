@@ -59,6 +59,7 @@ from avi_bot.perception import dome as dome_mod                   # noqa: E402
 from avi_bot.perception import horizon as horizon_mod             # noqa: E402
 from avi_bot.perception import world as world_mod                 # noqa: E402
 from avi_bot.dashboard import settings as settings_mod            # noqa: E402
+from avi_bot.dashboard import brain_host as brain_host_mod        # noqa: E402
 from avi_bot.perception import spatial as spatial_mod             # noqa: E402
 from avi_bot.motion import backlash as backlash_mod               # noqa: E402
 from avi_bot.perception import presence as presence_mod           # noqa: E402
@@ -472,6 +473,28 @@ class Arm:
     # launch day genuinely starts from nothing. Discovering his room is part of
     # what he wants to watch happen, not something to restore from a backup.
     ROOMMAP_PROFILES = {"dev": "roommap-dev.json", "live": "roommap.json"}
+    # The voice brain's memory: what he asked, reminders, things he told it.
+    BRAIN_PROFILES = {"dev": "brain-dev.db", "live": "brain.db"}
+
+    def make_brain_host(self, latest):
+        """The voice brain, built on first /ask (brain_host.py)."""
+        def recall(name):
+            taught = load_taught() or {}
+            if name in taught:
+                self.set_pose({j: taught[name][j] for j in poses.JOINTS})
+
+        def make():
+            from avi_bot import main as main_mod
+            body = brain_host_mod.BrainArm(
+                self, recall, lambda n, look: find_object(self, n, look=look),
+                seat_view=self.SEAT_VIEW)
+            return main_mod.Avi(db_path=self.store_path(self.BRAIN_PROFILES),
+                                arm=body, mood=self.mood)
+
+        return brain_host_mod.Host(
+            make, present=lambda: bool(self.presence.here), note=self.note,
+            cue=lambda: self.play(brain_host_mod.CUE_GESTURE,
+                                  " (announcement)"))
 
     @classmethod
     def roommap_path(cls, profile=None):
@@ -1159,6 +1182,7 @@ POV_OUT = POV.replace(b"__BUILD__", BUILD.encode())
 def make_handler(st):
     arm, latest, deadline, fps = st["arm"], st["latest"], st["deadline"], st["fps"]
     stop_event = st["stop"]
+    brain = st.get("brain")
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -1359,6 +1383,11 @@ def make_handler(st):
             elif self.path == "/desk_scan":
                 self._json(desk_scan(arm, latest,
                                      min_conf=float(body.get("min_conf", 0.30))))
+            elif self.path == "/ask":
+                if brain is None:
+                    self._json({"error": "no brain in this process"}, 503)
+                else:
+                    self._json(brain.ask(body.get("text", "")))
             elif self.path == "/desk_layout":
                 ts, objects = arm.desk.last()
                 placed = [o for o in (objects or []) if "x" in o]
@@ -2964,9 +2993,12 @@ def main():
                      daemon=True).start()
     threading.Thread(target=arm.latent_loop, args=(latest, deadline),
                      daemon=True).start()
+    brain = arm.make_brain_host(latest)
+    threading.Thread(target=brain.loop, args=(deadline,),
+                     daemon=True).start()
 
     srv = ThreadingHTTPServer((host, args.port), make_handler({
-        "arm": arm, "latest": latest, "deadline": deadline,
+        "arm": arm, "latest": latest, "deadline": deadline, "brain": brain,
         "fps": args.fps, "stop": stop_event}))
     srv.daemon_threads = True
     log(f"backend={backend.name} page build {BUILD}")

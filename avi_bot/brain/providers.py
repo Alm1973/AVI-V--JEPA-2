@@ -83,7 +83,9 @@ def redact(text):
 
 class Budget:
     def __init__(self, path=":memory:", today=None):
-        self.db = sqlite3.connect(path)
+        # Shared across the dashboard's request threads; the host
+        # serialises turns (see memory/db.py).
+        self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         self.db.commit()
@@ -222,8 +224,8 @@ class Chain:
                 "instead", retryable=False)
         try:
             from openai import OpenAI
-        except ImportError as exc:
-            raise ProviderError(name, f"openai sdk missing: {exc}")
+        except ImportError:
+            return self._http_send(name, url, model, messages, tools)
         client = OpenAI(base_url=url, api_key=self.env.get(KEY_ENV[name]),
                         timeout=20.0)
         try:
@@ -233,3 +235,47 @@ class Chain:
             return client.chat.completions.create(**kwargs)
         except Exception as exc:
             raise ProviderError(name, f"{type(exc).__name__}: {exc}")
+
+    def _http_send(self, name, url, model, messages, tools):
+        """The same call over plain HTTPS, when the openai SDK is absent.
+
+        The MSI's venv has no openai package, so every question the local
+        rules could not answer came back "confused" -- found 2026-10-06 when
+        the brain was first hosted on the real arm. Installing packages there
+        needs Shaurya's OK, and the API is JSON over HTTPS anyway. The router
+        already reads a plain-dict response. The key goes in a header and
+        never into an error message.
+        """
+        import json as _json
+        import urllib.error
+        import urllib.request
+        body = {"model": model, "messages": messages}
+        if tools:
+            body["tools"] = tools
+        req = urllib.request.Request(
+            url.rstrip("/") + "/chat/completions",
+            data=_json.dumps(body).encode(),
+            headers={"Authorization": "Bearer "
+                     + (self.env.get(KEY_ENV[name]) or ""),
+                     "Content-Type": "application/json",
+                     # urllib's default agent is refused by some CDNs.
+                     "User-Agent": "avi-desk/1.0"},
+            method="POST")
+        try:
+            with self.urlopen(req, timeout=20.0) as resp:
+                return _json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read()[:300].decode(errors="replace")
+            except Exception:
+                detail = ""
+            finally:
+                exc.close()
+            raise ProviderError(name, f"HTTP {exc.code}: {detail}")
+        except Exception as exc:
+            raise ProviderError(name, f"{type(exc).__name__}: {exc}")
+
+    @staticmethod
+    def urlopen(req, timeout):
+        import urllib.request
+        return urllib.request.urlopen(req, timeout=timeout)

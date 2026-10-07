@@ -155,6 +155,15 @@ class Avi:
         ATTENTIVE, because OBSERVE turned out to face a blank wall). Either
         change would have silently invalidated a hard-coded default.
         """
+        if self.arm is not None and hasattr(self.arm, "find_object"):
+            # Hosted in the dashboard (dashboard/brain_host.py): its find is
+            # the one with the room map in world geometry, the backlash-safe
+            # turn and the desk layout, so there is one way to find a thing.
+            got = self.arm.find_object(name, look=True) or {}
+            aim = got.get("aim") or {}
+            return got.get("say"), {"moved": bool(got.get("moved")),
+                                    "source": aim.get("source"),
+                                    "confident": bool(aim.get("confident"))}
         if self.arm is None or not hasattr(self.arm, "db"):
             return "I can't see the desk right now.", None
         cam = self.arm.config.camera

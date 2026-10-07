@@ -1002,3 +1002,41 @@ been fine.
 DIRECTION map (desk positions already correct for it); measuring [horizon]
 at ATTENTIVE's shape (one roll measurement) if the seat view ever needs world
 directions.
+
+## 2026-10-06 evening: the voice brain runs on the real arm
+
+`avi_bot.main.Avi` -- router, 27 tools, timers, reminders, memory, focus,
+scheduler -- was complete and ran nowhere. It is now hosted in the dashboard
+(`dashboard/brain_host.py`) with the real arm: **`POST /ask {"text": ...}`**.
+The reSpeaker feeds the same call on Thursday. Verified live:
+
+| he says | AVI | route |
+|---|---|---|
+| what time is it | 5:32. | local |
+| where's my pen | The desk, around 5:05. In front of and left of the laptop, nearer to me. (and turns to it) | local |
+| what timers do I have | No timers. | groq |
+| remember that my chemistry test is on friday | (stored) | groq |
+| what do you know about me | Chemistry test on Friday | groq |
+
+Three bugs found getting there:
+1. Every turn after the first failed: the brain's sqlite stores refused
+   use from another thread, and every HTTP request is its own thread. Shared
+   connections now, turns serialised by the host.
+2. Every cloud question came back "confused": **the MSI venv has no `openai`
+   package**. Rather than install one, the provider falls back to plain HTTPS
+   (the API is JSON); the router already read dict responses.
+3. The brain's find had its own, older path; it now uses the dashboard's
+   (world map, backlash-safe turn, desk layout), so there is one way to find.
+
+Announcements (timers, reminders) are shown on the dashboard and cued with
+the `ahem` gesture, **only while he is at the desk** -- a cue to an empty room
+is not a delivery, so it stays pending and the scheduler retires it if stale.
+Brain memory is `brain-dev.db` (launch-day rule, pinned by the profile test).
+
+The Mac's .env has CALENDAR_ICS_URL, KASA_* and OPENROUTER keys; the MSI's has
+only GROQ. Copying secrets across is his call.
+
+Also: latent recording now survives restarts (`dashboard-settings.json`);
+fifteen restarts today had silently turned it off. Surveys skip stops that can
+never settle (~18 of 99 moves). Desk diffs ignore faint objects (fewer than 3
+hits or conf under 0.40), which had produced fake "appeared" events.

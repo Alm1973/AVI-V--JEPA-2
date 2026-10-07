@@ -35,12 +35,15 @@ LEARNED_STORES = {
     # What changes on his desk, and whether he was there when it did.
     "avi_bot/perception/desk_changes.py": ("PROFILES", "desk-dev.db",
                                            "desk.db"),
+    # What he says to it: reminders, things he told it to remember.
+    "avi_bot/dashboard/server.py#brain": ("BRAIN_PROFILES", "brain-dev.db",
+                                          "brain.db"),
 }
 
 
 def assignments(path, name):
     """Every value assigned to `name` anywhere in a module, as Python objects."""
-    tree = ast.parse((ROOT / path).read_text())
+    tree = ast.parse((ROOT / path.split("#")[0]).read_text())
     out = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
@@ -56,7 +59,7 @@ def assignments(path, name):
 
 def profile_defaults(path):
     """The fallback of every os.environ.get("AVI_PROFILE", ...) in the file."""
-    tree = ast.parse((ROOT / path).read_text())
+    tree = ast.parse((ROOT / path.split("#")[0]).read_text())
     out = []
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call)
