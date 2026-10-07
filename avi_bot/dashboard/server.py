@@ -949,6 +949,10 @@ PAGE = b"""<!doctype html>
  #link{display:none;background:#7f1d1d;color:#fecaca;padding:7px 11px;
        border-radius:8px;margin:0 0 10px;font-size:13px;font-weight:600}
  #link.show{display:block}
+ .ask{display:flex;gap:6px;margin:0 0 6px}
+ .ask input{flex:1;min-width:0;font:inherit;padding:7px 10px;border-radius:7px;
+            border:1px solid #3a3a42;background:#18181b;color:#e7e7ea}
+ #said{min-height:20px;font-size:14px;color:#a7f3d0;margin:0 0 4px}
 </style></head>
 <body>
  <h1>AVI <span id="sub"></span></h1>
@@ -968,6 +972,13 @@ PAGE = b"""<!doctype html>
     <div id="trkinfo"></div>
   </div>
   <div class="side">
+    <div class="sec" style="border-top:0;margin-top:0;padding-top:0">ask avi</div>
+    <form class="ask" onsubmit="ask(); return false;">
+      <input id="askin" autocomplete="off"
+             placeholder="where's my pen? / set a timer for 10 minutes">
+      <button class="pri" type="submit">ask</button>
+    </form>
+    <div id="said"></div>
     <div id="joints"></div>
     <div class="sec">mood <span id="emo"></span></div>
    <div id="mood"></div>
@@ -992,6 +1003,22 @@ async function api(path, body){
   return r.json();
 }
 function msg(s){ document.getElementById("msg").textContent = s || ""; }
+
+async function ask(){
+  const box = document.getElementById("askin");
+  const out = document.getElementById("said");
+  const text = box.value.trim();
+  if (!text) return;
+  out.textContent = "...";
+  try {
+    const r = await api("/ask", {text: text});
+    if (r.error && !r.say) out.textContent = "(" + r.error + ")";
+    else out.textContent = r.say || "(a nod -- done, nothing to say)";
+    box.value = "";
+  } catch (e) {
+    out.textContent = "(no answer from the robot)";
+  }
+}
 
 function row(j){
   return `<div class="j" id="j-${j.name}">
