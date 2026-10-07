@@ -28,6 +28,12 @@ EVENT = "event"
 # not produce a pile-up.
 STALE_AFTER_S = 600.0
 
+# Except a reminder. A timer forty minutes late is not news; "call mom at 3"
+# at 3:40 still is, because the thing itself has not been done. A stale
+# reminder is marked MISSED instead of done, and whoever delivers (the
+# dashboard's brain host) tells him when he is back -- "while you were away".
+MISSED = "missed"
+
 
 class Announcement:
     __slots__ = ("kind", "text", "beep", "due_at", "ref", "stale")
@@ -56,6 +62,7 @@ class Scheduler:
         self.clock = clock
         self.stale_after_s = stale_after_s
         self.dropped = 0           # stale announcements never made
+        self.missed = 0            # stale reminders kept to tell him later
         self.delivered = 0
         # Calendar warnings have to be BUFFERED, unlike timers and reminders.
         # Timers live in a table and stay due until marked, so polling them is
@@ -70,6 +77,10 @@ class Scheduler:
         if self.modes is None:
             return False
         return self.modes.is_quiet or self.modes.asleep or self.modes.guest
+
+    def muted(self):
+        """Quiet, asleep or guest mode: nothing should be said unasked."""
+        return self._muted()
 
     def due(self, now=None):
         """Everything waiting, soonest first. Does not consume or mark."""
@@ -112,8 +123,11 @@ class Scheduler:
         waiting = self.due(now)
         for a in waiting:
             if a.stale:
-                self.retire(a)
-                self.dropped += 1
+                if a.kind == REMINDER and self.store is not None:
+                    self.hold(a)
+                else:
+                    self.retire(a)
+                    self.dropped += 1
                 continue
             if self._muted():
                 return None
@@ -134,6 +148,26 @@ class Scheduler:
             self.store.mark_reminder(announcement.ref)
         elif announcement.kind == EVENT:
             self._held = [a for a in self._held if a is not announcement]
+
+    def hold(self, announcement):
+        """A reminder that could not be told now (stale, or nobody there):
+        kept as MISSED so it is told later instead of lost."""
+        if announcement.kind != REMINDER or self.store is None:
+            return False
+        self.store.mark_reminder(announcement.ref, MISSED)
+        self.missed += 1
+        return True
+
+    def missed_reminders(self):
+        """[{"id", "text", "due_ts", ...}] still owed, oldest first."""
+        if self.store is None:
+            return []
+        return self.store.reminders(MISSED)
+
+    def told_missed(self, rid):
+        if self.store is not None:
+            self.store.mark_reminder(rid, "done")
+        self.delivered += 1
 
     def pending_count(self, now=None):
         return len(self.due(now))

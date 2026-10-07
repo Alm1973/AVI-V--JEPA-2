@@ -243,3 +243,34 @@ class CalendarWarnings(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MissedReminders(unittest.TestCase):
+    """A reminder is not a timer: 'call mom at 3' is still owed at 3:40."""
+
+    def setUp(self):
+        self.s, self.store, self.timers, self.clock = setup()
+        self.addCleanup(self.store.close)
+
+    def test_a_stale_reminder_is_kept_as_missed_not_dropped(self):
+        self.store.add_reminder(self.clock() + 5, "call mom")
+        self.clock.tick(sched_mod.STALE_AFTER_S + 60)
+        self.assertIsNone(self.s.next_announcement())
+        self.assertEqual(self.s.dropped, 0)
+        self.assertEqual([r["text"] for r in self.s.missed_reminders()],
+                         ["call mom"])
+
+    def test_a_held_reminder_is_not_offered_again(self):
+        rid = self.store.add_reminder(self.clock() + 5, "call mom")
+        self.clock.tick(6)
+        a = self.s.next_announcement()
+        self.assertTrue(self.s.hold(a))
+        self.assertIsNone(self.s.next_announcement())
+        self.s.told_missed(rid)
+        self.assertEqual(self.s.missed_reminders(), [])
+        self.assertEqual(self.s.delivered, 1)
+
+    def test_timers_still_go_stale(self):
+        self.timers.set(5)
+        self.clock.tick(6)
+        self.assertFalse(self.s.hold(self.s.next_announcement()))

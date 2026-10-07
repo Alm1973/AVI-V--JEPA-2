@@ -527,7 +527,7 @@ class Arm:
                                       spatial_mod.layout(placed))
 
     def make_brain_host(self, latest):
-        """The voice brain, built on first /ask (brain_host.py)."""
+        """The voice brain, built when its loop starts (brain_host.py)."""
         def recall(name):
             taught = load_taught() or {}
             if name in taught:
@@ -558,7 +558,8 @@ class Arm:
             speaker=speaker,
             cue=lambda: self._gesture_unless_busy(brain_host_mod.CUE_GESTURE,
                                                   " (announcement)"),
-            perform=lambda g: self._gesture_unless_busy(g, " (reply)"))
+            perform=lambda g: self._gesture_unless_busy(g, " (reply)"),
+            eager=True)
         return host
 
     @classmethod

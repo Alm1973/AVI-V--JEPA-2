@@ -194,3 +194,62 @@ class SomethingToTellHim(unittest.TestCase):
         h = bh.Host(lambda: Brain([]), note=lambda m: None)
         h.announce("Found your keys.")
         self.assertEqual(h.tick(), "Found your keys.")
+
+
+class WhileYouWereAway(unittest.TestCase):
+    """Real scheduler and store: the reminder fires to an empty room, then
+    he comes back."""
+
+    def setUp(self):
+        from avi_bot import scheduler as sched_mod
+        from avi_bot.memory import db as memdb
+        self.now = {"t": 1_760_000_000.0}
+        clock = lambda: self.now["t"]                         # noqa: E731
+        self.store = memdb.Store(clock=clock)
+        self.addCleanup(self.store.close)
+        sched = sched_mod.Scheduler(store=self.store, clock=clock)
+
+        class RealBrain:
+            scheduler = sched
+
+            def tick(self):
+                return sched.next_announcement()
+        self.here = {"v": False}
+        self.host = bh.Host(RealBrain, present=lambda: self.here["v"],
+                            note=lambda m: None, clock=clock)
+        self.host.brain
+
+    def test_told_when_he_is_back_and_only_once(self):
+        self.store.add_reminder(self.now["t"] + 5, "call mom")
+        self.now["t"] += 6
+        self.assertIsNone(self.host.tick(), "told an empty room")
+        self.now["t"] += 3600                  # long past stale
+        self.here["v"] = True
+        said = self.host.tick()
+        self.assertTrue(said.startswith("While you were away at "))
+        self.assertTrue(said.endswith(": call mom"))
+        self.assertIsNone(self.host.tick())
+        self.assertEqual(self.host.brain.scheduler.missed_reminders(), [])
+
+    def test_a_restart_does_not_lose_it(self):
+        self.store.add_reminder(self.now["t"] + 5, "call mom")
+        self.now["t"] += 6
+        self.host.tick()                       # held, he is away
+        self.host.pending.clear()              # what a restart does
+        self.here["v"] = True
+        self.assertIn("call mom", self.host.tick())
+
+    def test_quiet_mode_holds_what_avi_found_too(self):
+        self.host.brain.scheduler.muted = lambda: True
+        self.here["v"] = True
+        self.host.announce("Found your keys.")
+        self.assertIsNone(self.host.tick())
+        self.host.brain.scheduler.muted = lambda: False
+        self.assertEqual(self.host.tick(), "Found your keys.")
+
+    def test_the_dashboard_builds_it_when_the_loop_starts(self):
+        built = []
+        h = bh.Host(lambda: built.append(1) or Brain([]), note=lambda m: None,
+                    eager=True)
+        h.loop(deadline=0)
+        self.assertEqual(built, [1])

@@ -15,7 +15,8 @@ This hosts it inside the dashboard process, which owns the arm and the map:
 Delivery is honest about the missing speakers: an announcement is shown on
 the dashboard and cued with a gesture, and only while he is at the desk. A
 cue to an empty room is not a delivery, so it stays pending and the scheduler
-retires it if it goes stale -- the same rule it already applies to speech.
+retires it if it goes stale -- the same rule it already applies to speech --
+except a reminder, which is held as missed and told when he is back.
 """
 import threading
 import time
@@ -89,8 +90,15 @@ class BrainArm:
 
 class Host:
     def __init__(self, make_brain, present=lambda: True, note=print,
-                 cue=None, clock=time.time, perform=None, speaker=None):
+                 cue=None, clock=time.time, perform=None, speaker=None,
+                 eager=False):
         self._make = make_brain
+        # Build the brain when the loop starts rather than on the first /ask.
+        # Reminders live in the brain's store and only its scheduler fires
+        # them, so a lazily built brain meant: after a restart, nothing he
+        # asked to be reminded of came due until he happened to ask AVI
+        # something else first.
+        self.eager = eager
         # voice/output.Speaker, or None. When it is switched on, words are
         # spoken and beeps chirped, and a beep no longer needs a gesture to
         # stand in for it.
@@ -187,12 +195,54 @@ class Host:
         """Queue something to tell him when he is next at the desk."""
         self.pending.append({"kind": kind, "text": text,
                              "at": round(self.clock(), 1)})
-        del self.pending[:-10]
+        # Bounded, but never by dropping a missed reminder: those are owed,
+        # and the store still says "missed" until one is told.
+        extra = len(self.pending) - 10
+        if extra > 0:
+            drop = [p for p in self.pending
+                    if p.get("kind") != self.MISSED][:extra]
+            self.pending = [p for p in self.pending if p not in drop]
+
+    # --- reminders that came due while he was out ----------------------
+    # The scheduler keeps a stale reminder as "missed" (scheduler.MISSED)
+    # rather than dropping it, and a reminder that comes due to an empty
+    # room is held the same way. Both live in the brain's store, so they
+    # survive a restart; here they join `pending` and are told -- "while you
+    # were away" -- when he is next at the desk.
+    MISSED = "missed"
+
+    @staticmethod
+    def _missed_text(text, due_ts):
+        from avi_bot import numbers
+        when = (f" at {numbers.clock_time(due_ts, am_pm=True)}"
+                if due_ts else "")
+        return f"While you were away{when}: {text}"
+
+    def _sync_missed(self, brain):
+        sched = getattr(brain, "scheduler", None)
+        if sched is None or not hasattr(sched, "missed_reminders"):
+            return
+        held = {p.get("ref") for p in self.pending
+                if p.get("kind") == self.MISSED}
+        for r in sched.missed_reminders():
+            if r["id"] not in held:
+                self.pending.append({
+                    "kind": self.MISSED, "ref": r["id"],
+                    "text": self._missed_text(r["text"], r.get("due_ts")),
+                    "at": round(self.clock(), 1)})
 
     def _deliver(self, brain):
-        if self.pending and self.present():
+        self._sync_missed(brain)
+        sched = getattr(brain, "scheduler", None)
+        muted = bool(sched is not None and hasattr(sched, "muted")
+                     and sched.muted())
+        # Quiet, asleep and guest mode hold what AVI found out on its own
+        # too, not only the scheduler's announcements.
+        if self.pending and self.present() and not muted:
             item = self.pending.pop(0)
             self.note(f"AVI would say: {item['text']}")
+            if item.get("kind") == self.MISSED:
+                sched.told_missed(item["ref"])
             self._speak(item["text"])
             if self.cue is not None:
                 try:
@@ -203,7 +253,15 @@ class Host:
             del self.said[:-20]
             return item["text"]
         ann = brain.tick()
-        if ann is None or not self.present():
+        if ann is None:
+            return None
+        if not self.present():
+            # A timer to an empty room goes stale and is dropped (not news
+            # later); a reminder is held and told when he is back.
+            if getattr(ann, "kind", None) == "reminder" and hasattr(
+                    brain.scheduler, "hold"):
+                brain.scheduler.hold(ann)
+                self.note(f"reminder held until he is back: {ann.text!r}")
             return None
         self.note(f"AVI would say: {ann.text}")
         self._speak(ann.text)
@@ -219,6 +277,8 @@ class Host:
         return ann.text
 
     def loop(self, deadline, period=5.0):
+        if self.eager:
+            self.brain                       # builds it; errors are recorded
         while time.time() < deadline:
             try:
                 self.tick()

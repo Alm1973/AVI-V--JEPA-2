@@ -209,6 +209,12 @@ class Store:
             "SELECT * FROM reminders WHERE status='pending' AND due_ts <= ?"
             " ORDER BY due_ts", (now,))]
 
+    def reminders(self, status):
+        """Reminders in one status (e.g. "missed"), oldest due first."""
+        return [dict(r) for r in self.db.execute(
+            "SELECT * FROM reminders WHERE status=? ORDER BY due_ts",
+            (status,))]
+
     def mark_reminder(self, rid, status="done"):
         self.db.execute("UPDATE reminders SET status=? WHERE id=?",
                         (status, rid))
