@@ -138,3 +138,19 @@ class Threads(unittest.TestCase):
         t.join()
         self.assertNotIn("error", got, got)
         h.brain.close()
+
+
+class RepliesAreMoreThanWords(unittest.TestCase):
+    def test_a_confused_turn_shakes(self):
+        from avi_bot import main as main_mod
+        from avi_bot.brain import providers
+
+        def offline(*a):
+            raise providers.ProviderError("all", "offline")
+        done = []
+        h = bh.Host(lambda: main_mod.Avi(send=offline, env={}),
+                    note=lambda m: None, perform=done.append)
+        out = h.ask("xyzzy plugh frobnicate")
+        self.assertEqual(out["gesture"], "shake")
+        self.assertEqual(done, ["shake"])
+        h.brain.close()

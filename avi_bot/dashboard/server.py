@@ -506,7 +506,8 @@ class Arm:
         return brain_host_mod.Host(
             make, present=lambda: bool(self.presence.here), note=self.note,
             cue=lambda: self.play(brain_host_mod.CUE_GESTURE,
-                                  " (announcement)"))
+                                  " (announcement)"),
+            perform=lambda g: self.play(g, " (reply)"))
 
     @classmethod
     def roommap_path(cls, profile=None):
@@ -1013,7 +1014,8 @@ async function ask(){
   try {
     const r = await api("/ask", {text: text});
     if (r.error && !r.say) out.textContent = "(" + r.error + ")";
-    else out.textContent = r.say || "(a nod -- done, nothing to say)";
+    else out.textContent = r.say ||
+      (r.gesture ? "(" + r.gesture + ")" : "(done)");
     box.value = "";
   } catch (e) {
     out.textContent = "(no answer from the robot)";

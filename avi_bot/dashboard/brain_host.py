@@ -57,8 +57,12 @@ class BrainArm:
 
 class Host:
     def __init__(self, make_brain, present=lambda: True, note=print,
-                 cue=None, clock=time.time):
+                 cue=None, clock=time.time, perform=None):
         self._make = make_brain
+        # Plays a reply's gesture on the arm. A reply is say + beep + gesture,
+        # and before this only the words came back: the shake of a confused
+        # turn, the nod of a timer set, were decided and then dropped.
+        self.perform = perform
         self._brain = None
         self._lock = threading.Lock()
         # One turn at a time: requests arrive on their own threads and the
@@ -98,7 +102,13 @@ class Host:
             self.note(f"brain turn failed: {exc!r}")
             return {"error": repr(exc)}
         reply = decision.reply
-        out = {"say": reply.say, "route": decision.route,
+        if reply.gesture and self.perform is not None:
+            try:
+                self.perform(reply.gesture)
+            except Exception as exc:
+                self.note(f"reply gesture {reply.gesture} failed: {exc!r}")
+        out = {"say": reply.say, "gesture": reply.gesture,
+               "beep": reply.beep, "route": decision.route,
                "provider": decision.provider,
                "tools": [c[0] for c in decision.calls],
                "ok": all(r.ok for r in results)}
