@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # The AVI dashboard: camera, joints, poses, gestures, in one page.
 # Usage: dashboard.sh start [minutes] | sim [minutes] | stop | status | logs [n]
+#        dashboard.sh daily [HH:MM] [minutes] | undaily
+#   daily: Windows starts it every day at HH:MM (default 08:10) for [minutes]
+#   (default 830, i.e. to ~22:00), keeping the MSI awake only while it runs.
 set -uo pipefail
 cd "$(dirname "$0")"
 source ./common.sh
@@ -36,7 +39,12 @@ case "$ACTION" in
   start)  start_it "" ;;
   sim)    start_it "--backend sim" ;;
   stop)   ctl stop ""; echo "stopped." ;;
+  daily)
+    AT="${1:-08:10}"; MIN="${2:-830}"
+    ssh -n "${SSH_OPTS[@]}" "$MSI_HOST" \
+      "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"\$env:USERPROFILE\\avi-remote\\task-ctl.ps1\" -Action daily -TaskName 'AVI dashboard' -Script dashboard.py -At '$AT' -ScriptArgs '--port $PORT --minutes $MIN --keep-awake'" ;;
+  undaily) ctl undaily "" ;;
   status) ctl status "" ;;
   logs)   ctl logs "" "${1:-40}" ;;
-  *) echo "usage: dashboard.sh start|sim [minutes]|stop|status|logs [n]" >&2; exit 2 ;;
+  *) echo "usage: dashboard.sh start|sim [minutes]|stop|status|logs [n]|daily [HH:MM] [minutes]|undaily" >&2; exit 2 ;;
 esac

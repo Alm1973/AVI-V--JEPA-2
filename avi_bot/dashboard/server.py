@@ -3216,6 +3216,9 @@ def main():
     ap.add_argument("--width", type=int, default=0, help="0 keeps native 1280")
     ap.add_argument("--minutes", type=float, default=60.0)
     ap.add_argument("--bind", default="")
+    # For the daily run: hold the MSI awake for as long as THIS process lives,
+    # and no longer. Windows drops the request when the process exits.
+    ap.add_argument("--keep-awake", action="store_true")
     args = ap.parse_args()
 
     host = args.bind or tailscale_ip()
@@ -3237,6 +3240,12 @@ def main():
     else:
         backend, start = backends.SimBackend(config), poses.get_pose("HOME")
 
+    if args.keep_awake and os.name == "nt":
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+        log("keeping the MSI awake while the dashboard runs")
     arm = Arm(config, backend, start=start)
     deadline = time.time() + args.minutes * 60.0
     latest = Latest()
