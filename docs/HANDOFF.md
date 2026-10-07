@@ -1071,3 +1071,34 @@ Scheduled desk scans exist but are OFF: `POST /settings
 07:00-23:00 only). The dashboard runs for a fixed time per start (default
 60 min); it is running until ~22:00 tonight. A daily schedule for it is his
 call.
+
+## 2026-10-07 morning: things that were built and never connected (Mac-side, NOT DEPLOYED)
+
+The MSI was asleep and this network blocks Tailscale, so none of this has run
+on the robot. First thing on the home network: `./scripts/wake-msi.sh`,
+`./scripts/sync.sh`, `./scripts/dashboard.sh stop && ./scripts/dashboard.sh start N`.
+
+- **Usual start = first sit-down per day** (`perception/habits.py`). Every
+  return from a break used to count. Days run 04:00-04:00. Also learns usual
+  finish, session length, break length (3+ days before claiming any).
+- **Missed reminders are told, not dropped.** Stale or unheard reminders are
+  `status='missed'` in brain-dev.db and said as "While you were away at 3:00
+  PM: ..." when he is next present. Timers still go stale. Quiet/guest/sleep
+  now hold AVI's own news too. The brain is built at dashboard start
+  (`Host(eager=True)`), so reminders fire without a first /ask.
+- **Cloud context** now includes the time, presence and the desk's solid
+  labels (`Arm.situation`). Before: `now=None`, nothing else.
+- **Morning rundown** on the first arrival since 04:00 (`Avi.rundown`):
+  reminders + calendar still ahead today; silent when nothing is.
+- **Break coach learns** (`presence.break_outcomes`): taken = left within
+  7 min; each ignored offer in a row adds 15 min (max +45); taking one resets.
+- **Focus mode is fed**: cell-phone detections (seat view, conf >= 0.40)
+  while a session is active; settled pauses go to focus instead of the coach;
+  timed sessions end with the summary. Mood's focus flag now set, so idle
+  behaviour quiets during a session.
+- **Mood events wired**: task_ok/task_failed per turn, new_object from desk
+  scans. `_mood_event` no longer needs an arm.
+
+To verify on the robot: say "remind me in 2 minutes to test", walk away for
+15 min, come back -- expect "While you were away...". Start "focus for 5
+minutes", hold a phone up for 2+ min, pause -- expect the ahem glance.
