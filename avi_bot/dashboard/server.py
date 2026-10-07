@@ -1263,10 +1263,29 @@ function tick(left){
     "auto-stops in " + Math.floor(left/60) + "m " +
     String(Math.floor(left%60)).padStart(2,"0") + "s";
 }
+// One tab, opened once. When the dashboard restarts -- new code, or the next
+// run after it timed out -- the page reloads itself instead of sitting dead
+// until someone clicks the link again.
+let STARTED_AT = null, DOWN = false;
+function seenServer(s){
+  if (STARTED_AT === null) STARTED_AT = s.started;
+  else if (s.started !== STARTED_AT) location.reload();
+  if (DOWN) { DOWN = false; showLink(s); }
+}
 // Only the numbers refresh on a timer. Re-rendering the sliders underneath a
 // finger being dragged is exactly how the old page felt unusable.
 setInterval(async () => {
-  const s = await api("/state");
+  let s;
+  try { s = await api("/state"); }
+  catch (e) {
+    DOWN = true;
+    const el = document.getElementById("link");
+    el.classList.add("show");
+    el.textContent = "dashboard restarting or stopped -- this tab reconnects " +
+                     "and reloads by itself";
+    return;
+  }
+  seenServer(s);
   for (const j of s.joints){
     const v = document.getElementById("v-" + j.name);
     if (v && !(j.name in pending))
@@ -1316,6 +1335,9 @@ paintHealth();
 """
 
 BUILD = hashlib.md5(PAGE).hexdigest()[:7]
+# Lets an open page notice that the dashboard restarted (new code, or a new
+# run) and reload itself, instead of him re-opening the link every time.
+STARTED = time.time()
 PAGE_OUT = PAGE.replace(b"__BUILD__", BUILD.encode())
 POV_OUT = POV.replace(b"__BUILD__", BUILD.encode())
 
@@ -1356,7 +1378,7 @@ def make_handler(st):
                 "backend": arm.backend.name,
                 "link": arm.link_status(),
                 "reopens": getattr(arm.backend, "reopens", 0),
-                "build": BUILD,
+                "build": BUILD, "started": STARTED,
                 "ends_in": max(0.0, deadline - time.time()),
                 "joints": [{"name": j, "deg": sent[j],
                             "count": round(cfg.deg_to_count(j, sent[j])),
