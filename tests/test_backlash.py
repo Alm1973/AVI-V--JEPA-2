@@ -74,3 +74,23 @@ class Settled(unittest.TestCase):
         s.command(40, 70)
         self.assertTrue(s.settled)
         self.assertFalse(s.command(90, 95))      # it was at 90, not 70
+
+
+class ColumnOrder(unittest.TestCase):
+    GRID = [(y, w) for w in (172, 164, 156) for y in (47.4, 60.7, 74.1)]
+
+    def base_travel(self, stops):
+        return sum(abs(b[0] - a[0]) for a, b in zip(stops, stops[1:]))
+
+    def test_the_base_only_ever_steps_up(self):
+        got = bl.column_order(self.GRID)
+        yaws = [s[0] for s in got]
+        self.assertEqual(yaws, sorted(yaws))
+
+    def test_the_wrist_comes_down_each_column(self):
+        got = bl.column_order(self.GRID)
+        self.assertEqual([s[1] for s in got[:3]], [172, 164, 156])
+
+    def test_far_less_base_travel_than_row_by_row(self):
+        self.assertLess(self.base_travel(bl.column_order(self.GRID)) * 2.5,
+                        self.base_travel(self.GRID))

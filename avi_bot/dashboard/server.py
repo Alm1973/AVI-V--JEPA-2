@@ -1674,6 +1674,11 @@ def detect_debug(arm, latest, min_conf=0.05):
 # A box within this many pixels of the frame edge is treated as cut off.
 EDGE_PX = 6
 
+# Wrist stops are all reached going DOWN; a column's first stop gets this
+# much run-up from above. The wrist's own backlash is unmeasured, so this is
+# consistency, not a measured number.
+WRIST_RUN_UP_DEG = 6.0
+
 # Detections this weak are still reported, never recorded. The point is to
 # tell "the wall is empty" apart from "the desk was there at 0.22".
 REPORT_FLOOR = 0.10
@@ -1785,6 +1790,9 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
         if skipped:
             log(f"survey: skipping {len(skipped)} stops below yaw "
                 f"{floor:.0f}, which cannot be approached from below")
+        # Column by column: the base steps up once per column instead of
+        # sweeping and jumping back every row (motion/backlash.py).
+        stops = backlash_mod.column_order(stops)
         shape_src = dome.pole_shape()
         arm.set("shoulder", shape_src["shoulder"])
         arm.set("elbow", shape_src["elbow"])
@@ -1822,25 +1830,36 @@ def run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
     # once went silent mid-survey and eight stops filed one picture under
     # eight yaws. A turn that changes nothing is not trusted; two in a row
     # end the survey.
-    prev, stuck_run, stuck_total = None, 0, 0
+    # Compared against the SAME wrist level in the previous column: column
+    # order means consecutive stops share a yaw, so the base's last move is
+    # judged where the picture can show it.
+    seen_at, stuck_run, stuck_total = {}, 0, 0
+    last_wrist = None
     for yaw, wrist in stops:
         settled = _yaw_to(arm, yaw, settle)
+        if last_wrist is not None and wrist > last_wrist:
+            # A new column starts at the top: arrive going DOWN like every
+            # other wrist stop in the survey.
+            arm.set("wrist", min(whi, wrist + WRIST_RUN_UP_DEG))
+            time.sleep(settle * 0.6)
         arm.set("wrist", wrist)
+        last_wrist = wrist
         time.sleep(settle)
         frames_here = list(_look(latest, frames))
         moved_ok = True
+        prev = seen_at.get(round(wrist, 1))
         # Only judged once the slack is taken up: a turn still eating the
         # backlash legitimately barely moves the picture.
-        if (settled and prev is not None and frames_here and prev[1] == wrist
+        if (settled and prev is not None and frames_here
                 and abs(yaw - prev[0]) >= horizon_mod.STUCK_MIN_TURN_DEG):
             try:
-                reg = horizon_mod.register(prev[2], frames_here[-1])
+                reg = horizon_mod.register(prev[1], frames_here[-1])
             except horizon_mod.NotMeasurable:
                 reg = None
             if horizon_mod.stuck(reg, yaw - prev[0]):
                 moved_ok = False
         if frames_here:
-            prev = (yaw, wrist, frames_here[-1])
+            seen_at[round(wrist, 1)] = (yaw, frames_here[-1])
         if not moved_ok:
             stuck_run += 1
             stuck_total += 1

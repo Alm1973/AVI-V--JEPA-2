@@ -84,3 +84,19 @@ class Slack:
     @property
     def settled(self):
         return self.up_run >= self.backlash - 1e-6
+
+
+def column_order(stops, ndigits=1):
+    """Survey stops reordered column by column: base_yaw ascending, and
+    within each column the wrist DESCENDING.
+
+    Row by row, every elevation row swept the base across its whole range
+    and jumped back with an 18 deg run-up -- ~290 deg of base travel per row,
+    ~2600 deg for a dense survey, on the joint that stalls under sustained
+    work. Column by column the base only ever steps UP, once per column, so
+    it never reverses and never needs a run-up after the first: ~130 deg in
+    total. The up-and-down work moves to the wrist, which carries only the
+    camera.
+    """
+    return sorted(stops, key=lambda s: (round(float(s[0]), ndigits),
+                                        -float(s[1])))

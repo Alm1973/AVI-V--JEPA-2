@@ -1040,3 +1040,19 @@ Also: latent recording now survives restarts (`dashboard-settings.json`);
 fifteen restarts today had silently turned it off. Surveys skip stops that can
 never settle (~18 of 99 moves). Desk diffs ignore faint objects (fewer than 3
 hits or conf under 0.40), which had produced fake "appeared" events.
+
+### Surveys go column by column (2026-10-06 ~18:45)
+Row by row, every elevation row swept base_yaw across its range and jumped
+back with a run-up: ~2600 deg of base travel per dense survey, on the joint
+that stalls under sustained work. `backlash.column_order` steps the base UP
+once per column and sweeps the wrist down instead. Same 99-stop grid, live:
+**base travel 107 deg (24x less), 190 s instead of 253, 81/81 stops settled
+(the 18 unsettleable ones are skipped), no stall**, and the map came out with
+one pen instead of two. The stall check now compares each stop with the same
+wrist level one column back.
+
+The brain also got a body: reply gestures are performed (the arm can play 13
+of the brain's 19 names; the rest map to the nearest), and until the speakers
+arrive a beep becomes a gesture -- "set a timer" now nods. Memory questions,
+remember/forget and "what timers do I have" are local rules; the dashboard
+page has an "ask avi" box.
