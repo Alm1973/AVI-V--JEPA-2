@@ -36,6 +36,8 @@ an admission.
 """
 import time
 
+from .. import numbers
+
 # phone -> cell phone, and so on. The detector's vocabulary is not the
 # vocabulary someone speaks in.
 SYNONYMS = {
@@ -260,11 +262,7 @@ class Finder:
                 return ("Haven't seen it today." + where,
                         aim["base_yaw"], False)
             return "Haven't seen it today.", None, False
-        when = time.strftime("%-I:%M", time.localtime(seen["ts"])) \
-            if hasattr(time, "strftime") else ""
-        zone = seen.get("zone")
-        if not zone and aim and aim.get("near"):
-            zone = f"near {aim['near']}"
-        zone = zone or "the desk"
+        when = numbers.clock_time(seen["ts"])
+        zone = seen.get("zone") or "the desk"
         yaw = aim["base_yaw"] if aim and aim.get("confident") else None
         return f"{zone.capitalize()}, around {when}.", yaw, True

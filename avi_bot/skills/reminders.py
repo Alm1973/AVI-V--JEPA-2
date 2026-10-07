@@ -214,7 +214,7 @@ def make(store, clock=None):
         if delta.total_seconds() < 3600:
             return (f"In {int(delta.total_seconds() // 60)} minutes.",
                     {"parsed": at.isoformat()})
-        return at.strftime("Set for %-I:%M %p.").replace(" 0", " "), \
+        return f"Set for {numbers.clock_time(at, am_pm=True)}.", \
             {"parsed": at.isoformat()}
 
     return {"set_reminder": set_reminder}

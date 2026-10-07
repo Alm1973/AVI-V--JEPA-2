@@ -67,3 +67,18 @@ def words_to_int(text, allow_quantifiers=False):
             return TENS[tens] + ONES[ones]
         return None
     return None
+
+
+def clock_time(when, am_pm=False):
+    """"4:05" (or "4:05 PM") from a datetime or an epoch timestamp.
+
+    Not strftime("%-I"): the "-" flag is glibc/BSD only and raises
+    "Invalid format string" on Windows, where the robot runs. The Mac tests
+    passed while /find crashed on the MSI for every object it had seen.
+    """
+    import datetime as _dt
+    if not isinstance(when, _dt.datetime):
+        when = _dt.datetime.fromtimestamp(float(when))
+    hour = when.hour % 12 or 12
+    out = f"{hour}:{when.minute:02d}"
+    return f"{out} {'AM' if when.hour < 12 else 'PM'}" if am_pm else out
