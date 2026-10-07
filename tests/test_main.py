@@ -142,6 +142,37 @@ class FirstSitDownOfTheDay(unittest.TestCase):
         self.assertTrue(text.startswith("Today: "))
 
 
+class MoodFollowsWhatHappens(unittest.TestCase):
+    """Focus, task and curiosity events were only reachable from buttons."""
+
+    def avi(self):
+        from avi_bot.personality import mood as mood_mod
+        clock = Clock()
+        mood = mood_mod.Mood(clock=clock)
+        avi = build(clock=clock, mood=mood)
+        self.addCleanup(avi.close)
+        return avi, mood
+
+    def test_a_focus_session_quiets_the_robot_and_ending_it_releases(self):
+        avi, mood = self.avi()
+        avi.handle("focus for 25 minutes")
+        self.assertTrue(mood.focus, "idle behaviour would fidget through it")
+        avi.focus.stop()
+        self.assertFalse(mood.focus)
+
+    def test_doing_what_he_asked_lifts_the_mood(self):
+        avi, mood = self.avi()
+        before = mood.valence
+        avi.handle("set a timer for 5 minutes")
+        self.assertGreater(mood.valence, before)
+        self.assertEqual(mood.log[-1][1], "task_ok")
+
+    def test_a_turn_with_nothing_to_do_changes_nothing(self):
+        avi, mood = self.avi()
+        avi.handle("ruminate upon belt tension")
+        self.assertEqual(mood.log, [])
+
+
 class Turns(unittest.TestCase):
     def setUp(self):
         self.clock = Clock()

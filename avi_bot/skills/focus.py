@@ -48,8 +48,13 @@ class Session:
 
 class Focus:
     def __init__(self, clock=time.time, phone_evidence_s=PHONE_EVIDENCE_S,
-                 max_nudges=MAX_NUDGES, break_after_s=BREAK_AFTER_S):
+                 max_nudges=MAX_NUDGES, break_after_s=BREAK_AFTER_S,
+                 on_change=None):
         self.clock = clock
+        # on_change("focus_start" | "focus_end"): the mood's focus flag, which
+        # is what quiets idle behaviour during a session. Called from start
+        # and stop, so a session ended by the clock counts too.
+        self.on_change = on_change
         self.phone_evidence_s = phone_evidence_s
         self.max_nudges = max_nudges
         self.break_after_s = break_after_s
@@ -63,6 +68,7 @@ class Focus:
             return "Already focusing.", None
         self.session = Session(now, minutes)
         self.history.append(self.session)
+        self._changed("focus_start")
         return (f"Focusing for {int(minutes)}." if minutes
                 else "Focusing."), None
 
@@ -74,12 +80,20 @@ class Focus:
         s.ended = self.clock()
         total = s.ended - s.started
         self.session = None
+        self._changed("focus_end")
         mins = int(total // 60)
         phone = int(s.phone_s // 60)
         data = {"minutes": mins, "phone_minutes": phone, "nudges": s.nudges}
         if phone <= 0:
             return f"{mins} minutes, no phone. Good one.", data
         return f"{mins} minutes, {phone} on your phone.", data
+
+    def _changed(self, event):
+        if self.on_change is not None:
+            try:
+                self.on_change(event)
+            except Exception:
+                pass                  # a mood hiccup never blocks focus
 
     def status(self):
         if self.session is None or self.session.ended is not None:

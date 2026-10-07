@@ -76,7 +76,8 @@ class Avi:
                                         clock=clock, local_pick=local_pick)
 
         self.timers = timers_mod.Timers(store=self.store, clock=clock)
-        self.focus = focus_mod.Focus(clock=clock)
+        self.focus = focus_mod.Focus(clock=clock,
+                                     on_change=self._mood_event)
         self.modes = modes_mod.Modes(clock=clock, policy=self.policy,
                                      on_pose=self._pose,
                                      on_logging=self._set_logging)
@@ -214,8 +215,13 @@ class Avi:
         self.logging_enabled = bool(enabled)
 
     def _mood_event(self, name):
+        # Not through _safe: that skips everything when there is no arm, and
+        # mood is state, not hardware -- praise in a headless brain was lost.
         if self.mood is not None:
-            self._safe(lambda: self.mood.event(name))
+            try:
+                self.mood.event(name)
+            except Exception:
+                pass
         return None, {"event": name}
 
     def _stop(self):
@@ -278,6 +284,15 @@ class Avi:
             decision.reply = self.policy.apply(
                 decision.reply.model_copy(update={"say": said}),
                 decision.reason)
+
+        # The mood's task events (BUILD_SPEC 5.2) had no caller: doing what
+        # he asked lifts valence, failing lowers it. Praise and scold are
+        # mood events themselves, and counting them twice would double them.
+        acted = [(c[0], r) for c, r in zip(decision.calls, results)
+                 if c[0] not in ("praise", "scold")]
+        if acted:
+            self._mood_event("task_ok" if all(r.ok for _, r in acted)
+                             else "task_failed")
 
         if self.logging_enabled:
             self.store.log_interaction(

@@ -2267,6 +2267,14 @@ def desk_scan(arm, latest, min_conf=0.30, el_step=10.0, az_step=16.0,
             arm.roommap.wrist_deg_per_frame / 2.0)
     changes = arm.desk.record(objects, res.get("visited_stops") or [], half,
                               here=here)
+    if changes and changes.get("appeared"):
+        # Something new on the desk is what curiosity is for (mood
+        # "new_object"); it had no caller outside the page's buttons.
+        try:
+            arm.mood_event("new_object",
+                           target=changes["appeared"][0]["label"])
+        except Exception:
+            pass
     log(f"desk_scan: {len(objects)} objects, here={here}, changes "
         + ("none yet (first scan)" if changes is None else
            ", ".join(f"{k} {len(changes[k])}" for k in
