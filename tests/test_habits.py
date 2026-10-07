@@ -25,6 +25,10 @@ class Days(unittest.TestCase):
         self.assertEqual(hb.day_of(at(0, 24, 40)), hb.day_of(at(0, 19)))
         self.assertAlmostEqual(hb.hour_in_day(at(0, 24, 30)), 24.5)
 
+    def test_the_day_starts_at_four(self):
+        self.assertEqual(hb.day_start_ts(at(0, 24, 40)), at(0, 4))
+        self.assertEqual(hb.day_start_ts(at(0, 9)), at(0, 4))
+
     def test_one_or_two_days_are_not_a_habit(self):
         s = evening(0, (19, 0, 21, 0)) + evening(1, (19, 0, 21, 0))
         self.assertEqual(hb.summarize(s), {})

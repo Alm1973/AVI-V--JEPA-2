@@ -290,6 +290,50 @@ class Avi:
             self.turns.append({"who": "avi", "text": decision.reply.say})
         return decision, results
 
+    # --- the first sit-down of the day ---------------------------------
+    RUNDOWN_ITEMS = 3
+
+    def rundown(self, now=None):
+        """What is still ahead today, for his first sit-down. BUILD_SPEC 9.
+
+        Reminders due later today, and calendar events if a calendar is
+        configured. At most once a day (days start at 04:00, see
+        perception/habits.py). None when nothing is ahead: "nothing on
+        today" every morning is the kind of talk that gets a robot switched
+        off, and with no calendar configured it would be a guess.
+        """
+        from avi_bot.perception import habits
+        now = self.clock() if now is None else float(now)
+        day = habits.day_of(now)
+        if getattr(self, "_rundown_day", None) == day:
+            return None
+        self._rundown_day = day
+        end = habits.day_start_ts(now) + 86400.0
+        items = []                                     # (when_ts, words)
+        for r in self.store.reminders("pending"):
+            if r.get("kind") == "timer" or not now < r["due_ts"] <= end:
+                continue
+            items.append((r["due_ts"], f"{r['text']} at "
+                          f"{numbers.clock_time(r['due_ts'], am_pm=True)}"))
+        if self.calendar.ics_text or self.calendar.url:
+            try:
+                for e in self.calendar.events("today"):
+                    ts = e.start.timestamp() if hasattr(
+                        e.start, "timestamp") else now
+                    if e.all_day or ts > now:
+                        items.append((ts if not e.all_day else now,
+                                      e.summary if e.all_day else
+                                      f"{e.summary} at {e.spoken_time()}"))
+            except Exception:
+                pass                    # an unreachable calendar is silent
+        if not items:
+            return None
+        items.sort(key=lambda i: i[0])
+        head = [w for _, w in items[:self.RUNDOWN_ITEMS]]
+        more = len(items) - len(head)
+        return ("Today: " + "; ".join(head)
+                + (f"; and {more} more." if more else "."))
+
     def tick(self):
         """Called from the existing arm loop. Returns an Announcement or None."""
         return self.scheduler.next_announcement()

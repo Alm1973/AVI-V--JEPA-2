@@ -253,3 +253,29 @@ class WhileYouWereAway(unittest.TestCase):
                     eager=True)
         h.loop(deadline=0)
         self.assertEqual(built, [1])
+
+
+class Arrival(unittest.TestCase):
+    def host(self, text):
+        class B(Brain):
+            def rundown(self):
+                return text
+        h = bh.Host(lambda: B([]), note=lambda m: None)
+        h.brain
+        return h
+
+    def test_the_first_sit_down_gets_the_rundown(self):
+        h = self.host("Today: call mom at 3:00 PM.")
+        self.assertEqual(h.arrived(first_today=True),
+                         "Today: call mom at 3:00 PM.")
+        self.assertEqual(h.tick(), "Today: call mom at 3:00 PM.")
+
+    def test_coming_back_from_lunch_does_not(self):
+        h = self.host("Today: call mom at 3:00 PM.")
+        self.assertIsNone(h.arrived(first_today=False))
+        self.assertEqual(h.pending, [])
+
+    def test_nothing_ahead_says_nothing(self):
+        h = self.host(None)
+        h.arrived()
+        self.assertEqual(h.pending, [])

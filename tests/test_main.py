@@ -113,6 +113,35 @@ class WhatTheCloudIsTold(unittest.TestCase):
         self.assertIn("Now: ", self.sent(situation=boom))
 
 
+class FirstSitDownOfTheDay(unittest.TestCase):
+    """calendar.rundown was built and tested, and nothing ever called it."""
+
+    def test_whats_ahead_today_once(self):
+        clock = Clock()
+        avi = build(clock=clock, ics_text=None)
+        self.addCleanup(avi.close)
+        avi.store.add_reminder(clock() + 3 * 3600, "call mom")
+        avi.store.add_reminder(clock() - 3600, "already past")
+        avi.store.add_reminder(clock() + 2 * 86400, "not today")
+        text = avi.rundown()
+        self.assertTrue(text.startswith("Today: call mom at 10:00 AM"), text)
+        self.assertNotIn("past", text)
+        self.assertNotIn("not today", text)
+        self.assertIsNone(avi.rundown(), "twice in one day")
+
+    def test_nothing_ahead_is_silence_not_nothing_on_today(self):
+        avi = build(clock=Clock(), ics_text=None)
+        self.addCleanup(avi.close)
+        self.assertIsNone(avi.rundown())
+
+    def test_the_calendar_joins_in_when_there_is_one(self):
+        avi = build(clock=Clock())
+        self.addCleanup(avi.close)
+        text = avi.rundown()
+        self.assertIsNotNone(text)
+        self.assertTrue(text.startswith("Today: "))
+
+
 class Turns(unittest.TestCase):
     def setUp(self):
         self.clock = Clock()

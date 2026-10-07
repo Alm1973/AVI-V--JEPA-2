@@ -28,6 +28,12 @@ def day_of(ts):
             - timedelta(hours=DAY_STARTS_HOUR)).date()
 
 
+def day_start_ts(ts):
+    """Epoch seconds at which the day containing `ts` began (04:00)."""
+    d = day_of(ts)
+    return datetime(d.year, d.month, d.day, DAY_STARTS_HOUR).timestamp()
+
+
 def hour_in_day(ts):
     """Hours since midnight on the day's date: 00:40 the next morning is
     24.67, so the evening and the small hours sort and average together."""

@@ -55,6 +55,7 @@ from avi_bot import env as env_mod                                # noqa: E402
 from avi_bot.perception import parallax                           # noqa: E402
 from avi_bot.perception import depth as depth_mod                 # noqa: E402
 from avi_bot.perception import desk_changes as desk_mod           # noqa: E402
+from avi_bot.perception import habits as habits_mod               # noqa: E402
 from avi_bot.perception import dome as dome_mod                   # noqa: E402
 from avi_bot.perception import horizon as horizon_mod             # noqa: E402
 from avi_bot.perception import world as world_mod                 # noqa: E402
@@ -360,9 +361,25 @@ class Arm:
                 if event:
                     self.mood_event(event)
                     self.note(f"presence: {event}")
+                    if event == "arrived":
+                        self._arrived()
             except Exception as exc:
                 self.note(f"presence error (continuing): {exc!r}")
                 time.sleep(5.0)
+
+    def _arrived(self):
+        """Tell the brain he sat down, and whether it is his first time
+        today -- read from the presence store, so a dashboard restart at
+        noon does not make lunch-time look like the morning."""
+        host = getattr(self, "brain_host", None)
+        if host is None:
+            return
+        try:
+            today = self.presence.sessions(
+                since=habits_mod.day_start_ts(time.time()), min_minutes=0)
+            host.arrived(first_today=len(today) <= 1)
+        except Exception as exc:
+            self.note(f"arrival rundown: {exc!r}")
 
     # The cue for "time for a break". No speakers until the voice module
     # arrives, so it is a gesture: a yawn-and-stretch reads as "let's stretch"

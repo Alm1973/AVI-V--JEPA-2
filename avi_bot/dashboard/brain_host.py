@@ -191,6 +191,24 @@ class Host:
         if self.speaker is not None and self.speaker.enabled():
             self.speaker.say_later(text)
 
+    def arrived(self, first_today=True):
+        """He sat down. The first time each day, tell him what is ahead
+        (Avi.rundown). Returns the text queued, or None."""
+        if not first_today:
+            return None
+        brain = self._brain
+        if brain is None or not hasattr(brain, "rundown"):
+            return None
+        try:
+            with self._turn:
+                text = brain.rundown()
+        except Exception as exc:
+            self.note(f"rundown failed: {exc!r}")
+            return None
+        if text:
+            self.announce(text, kind="rundown")
+        return text
+
     def announce(self, text, kind="found"):
         """Queue something to tell him when he is next at the desk."""
         self.pending.append({"kind": kind, "text": text,
