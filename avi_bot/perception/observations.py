@@ -22,16 +22,43 @@ def notes(presence=None, layout=None):
         out.append(f"You were at the desk {int(p['today_minutes'])} "
                    "minutes today.")
     if p.get("usual_arrival_hour") is not None:
-        h = float(p["usual_arrival_hour"])
-        import datetime as dt
-        at = dt.datetime(2000, 1, 1, int(h) % 24, int(round((h % 1) * 60)) % 60)
         out.append(f"You usually sit down around "
-                   f"{numbers.clock_time(at, am_pm=True)}.")
+                   f"{_clock(p['usual_arrival_hour'])}.")
+    if p.get("usual_leave_hour") is not None:
+        out.append(f"You usually finish around "
+                   f"{_clock(p['usual_leave_hour'])}.")
+    if p.get("usual_session_min"):
+        out.append(f"You usually sit for about "
+                   f"{_duration(p['usual_session_min'])} at a time.")
+    if p.get("usual_break_min"):
+        out.append(f"Your breaks usually last about "
+                   f"{_duration(p['usual_break_min'])}.")
     for o in layout or []:
         where = (o.get("where") or "").rstrip(".")
         if where and o.get("label"):
             out.append(f"Your {o['label']} was {where[0].lower()}{where[1:]}.")
     return out
+
+
+def _clock(hour):
+    """An hour of the day (24.5 = 00:30 next morning) as words."""
+    import datetime as dt
+    m = int(round(float(hour) * 60)) % (24 * 60)
+    at = dt.datetime(2000, 1, 1, m // 60, m % 60)
+    return numbers.clock_time(at, am_pm=True)
+
+
+def _duration(minutes):
+    m = int(round(float(minutes)))
+    if m < 60:
+        return f"{m} minutes"
+    h, r = divmod(m, 60)
+    # Nearest quarter hour reads like a person; "1 hour 7 minutes" does not.
+    q = int(round(r / 15.0)) * 15
+    if q == 60:
+        h, q = h + 1, 0
+    hours = f"{h} hour" + ("s" if h != 1 else "")
+    return hours if not q else f"{hours} {q} minutes"
 
 
 def about(query, sentences):

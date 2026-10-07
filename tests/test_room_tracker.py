@@ -8,6 +8,7 @@ exited rc=1 after 20 minutes. These tests are about that failure mode.
 The Mac has no OpenCV, which is the point of the stubs: this logic is worth
 testing without a GPU, a camera, or the MSI being awake.
 """
+import os
 import sys
 import types
 import unittest
@@ -104,7 +105,8 @@ class TestItLeavesTheInterpreterAlone(unittest.TestCase):
                 load_tracker(self)
                 assert sys.modules["settings"].__dict__.get("CAMERA_INDEX") == 1
 
-        unittest.TextTestRunner(stream=open("/dev/null", "w")).run(Probe())
+        with open(os.devnull, "w") as quiet:
+            unittest.TextTestRunner(stream=quiet).run(Probe())
         self.assertIs(sys.modules.get("settings"), real)
 
 

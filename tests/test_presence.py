@@ -15,8 +15,20 @@ from avi_bot.perception import presence as pm                  # noqa: E402
 T0 = datetime(2026, 10, 6, 19, 0).timestamp()      # 7pm, a weekday evening
 
 
+_OPEN = []
+
+
 def log():
-    return pm.Presence(":memory:", clock=lambda: T0)
+    p = pm.Presence(":memory:", clock=lambda: T0)
+    _OPEN.append(p)
+    return p
+
+
+def tearDownModule():
+    # An unclosed sqlite handle per test is a ResourceWarning per test, and
+    # a wall of those hides real output.
+    while _OPEN:
+        _OPEN.pop().close()
 
 
 def run(p, pattern, start=T0, step=20.0, view_ok=True):
@@ -117,6 +129,20 @@ class WhatItLearns(unittest.TestCase):
         s = p.summary(now=T0 + 2 * 86400 + 7200)
         self.assertEqual(s["arrivals_seen"], 3)
         self.assertAlmostEqual(s["usual_arrival_hour"], 19.17, delta=0.2)
+
+    def test_coming_back_from_a_break_is_not_sitting_down(self):
+        """Every return used to count, so breaks pushed 'usual' later."""
+        p = log()
+        for day in range(3):
+            start = T0 + day * 86400
+            for back in (0, 3600, 7200):           # 19:00, then 20:00, 21:00
+                _, t = run(p, "11" + "1" * 15, start=start + back)
+                run(p, "0" * pm.LEAVE_AFTER, start=t)
+        s = p.summary(now=T0 + 2 * 86400 + 4 * 3600)
+        self.assertEqual(s["arrivals_seen"], 3)              # days, not 9
+        self.assertAlmostEqual(s["usual_arrival_hour"], 19.0, delta=0.05)
+        self.assertIn("usual_leave_hour", s)
+        self.assertIn("usual_break_min", s)
 
     def test_one_day_does_not_claim_a_habit(self):
         p = log()

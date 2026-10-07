@@ -29,6 +29,8 @@ import sqlite3
 import time
 from datetime import datetime
 
+from avi_bot.perception import habits
+
 ARRIVE_AFTER = 2          # consecutive sightings before he counts as arrived
 LEAVE_AFTER = 6           # consecutive VALID absences before he has left
 MIN_SESSION_MIN = 3.0     # shorter spans are not reported as sessions
@@ -175,11 +177,16 @@ class Presence:
                "breaks_offered_today": self.db.execute(
                    "SELECT COUNT(*) FROM events WHERE kind = 'break_offered'"
                    " AND ts >= ?", (day0,)).fetchone()[0]}
-        arrivals = [s for s, _ in self.sessions(min_minutes=MIN_SESSION_MIN)]
-        if len(arrivals) >= 3:
-            hrs = sorted(datetime.fromtimestamp(a).hour
-                         + datetime.fromtimestamp(a).minute / 60.0
-                         for a in arrivals)
-            out["usual_arrival_hour"] = round(hrs[len(hrs) // 2], 2)
-            out["arrivals_seen"] = len(arrivals)
+        # The first sit-down of each day, not every return from a break
+        # (perception/habits.py). Hours past midnight run on (24.5 = 00:30)
+        # so a late evening averages with the evening, not the morning.
+        h = habits.summarize(self.sessions(min_minutes=MIN_SESSION_MIN))
+        if h:
+            out["usual_arrival_hour"] = h["usual_start"]
+            out["arrivals_seen"] = h["days_seen"]
+            for key, name in (("usual_end", "usual_leave_hour"),
+                              ("usual_session_min", "usual_session_min"),
+                              ("usual_break_min", "usual_break_min")):
+                if key in h:
+                    out[name] = h[key]
         return out

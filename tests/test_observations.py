@@ -24,6 +24,16 @@ class Notes(unittest.TestCase):
         got = ob.notes({"usual_arrival_hour": 19.17})
         self.assertIn("You usually sit down around 7:10 PM.", got)
 
+    def test_the_shape_of_his_day(self):
+        got = ob.notes({"usual_arrival_hour": 19.0,
+                        "usual_leave_hour": 24.5,
+                        "usual_session_min": 95,
+                        "usual_break_min": 25})
+        self.assertIn("You usually finish around 12:30 AM.", got)
+        self.assertIn("You usually sit for about 1 hour 30 minutes at a "
+                      "time.", got)
+        self.assertIn("Your breaks usually last about 25 minutes.", got)
+
     def test_where_things_are(self):
         self.assertIn("Your pen was in front of and left of the laptop, "
                       "nearer to me.", ob.notes(layout=LAYOUT))

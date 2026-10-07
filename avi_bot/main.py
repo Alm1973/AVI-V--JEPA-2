@@ -91,7 +91,12 @@ class Avi:
             modes=self.modes, clock=clock)
 
         self.skills = registry.Registry()
-        self._wire()
+        try:
+            self._wire()
+        except Exception:
+            # The stores are open by now; a failed build must not leak them.
+            self.close()
+            raise
         self.logging_enabled = True
         self.turns = []
 
