@@ -508,6 +508,14 @@ class Arm:
     # The voice brain's memory: what he asked, reminders, things he told it.
     BRAIN_PROFILES = {"dev": "brain-dev.db", "live": "brain.db"}
 
+    def _gesture_unless_busy(self, name, why=""):
+        """A gesture moves the arm; during a survey or probe it would file
+        the next stops under a pose the arm never held. Skipped, and said."""
+        if self.survey_lock.locked():
+            self.note(f"gesture {name}{why} skipped: the arm is surveying")
+            return None
+        return self.play(name, why)
+
     def observed_notes(self):
         """What AVI has noticed about him, for "what do you know about me"."""
         try:
@@ -548,9 +556,9 @@ class Arm:
         host = self.brain_host = brain_host_mod.Host(
             make, present=lambda: bool(self.presence.here), note=self.note,
             speaker=speaker,
-            cue=lambda: self.play(brain_host_mod.CUE_GESTURE,
-                                  " (announcement)"),
-            perform=lambda g: self.play(g, " (reply)"))
+            cue=lambda: self._gesture_unless_busy(brain_host_mod.CUE_GESTURE,
+                                                  " (announcement)"),
+            perform=lambda g: self._gesture_unless_busy(g, " (reply)"))
         return host
 
     @classmethod
@@ -784,6 +792,14 @@ class Arm:
         deg = max(lo, min(hi, float(deg)))
         with self.lock:
             self.target[joint] = deg
+            if self.engine.busy():
+                # While a gesture plays, run() copies the engine's base INTO
+                # target every tick, so a command issued now was silently
+                # undone: a reply's nod during a desk scan put the shoulder
+                # and elbow back to ATTENTIVE and the scan failed on the map's
+                # shape check. Moving the base too means the gesture plays
+                # around the new pose instead of reverting it.
+                self.engine.base[joint] = deg
         return deg
 
     def set_pose(self, pose):
@@ -1577,8 +1593,8 @@ def make_handler(st):
                 self._json(sweep_report(name=body.get("name", "sweep"),
                                         draws=int(body.get("draws", 999))))
             elif self.path == "/sweep_dome":
-                self._json(sweep_dome(
-                    arm, latest,
+                self._json(exclusive(
+                    arm, sweep_dome, latest,
                     el_step=float(body.get("el_step", 4.0)),
                     el_start=float(body.get("el_start", 0.0)),
                     el_limit=(None if body.get("el_limit") is None
@@ -1597,8 +1613,8 @@ def make_handler(st):
                 # then dropped on the floor, so several runs that looked like
                 # they swept 2/4/6/8 actually swept step x 1,2,3. A parameter
                 # that is read and ignored is worse than one that is absent.
-                self._json(build_dome(
-                    arm, latest,
+                self._json(exclusive(
+                    arm, build_dome, latest,
                     step=float(body.get("step", 5.0)),
                     min_conf=float(body.get("min_conf", 0.40)),
                     prefer=body.get("prefer", poses.OBSERVE_POSE),
@@ -1610,30 +1626,30 @@ def make_handler(st):
                     start_el=(None if body.get("start_el") is None
                               else float(body["start_el"]))))
             elif self.path == "/probe_horizon":
-                self._json(probe_horizon(
-                    arm, latest, delta=float(body.get("delta", 8.0)),
+                self._json(exclusive(
+                    arm, probe_horizon, latest, delta=float(body.get("delta", 8.0)),
                     wrists=body.get("wrists"),
                     approach=float(body.get("approach", 24.0))))
             elif self.path == "/probe_backlash":
-                self._json(probe_backlash(
-                    arm, latest, yaw=float(body.get("yaw", 90.0)),
+                self._json(exclusive(
+                    arm, probe_backlash, latest, yaw=float(body.get("yaw", 90.0)),
                     wrist=float(body.get("wrist", 150.0))))
             elif self.path == "/probe_depth":
-                self._json(probe_depth(
-                    arm, latest,
+                self._json(exclusive(
+                    arm, probe_depth, latest,
                     swing=float(body.get("swing", 40.0)),
                     steps=int(body.get("steps", 9)),
                     min_conf=float(body.get("min_conf", 0.35)),
                     frames=int(body.get("frames", 5))))
             elif self.path in ("/probe_parallax", "/probe_static"):
-                self._json(probe_parallax(
-                    arm, latest, swing=float(body.get("swing", 15.0)),
+                self._json(exclusive(
+                    arm, probe_parallax, latest, swing=float(body.get("swing", 15.0)),
                     min_conf=float(body.get("min_conf", 0.35)),
                     frames=int(body.get("frames", 3))))
             elif self.path in ("/probe_wrist", "/probe_yaw"):
                 wrist = self.path == "/probe_wrist"
-                self._json(probe_axis(
-                    arm, latest,
+                self._json(exclusive(
+                    arm, probe_axis, latest,
                     joint="wrist" if wrist else "base_yaw",
                     axis="cy" if wrist else "cx",
                     step=float(body.get("step", 6.0)),
@@ -1848,6 +1864,21 @@ def run_survey(arm, latest, **kw):
         return {"error": "another survey is already running"}
     try:
         return _run_survey(arm, latest, **kw)
+    finally:
+        lock.release()
+
+
+def exclusive(arm, fn, *a, **kw):
+    """Run an arm-sweeping routine under the survey lock, or refuse. Probes
+    and sweeps move the arm for minutes, exactly like a survey, and a
+    scheduled desk scan starting under one would corrupt both."""
+    lock = getattr(arm, "survey_lock", None)
+    if lock is None:
+        return fn(arm, *a, **kw)
+    if not lock.acquire(blocking=False):
+        return {"error": "the arm is busy with a survey or probe"}
+    try:
+        return fn(arm, *a, **kw)
     finally:
         lock.release()
 
