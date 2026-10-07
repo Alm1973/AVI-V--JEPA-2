@@ -1757,7 +1757,11 @@ def make_handler(st):
                         b"Content-Type: image/jpeg\r\n"
                         b"Content-Length: " + str(len(jpeg)).encode() +
                         b"\r\n\r\n" + jpeg + b"\r\n")
-                    time.sleep(float(self.tune["period"]))
+                    # `period` (1/fps), computed above for exactly this.
+                    # This line read self.tune -- an attribute the Handler
+                    # never had -- so every stream died after its FIRST
+                    # frame: the feed looked frozen to every viewer.
+                    time.sleep(period)
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
