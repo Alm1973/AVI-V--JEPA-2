@@ -524,17 +524,20 @@ class Arm:
         def make():
             from avi_bot import main as main_mod
             body = brain_host_mod.BrainArm(
-                self, recall, lambda n, look: find_object(self, n, look=look),
+                self, recall,
+                lambda n, look: find_object(self, n, look=look,
+                                            latest=latest),
                 seat_view=self.SEAT_VIEW)
             return main_mod.Avi(db_path=self.store_path(self.BRAIN_PROFILES),
                                 arm=body, mood=self.mood,
                                 observed=self.observed_notes)
 
-        return brain_host_mod.Host(
+        host = self.brain_host = brain_host_mod.Host(
             make, present=lambda: bool(self.presence.here), note=self.note,
             cue=lambda: self.play(brain_host_mod.CUE_GESTURE,
                                   " (announcement)"),
             perform=lambda g: self.play(g, " (reply)"))
+        return host
 
     @classmethod
     def roommap_path(cls, profile=None):
@@ -1491,7 +1494,8 @@ def make_handler(st):
                     label=body.get("label"), limit=int(body.get("limit", 50)))})
             elif self.path == "/find":
                 self._json(find_object(arm, (body.get("name") or "").strip(),
-                                       look=bool(body.get("look", True))))
+                                       look=bool(body.get("look", True)),
+                                       latest=latest))
             elif self.path == "/sweep_report":
                 self._json(sweep_report(name=body.get("name", "sweep"),
                                         draws=int(body.get("draws", 999))))
@@ -2068,7 +2072,59 @@ def desk_scan(arm, latest, min_conf=0.30, el_step=10.0, az_step=16.0,
                                                          or [])}
 
 
-def find_object(arm, name, look=True):
+# How long AVI keeps looking at a thing it found before going back to
+# watching his seat. Presence can only count him as away from the seat view,
+# and a find used to leave the arm staring at a pen until something else
+# moved it.
+LOOK_HOLD_S = 15.0
+
+
+def _back_to_seat_later(arm, hold=LOOK_HOLD_S):
+    """Return to the seat view after `hold` seconds -- unless something else
+    moved the arm meanwhile, in which case that something is in charge."""
+    looking_at = arm.snapshot()
+
+    def later():
+        time.sleep(hold)
+        if arm.snapshot() != looking_at:
+            return
+        seat = (load_taught() or {}).get(arm.SEAT_VIEW)
+        if seat:
+            arm.set_pose({j: seat[j] for j in poses.JOINTS})
+            arm.note(f"back to {arm.SEAT_VIEW} after looking")
+
+    threading.Thread(target=later, daemon=True).start()
+
+
+def _search(arm, latest, name):
+    """He asked for something the map does not know: look over the desk,
+    then tell him what turned up. Runs in the background; a desk scan takes
+    a couple of minutes."""
+    def run():
+        res = desk_scan(arm, latest)
+        if res.get("error"):
+            text = f"I couldn't look for your {name}: {res['error']}."
+        else:
+            label = roommap_mod.canonical_label(name)
+            placed = [o for o in res.get("objects") or [] if "x" in o]
+            hit = [o for o in res.get("objects") or [] if o["label"] == label]
+            if hit:
+                where = spatial_mod.describe(label, placed) or ""
+                text = f"Found your {name}. {where}".strip()
+            else:
+                text = f"I looked over the desk; no {name}."
+        host = getattr(arm, "brain_host", None)
+        if host is not None:
+            host.announce(text)
+        arm.note(f"search for {name!r}: {text}")
+
+    if arm.survey_lock.locked():
+        return False
+    threading.Thread(target=run, daemon=True).start()
+    return True
+
+
+def find_object(arm, name, look=True, latest=None):
     """Where is it, from the room map -- and turn to look.
 
     The voice brain (avi_bot.main.Avi) is not wired to this process's arm in
@@ -2102,6 +2158,18 @@ def find_object(arm, name, look=True):
             else:
                 arm.set(joint, aim[joint])
         moved = True
+        _back_to_seat_later(arm)
+    elif look and not aim and latest is not None and name:
+        # Only search for what the detector has a word for: a scan cannot
+        # find a charger, and "no charger on the desk" would be a guess
+        # dressed up as a look.
+        want = roommap_mod.canonical_label(find_mod.canonical(name))
+        vocab = {roommap_mod.canonical_label(v)
+                 for v in getattr(settings, "DESK_OBJECTS", [])}
+        if vocab and want not in vocab:
+            text = f"I can't recognise a {name} yet."
+        elif _search(arm, latest, name):
+            text = f"{text} I'll look."
     log(f"find {name!r}: {text} moved={moved}")
     return {"say": text, "aim": aim, "moved": moved,
             "known": [p.label for p, _ in arm.roommap.known()]}

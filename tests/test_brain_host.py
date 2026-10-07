@@ -177,3 +177,20 @@ class EveryReplyHasABody(unittest.TestCase):
     def test_a_timer_set_nods(self):
         self.assertEqual(bh.body_move(None, "neutral"), "nod")
         self.assertIsNone(bh.body_move(None, "neutral", have_speaker=True))
+
+
+class SomethingToTellHim(unittest.TestCase):
+    def test_a_search_result_waits_until_he_is_there(self):
+        here = {"v": False}
+        h = bh.Host(lambda: Brain([]), present=lambda: here["v"],
+                    note=lambda m: None)
+        h.announce("Found your keys. Left of the laptop.")
+        self.assertIsNone(h.tick(), "told an empty room")
+        here["v"] = True
+        self.assertEqual(h.tick(), "Found your keys. Left of the laptop.")
+        self.assertIsNone(h.tick())
+
+    def test_it_goes_out_even_before_anyone_has_spoken_to_it(self):
+        h = bh.Host(lambda: Brain([]), note=lambda m: None)
+        h.announce("Found your keys.")
+        self.assertEqual(h.tick(), "Found your keys.")

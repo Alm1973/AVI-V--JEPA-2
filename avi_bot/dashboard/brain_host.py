@@ -107,6 +107,10 @@ class Host:
         self.clock = clock
         self.error = None
         self.said = []                 # recent announcements, newest last
+        # Things AVI found out on its own and owes him, e.g. the result of a
+        # search he asked for. Delivered like scheduler announcements: only
+        # while he is at the desk.
+        self.pending = []
 
     @property
     def brain(self):
@@ -159,11 +163,30 @@ class Host:
         """Deliver at most one announcement. Returns its text, or None."""
         brain = self._brain                  # never construct from the loop
         if brain is None:
-            return None
+            if not self.pending:
+                return None
+            brain = _NoBrain()
         with self._turn:
             return self._deliver(brain)
 
+    def announce(self, text, kind="found"):
+        """Queue something to tell him when he is next at the desk."""
+        self.pending.append({"kind": kind, "text": text,
+                             "at": round(self.clock(), 1)})
+        del self.pending[:-10]
+
     def _deliver(self, brain):
+        if self.pending and self.present():
+            item = self.pending.pop(0)
+            self.note(f"AVI would say: {item['text']}")
+            if self.cue is not None:
+                try:
+                    self.cue()
+                except Exception as exc:
+                    self.note(f"announcement cue failed: {exc!r}")
+            self.said.append(item)
+            del self.said[:-20]
+            return item["text"]
         ann = brain.tick()
         if ann is None or not self.present():
             return None
@@ -186,3 +209,10 @@ class Host:
             except Exception as exc:
                 self.note(f"brain tick failed: {exc!r}")
             time.sleep(period)
+
+
+class _NoBrain:
+    """Lets pending announcements go out before anyone has spoken to it."""
+
+    def tick(self):
+        return None

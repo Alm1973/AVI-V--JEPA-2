@@ -1056,3 +1056,18 @@ of the brain's 19 names; the rest map to the nearest), and until the speakers
 arrive a beep becomes a gesture -- "set a timer" now nods. Memory questions,
 remember/forget and "what timers do I have" are local rules; the dashboard
 page has an "ask avi" box.
+
+### AVI looks for things it hasn't seen (2026-10-06 ~18:50)
+"Where are my keys" with no keys in the map used to end at "Haven't seen it
+today". Now: "Haven't seen it today. I'll look." -- a desk scan runs in the
+background (~1 min) and the result is told to him when he is next at the desk
+("Found your keys. Left of the laptop." / "I looked over the desk; no keys.").
+Things the detector has no word for get "I can't recognise a charger yet."
+instead of a fake search. After any find, the arm looks for 15 s and then
+goes back to the seat view, so presence keeps working.
+
+Scheduled desk scans exist but are OFF: `POST /settings
+{"desk_scan_every_min": 60}` turns them on (never while he is at the desk,
+07:00-23:00 only). The dashboard runs for a fixed time per start (default
+60 min); it is running until ~22:00 tonight. A daily schedule for it is his
+call.
