@@ -24,6 +24,12 @@ import time
 
 SAME_DEG = 12.0          # one object if two sightings are this close in view
 MOVED_DEG = 15.0         # a matched object this far from before has moved
+# On the desk plane (lens heights; world.on_plane), when both scans placed
+# the object. Two live scans ten minutes apart, nothing touched, differed by
+# 0.10 (pen), 0.14 (laptop) and 0.24 (backpack); 0.4 is above all three. An
+# angle cannot do this job: a pen sliding 10 cm at arm's length is ~8 deg,
+# under MOVED_DEG, so it "stayed".
+MOVED_H = 0.4
 MIN_CONF = 0.30          # a detection weaker than this does not enter a snapshot
 MIN_HITS = 2             # an object seen fewer times in one scan is a guess
 # Only SOLID objects can appear or disappear. The second real scan reported a
@@ -146,11 +152,20 @@ def diff(before, after, after_stops, half_width, moved_deg=MOVED_DEG,
         if match is not None and best <= max(moved_deg, same_deg) * 3:
             used.add(match)
             a = after[match]
-            if best > moved_deg:
-                out["moved"].append({"label": b["label"],
-                                     "from": [b["yaw"], b["wrist"]],
-                                     "to": [a["yaw"], a["wrist"]],
-                                     "by_deg": round(best, 1)})
+            on_desk = all(k in o for o in (a, b) for k in ("x", "y"))
+            if on_desk:
+                by_h = math.hypot(a["x"] - b["x"], a["y"] - b["y"])
+                moved = by_h > MOVED_H
+            else:
+                moved = best > moved_deg
+            if moved:
+                entry = {"label": b["label"],
+                         "from": [b["yaw"], b["wrist"]],
+                         "to": [a["yaw"], a["wrist"]],
+                         "by_deg": round(best, 1)}
+                if on_desk:
+                    entry["by_h"] = round(by_h, 2)
+                out["moved"].append(entry)
             else:
                 out["stayed"].append(b["label"])
             continue

@@ -169,3 +169,24 @@ class FaintThingsAreNotNews(unittest.TestCase):
                                                conf=0.6))
         d = dc.diff(self.before, after, DESK, HALF)
         self.assertEqual([a["label"] for a in d["appeared"]], ["mug"])
+
+
+class MovedOnTheDesk(unittest.TestCase):
+    def objs(self, pen_xy, pen_yaw=34.0):
+        return [{"label": "pen", "yaw": pen_yaw, "wrist": 139.0, "hits": 5,
+                 "conf": 0.6, "x": pen_xy[0], "y": pen_xy[1]},
+                {"label": "laptop", "yaw": 94.0, "wrist": 153.0, "hits": 9,
+                 "conf": 0.9, "x": 3.4, "y": 0.6}]
+
+    def test_a_small_slide_is_caught_on_the_plane(self):
+        """~8 deg of view: under MOVED_DEG, so it used to have 'stayed'."""
+        d = dc.diff(self.objs((2.0, -1.2)), self.objs((2.0, -0.6), 42.0),
+                    DESK, HALF)
+        self.assertEqual([m["label"] for m in d["moved"]], ["pen"])
+        self.assertAlmostEqual(d["moved"][0]["by_h"], 0.6, places=2)
+
+    def test_scan_to_scan_jitter_stays(self):
+        d = dc.diff(self.objs((2.0, -1.2)), self.objs((2.1, -1.22), 35.0),
+                    DESK, HALF)
+        self.assertEqual(d["moved"], [])
+        self.assertIn("pen", d["stayed"])

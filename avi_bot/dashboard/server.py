@@ -1033,6 +1033,11 @@ PAGE = b"""<!doctype html>
     <div class="g" id="gestures"></div>
     <div class="sec">poses</div>
     <div id="poses"></div>
+    <div class="sec">avi <span id="health" style="text-transform:none;letter-spacing:0"></span></div>
+    <div class="g">
+      <button id="spk" onclick="toggleSpeak()">speak: off</button>
+      <button id="scn" onclick="cycleScans()">desk scans: off</button>
+    </div>
     <div class="sec">recent</div>
     <pre id="events"></pre>
     <div class="bar"><code id="build"></code></div>
@@ -1255,7 +1260,41 @@ setInterval(async () => {
   paintCommon(s);
   tick(s.ends_in);
 }, 700);
+let SET = {};
+function paintSettings(){
+  document.getElementById("spk").textContent =
+    "speak: " + (SET.speak ? "on" : "off");
+  const e = SET.desk_scan_every_min || 0;
+  document.getElementById("scn").textContent =
+    "desk scans: " + (e ? "every " + e + " min" : "off");
+}
+async function loadSettings(){
+  SET = await api("/settings", {});
+  paintSettings();
+}
+async function toggleSpeak(){
+  SET = await api("/settings", {speak: !SET.speak});
+  paintSettings();
+}
+async function cycleScans(){
+  // off -> hourly -> every 30 min -> off
+  const now = SET.desk_scan_every_min || 0;
+  const next = now === 0 ? 60 : (now === 60 ? 30 : 0);
+  SET = await api("/settings", {desk_scan_every_min: next});
+  paintSettings();
+}
+async function paintHealth(){
+  try {
+    const h = await api("/health", {});
+    document.getElementById("health").textContent = h.summary;
+  } catch (e) {
+    document.getElementById("health").textContent = "no answer";
+  }
+}
+setInterval(paintHealth, 15000);
 refresh();
+loadSettings();
+paintHealth();
 </script>
 </body></html>
 """
