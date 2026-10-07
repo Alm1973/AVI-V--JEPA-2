@@ -60,6 +60,7 @@ from avi_bot.perception import horizon as horizon_mod             # noqa: E402
 from avi_bot.perception import world as world_mod                 # noqa: E402
 from avi_bot.dashboard import settings as settings_mod            # noqa: E402
 from avi_bot.dashboard import brain_host as brain_host_mod        # noqa: E402
+from avi_bot.dashboard import health as health_mod                # noqa: E402
 from avi_bot.perception import spatial as spatial_mod             # noqa: E402
 from avi_bot.perception import observations as observations_mod   # noqa: E402
 from avi_bot.perception import scan_policy as scan_policy_mod     # noqa: E402
@@ -187,6 +188,7 @@ class Arm:
         self.latent_encoder = None
         self.latent_db = None
         self.latent_count = 0
+        self.latent_last_ts = None
         self.latent_ms = None
         self.latent_error = None
         # Where things are, as directions the arm can be commanded to. AVI is
@@ -684,6 +686,7 @@ class Arm:
                 self.latent_db.commit()
                 self.latent_count += 1
                 self.latent_ms = round(ms, 1)
+                self.latent_last_ts = time.time()
             except Exception as exc:
                 self.latent_error = f"{type(exc).__name__}: {exc}"[:160]
                 self.note(f"latents off: {self.latent_error}")
@@ -1454,6 +1457,26 @@ def make_handler(st):
             elif self.path == "/desk_scan":
                 self._json(desk_scan(arm, latest,
                                      min_conf=float(body.get("min_conf", 0.30))))
+            elif self.path == "/health":
+                recent = arm.presence.recent(1)
+                host = getattr(arm, "brain_host", None)
+                try:
+                    last_scan, _ = arm.desk.last()
+                except Exception:
+                    last_scan = None
+                self._json(health_mod.check(
+                    time.time(),
+                    presence_last_ts=recent[0]["ts"] if recent else None,
+                    latents_on=arm.latents.is_set(),
+                    latent_last_ts=arm.latent_last_ts,
+                    latent_error=arm.latent_error,
+                    brain_error=host.error if host else None,
+                    brain_started=bool(host and host._brain is not None),
+                    scan_every_min=float(settings_mod.load(
+                        settings_mod.path()).get("desk_scan_every_min", 0)
+                        or 0),
+                    last_scan_ts=last_scan,
+                    ends_in_s=max(0.0, deadline - time.time())))
             elif self.path == "/settings":
                 path = settings_mod.path()
                 every = body.get("desk_scan_every_min")
