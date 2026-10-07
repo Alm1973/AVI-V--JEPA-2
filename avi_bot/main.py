@@ -19,6 +19,7 @@ the end, to every route. A tool that produced a sentence cannot bypass the
 policy by being reached through the local rules instead of the model.
 """
 import time
+from datetime import datetime
 
 from . import env as env_mod                                   # noqa: F401
 from . import numbers, scheduler as sched_mod                   # noqa: F401
@@ -43,12 +44,17 @@ class Avi:
     def __init__(self, db_path=":memory:", clock=time.time,
                  arm=None, mood=None, ics_text=None, calendar_url=None,
                  lamp_host=None, apps_path=None, env=None,
-                 send=None, local_pick=None, observed=None):
+                 send=None, local_pick=None, observed=None, situation=None):
         self.clock = clock
         self.started_at = clock()
         # Sentences AVI noticed by watching (presence, desk layout); see
         # perception/observations.py. None when headless.
         self.observed = observed
+        # () -> {"activity": str, "objects": [label, ...]}: what the cloud
+        # may be told about right now, as text (brain/context.py ALLOWED).
+        # Without it every cloud turn was answered blind -- not even the time
+        # of day reached the model.
+        self.situation = situation
         # `arm` is the dashboard's Arm, or None in a headless test. Every use
         # of it is guarded, so the brain runs with no hardware at all.
         self.arm = arm
@@ -249,9 +255,17 @@ class Avi:
     # --- the two entry points --------------------------------------------
     def handle(self, utterance):
         """One turn: hear, route, execute, speak. Never raises."""
+        sit = {}
+        if self.situation is not None:
+            try:
+                sit = self.situation() or {}
+            except Exception:
+                sit = {}              # a turn is never lost to its context
         ctx = context_mod.from_store(
             self.store, utterance=utterance,
-            now=None, mood=(self.mood.emotion() if self.mood else None),
+            now=datetime.fromtimestamp(self.clock()),
+            activity=sit.get("activity"), objects=sit.get("objects"),
+            mood=(self.mood.emotion() if self.mood else None),
             turns=self.turns[-6:])
         decision = self.router.handle(utterance, context=ctx)
         results = self.skills.run_all(decision.calls)

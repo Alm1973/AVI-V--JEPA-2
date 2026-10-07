@@ -526,6 +526,33 @@ class Arm:
         return observations_mod.notes(self.presence.summary(),
                                       spatial_mod.layout(placed))
 
+    def situation(self):
+        """Right now, as text the cloud brain may be told: whether he is at
+        the desk, and the objects solidly seen there (labels only -- never a
+        frame; brain/context.py)."""
+        out = {}
+        try:
+            s = self.presence.summary()
+            if s.get("here"):
+                m = s.get("for_minutes")
+                out["activity"] = (f"at the desk for {int(m)} minutes"
+                                   if m else "at the desk")
+            else:
+                out["activity"] = "away from the desk"
+        except Exception:
+            pass
+        try:
+            _, objects = self.desk.last()
+            labels = []
+            for o in objects or []:
+                if (desk_mod.solid(o) and o["label"] != "person"
+                        and o["label"] not in labels):
+                    labels.append(o["label"])
+            out["objects"] = labels
+        except Exception:
+            pass
+        return out
+
     def make_brain_host(self, latest):
         """The voice brain, built when its loop starts (brain_host.py)."""
         def recall(name):
@@ -542,7 +569,8 @@ class Arm:
                 seat_view=self.SEAT_VIEW)
             return main_mod.Avi(db_path=self.store_path(self.BRAIN_PROFILES),
                                 arm=body, mood=self.mood,
-                                observed=self.observed_notes)
+                                observed=self.observed_notes,
+                                situation=self.situation)
 
         model = os.path.join(os.path.dirname(os.path.dirname(
             os.path.dirname(os.path.abspath(__file__)))), "assistant",

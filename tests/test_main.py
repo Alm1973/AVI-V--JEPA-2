@@ -82,6 +82,37 @@ class Construction(unittest.TestCase):
             tools.BY_NAME.pop("polish_the_brass", None)
 
 
+class WhatTheCloudIsTold(unittest.TestCase):
+    """The context block existed with slots for the time, his activity and
+    the desk objects; every turn passed none of them."""
+
+    def sent(self, **kw):
+        seen = []
+
+        def send(name, url, model, messages, tool_list):
+            seen.append(messages)
+            raise providers.ProviderError(name, "captured")
+        avi = build(send=send, env={"GROQ_API_KEY": "x"}, **kw)
+        self.addCleanup(avi.close)
+        avi.handle("ruminate upon belt tension")
+        return "\n".join(m["content"] for m in seen[0])
+
+    def test_the_time_of_day(self):
+        self.assertIn("Now: ", self.sent())
+
+    def test_where_he_is_and_what_is_on_the_desk(self):
+        text = self.sent(situation=lambda: {
+            "activity": "at the desk for 40 minutes",
+            "objects": ["laptop", "mug"]})
+        self.assertIn("He appears to be: at the desk for 40 minutes.", text)
+        self.assertIn("Verified on the desk: laptop, mug.", text)
+
+    def test_a_broken_situation_does_not_lose_the_turn(self):
+        def boom():
+            raise RuntimeError("camera gone")
+        self.assertIn("Now: ", self.sent(situation=boom))
+
+
 class Turns(unittest.TestCase):
     def setUp(self):
         self.clock = Clock()
