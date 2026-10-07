@@ -34,6 +34,12 @@ class Notes(unittest.TestCase):
                       "time.", got)
         self.assertIn("Your breaks usually last about 25 minutes.", got)
 
+    def test_whether_he_takes_the_breaks_once_there_is_a_pattern(self):
+        self.assertFalse(any("breaks I suggested" in x for x in ob.notes(
+            {"breaks_judged": 2, "breaks_taken": 1})))
+        self.assertIn("You took 1 of the last 4 breaks I suggested.",
+                      ob.notes({"breaks_judged": 4, "breaks_taken": 1}))
+
     def test_where_things_are(self):
         self.assertIn("Your pen was in front of and left of the laptop, "
                       "nearer to me.", ob.notes(layout=LAYOUT))

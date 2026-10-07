@@ -33,6 +33,9 @@ def notes(presence=None, layout=None):
     if p.get("usual_break_min"):
         out.append(f"Your breaks usually last about "
                    f"{_duration(p['usual_break_min'])}.")
+    if (p.get("breaks_judged") or 0) >= 3:
+        out.append(f"You took {p.get('breaks_taken', 0)} of the last "
+                   f"{p['breaks_judged']} breaks I suggested.")
     for o in layout or []:
         where = (o.get("where") or "").rstrip(".")
         if where and o.get("label"):

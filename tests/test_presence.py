@@ -207,3 +207,31 @@ class ForChecking(unittest.TestCase):
         self.assertEqual(p.summary(now=t + 300)["breaks_offered_today"], 1)
         self.assertEqual(len(p.sessions(min_minutes=0)), 1,
                          "a break event must not split or end a session")
+
+
+class BreakOutcomes(unittest.TestCase):
+    def test_leaving_soon_after_is_taking_it(self):
+        p = log()
+        _, t = run(p, "11" + "1" * 10)
+        p.log_event("break_offered", at=t)
+        run(p, "0" * pm.LEAVE_AFTER, start=t + 20)
+        self.assertEqual(p.break_outcomes(now=t + 3600), [(t, "taken")])
+
+    def test_staying_is_ignoring_it(self):
+        p = log()
+        _, t = run(p, "11" + "1" * 10)
+        p.log_event("break_offered", at=t)
+        run(p, "1" * 40, start=t + 20)                 # 13 more minutes
+        self.assertEqual(p.break_outcomes(now=t + 3600), [(t, "ignored")])
+
+    def test_a_run_that_ended_is_not_a_no(self):
+        p = log()
+        _, t = run(p, "11" + "1" * 10)
+        p.log_event("break_offered", at=t)             # then nothing watched
+        self.assertEqual(p.break_outcomes(now=t + 3600), [])
+
+    def test_too_recent_to_judge(self):
+        p = log()
+        _, t = run(p, "11" + "1" * 10)
+        p.log_event("break_offered", at=t)
+        self.assertEqual(p.break_outcomes(now=t + 60), [])

@@ -80,3 +80,35 @@ class OnlyWhenHeIsThere(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LearnsFromWhetherHeTakesThem(unittest.TestCase):
+    """An ignored offer pushes the next one later; a taken one resets."""
+
+    def judged(self, *outcomes):
+        p = FakePresence()
+        p.break_outcomes = lambda now=None: [(T0 - 1000 + i, o)
+                                             for i, o in enumerate(outcomes)]
+        return br.BreakCoach(p, clock=lambda: T0)
+
+    def test_no_history_is_the_usual_fifty_minutes(self):
+        self.assertEqual(self.judged().interval(), br.focus_mod.BREAK_AFTER_S)
+
+    def test_each_ignored_offer_waits_longer_up_to_a_cap(self):
+        base = br.focus_mod.BREAK_AFTER_S
+        self.assertEqual(self.judged("ignored").interval(),
+                         base + br.BACKOFF_S)
+        self.assertEqual(self.judged(*["ignored"] * 9).interval(),
+                         base + br.MAX_BACKOFF_STEPS * br.BACKOFF_S)
+
+    def test_taking_one_resets(self):
+        self.assertEqual(self.judged("ignored", "ignored", "taken").interval(),
+                         br.focus_mod.BREAK_AFTER_S)
+
+    def test_the_backoff_delays_the_real_offer(self):
+        c = self.judged("ignored")
+        c.presence.since = T0
+        at = T0 + br.focus_mod.BREAK_AFTER_S + 60
+        self.assertIsNone(c.on_breakpoint(br.NATURAL_PAUSE, now=at))
+        self.assertEqual(c.on_breakpoint(br.NATURAL_PAUSE,
+                                         now=at + br.BACKOFF_S), br.BREAK)

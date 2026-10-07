@@ -34,6 +34,9 @@ from avi_bot.perception import habits
 ARRIVE_AFTER = 2          # consecutive sightings before he counts as arrived
 LEAVE_AFTER = 6           # consecutive VALID absences before he has left
 MIN_SESSION_MIN = 3.0     # shorter spans are not reported as sessions
+# A break offer is TAKEN if he left within this long of it. Departure is
+# only recorded LEAVE_AFTER looks (2 min) after he actually goes, hence 7.
+BREAK_TAKEN_WITHIN_S = 420.0
 
 PROFILES = {"dev": "presence-dev.db", "live": "presence.db"}
 
@@ -134,6 +137,35 @@ class Presence:
             out.append((start, None))
         return out
 
+    def break_outcomes(self, within_s=BREAK_TAKEN_WITHIN_S, now=None):
+        """[(offered_ts, "taken" | "ignored"), ...], oldest first.
+
+        Taken: he left within `within_s`. Ignored: he was still seen at the
+        desk after that. Neither -- the offer is too recent, or nothing was
+        watching afterwards (the dashboard stopped) -- is not judged: a run
+        that ended is not him saying no.
+        """
+        now = self.clock() if now is None else now
+        offers = [r[0] for r in self.db.execute(
+            "SELECT ts FROM events WHERE kind = 'break_offered' ORDER BY ts")]
+        out = []
+        for ts in offers:
+            if now - ts < within_s:
+                continue
+            left = self.db.execute(
+                "SELECT 1 FROM events WHERE kind = 'left' AND ts > ? "
+                "AND ts <= ? LIMIT 1", (ts, ts + within_s)).fetchone()
+            if left:
+                out.append((ts, "taken"))
+                continue
+            stayed = self.db.execute(
+                "SELECT 1 FROM samples WHERE present = 1 AND ts > ? "
+                "AND ts <= ? LIMIT 1",
+                (ts + within_s, ts + within_s + 600.0)).fetchone()
+            if stayed:
+                out.append((ts, "ignored"))
+        return out
+
     def routine(self, min_samples=10):
         """Presence by hour of day, from VALID looks only.
 
@@ -177,6 +209,10 @@ class Presence:
                "breaks_offered_today": self.db.execute(
                    "SELECT COUNT(*) FROM events WHERE kind = 'break_offered'"
                    " AND ts >= ?", (day0,)).fetchone()[0]}
+        judged = self.break_outcomes(now=now)[-10:]
+        if judged:
+            out["breaks_judged"] = len(judged)
+            out["breaks_taken"] = sum(1 for _, o in judged if o == "taken")
         # The first sit-down of each day, not every return from a break
         # (perception/habits.py). Hours past midnight run on (24.5 = 00:30)
         # so a late evening averages with the evening, not the morning.
