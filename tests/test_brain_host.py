@@ -279,3 +279,55 @@ class Arrival(unittest.TestCase):
         h = self.host(None)
         h.arrived()
         self.assertEqual(h.pending, [])
+
+
+class FocusSeesThePhone(unittest.TestCase):
+    """focus.py decided well and was never told anything."""
+
+    def setUp(self):
+        from avi_bot.skills import focus as focus_mod
+        self.fm = focus_mod
+        self.t = {"now": 1000.0}
+        clock = lambda: self.t["now"]                         # noqa: E731
+        self.focus = focus_mod.Focus(clock=clock)
+
+        class B(Brain):
+            focus = self.focus
+        self.moves = []
+        self.h = bh.Host(lambda: B([]), note=lambda m: None, clock=clock,
+                         perform=self.moves.append)
+        self.h.brain
+
+    def phone_for(self, seconds, step=20.0):
+        for _ in range(int(seconds / step) + 1):
+            self.h.saw_phone(True, now=self.t["now"])
+            self.t["now"] += step
+
+    def test_nothing_happens_without_a_session(self):
+        self.phone_for(300)
+        self.assertIsNone(self.h.focus_tick(breakpoint=True))
+        self.assertEqual(self.moves, [])
+
+    def test_phone_time_then_a_pause_is_a_glance_not_words(self):
+        self.focus.start(None)
+        self.phone_for(150)
+        self.assertIsNone(self.h.focus_tick(breakpoint=False))
+        self.assertEqual(self.h.focus_tick(breakpoint=True), self.fm.AHEM)
+        self.assertEqual(self.moves, [bh.CUE_GESTURE])
+        self.assertEqual(self.h.pending, [])
+
+    def test_the_second_nudge_has_words(self):
+        self.focus.start(None)
+        self.phone_for(150)
+        self.h.focus_tick(breakpoint=True)
+        self.t["now"] += 400
+        self.phone_for(150)
+        self.assertEqual(self.h.focus_tick(breakpoint=True), self.fm.WORDS)
+        self.assertEqual(self.h.tick(), bh.Host.FOCUS_PHONE_WORDS)
+
+    def test_a_timed_session_ends_on_time_with_its_summary(self):
+        self.focus.start(25)
+        self.t["now"] += 25 * 60
+        self.assertEqual(self.h.focus_tick(), "done")
+        self.assertFalse(self.h.focus_active())
+        self.assertTrue(self.h.tick().startswith("Focus done. 25 minutes"))

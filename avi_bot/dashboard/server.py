@@ -301,6 +301,10 @@ class Arm:
     # score well above this (0.6+ expected), and if not, this is wrong.
     PERSON_MIN_CONF = 0.50
     PERSON_MIN_HEIGHT = 0.25
+    # A phone is small and often half in a hand; COCO's "cell phone" scores
+    # lower than a person does. Only used as focus-mode evidence, which
+    # needs two minutes of it before anything happens.
+    PHONE_MIN_CONF = 0.40
 
     def view_ok_for_presence(self):
         seat = (load_taught() or {}).get(self.SEAT_VIEW)
@@ -350,10 +354,22 @@ class Arm:
                     from detector import DeskDetector
                     self.detector = DeskDetector()
                 h = frame.shape[0]
-                people = [d for d in self.detector.everything(
-                              frame, min_conf=self.PERSON_MIN_CONF)
+                seen = self.detector.everything(
+                    frame, min_conf=min(self.PERSON_MIN_CONF,
+                                        self.PHONE_MIN_CONF))
+                people = [d for d in seen
                           if d["label"] == "person"
+                          and d["conf"] >= self.PERSON_MIN_CONF
                           and d["h"] >= self.PERSON_MIN_HEIGHT * h]
+                host = getattr(self, "brain_host", None)
+                if host is not None and host.focus_active():
+                    # Focus mode's evidence: is the phone out? Only from the
+                    # seat view, where a phone in frame is his phone.
+                    if self.view_ok_for_presence():
+                        host.saw_phone(any(
+                            d["label"] == "cell phone"
+                            and d["conf"] >= self.PHONE_MIN_CONF
+                            for d in seen))
                 conf = max((d["conf"] for d in people), default=None)
                 event = self.presence.sample(
                     bool(people), conf=conf,
@@ -411,6 +427,14 @@ class Arm:
                     det.suppress(now + 2.0)
                 last = snap
                 if not det.update(frame, now):
+                    continue
+                host = getattr(self, "brain_host", None)
+                if host is not None and host.focus_active():
+                    # A focus session has its own break and its own nudges;
+                    # two coaches at one pause would be one too many.
+                    if host.focus_tick(breakpoint=det.last_reason
+                                       == breaks_mod.NATURAL_PAUSE):
+                        det.suppress(now + 6.0)
                     continue
                 if self.coach.on_breakpoint(det.last_reason, now) \
                         == breaks_mod.BREAK:

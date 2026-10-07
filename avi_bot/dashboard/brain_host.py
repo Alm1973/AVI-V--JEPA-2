@@ -191,6 +191,64 @@ class Host:
         if self.speaker is not None and self.speaker.enabled():
             self.speaker.say_later(text)
 
+    # --- focus mode, connected to what the camera sees ------------------
+    # skills/focus.py decides when to nudge -- phone time is evidence, a
+    # settled pause is the trigger -- but nothing fed it either, and a timed
+    # session never ended: "focus for 25 minutes" ran forever, silently.
+    FOCUS_PHONE_WORDS = "Phone's been out a while."
+    FOCUS_BREAK_WORDS = "Good moment for a break."
+    FOCUS_BREAK_GESTURE = "yawn_wake"
+
+    def _focus(self):
+        focus = getattr(self._brain, "focus", None)
+        return focus if focus is not None and focus.active else None
+
+    def focus_active(self):
+        return self._focus() is not None
+
+    def saw_phone(self, on, now=None):
+        """A phone verdict from the detector. Evidence only."""
+        focus = self._focus()
+        if focus is not None:
+            with self._turn:
+                focus.saw_phone(bool(on), now=now)
+
+    def focus_tick(self, breakpoint=False, now=None):
+        """End a timed session, or let focus decide on a nudge and do it.
+        Returns "done", a focus nudge kind, or None."""
+        from avi_bot.skills import focus as focus_mod
+        focus = self._focus()
+        if focus is None:
+            return None
+        now = self.clock() if now is None else now
+        with self._turn:
+            s = focus.session
+            if s.minutes and now - s.started >= float(s.minutes) * 60.0:
+                text, _ = focus.stop()
+                done = True
+            else:
+                kind = focus.tick(now=now, breakpoint=breakpoint)
+                done = False
+        if done:
+            self.announce(f"Focus done. {text}", kind="focus")
+            return "done"
+        if kind == focus_mod.AHEM:
+            self._move(CUE_GESTURE)              # a glance, no words
+        elif kind == focus_mod.WORDS:
+            self.announce(self.FOCUS_PHONE_WORDS, kind="focus")
+        elif kind == focus_mod.BREAK:
+            self._move(self.FOCUS_BREAK_GESTURE)
+            self.announce(self.FOCUS_BREAK_WORDS, kind="focus")
+        return kind
+
+    def _move(self, gesture):
+        if self.perform is None:
+            return
+        try:
+            self.perform(gesture)
+        except Exception as exc:
+            self.note(f"focus gesture {gesture} failed: {exc!r}")
+
     def arrived(self, first_today=True):
         """He sat down. The first time each day, tell him what is ahead
         (Avi.rundown). Returns the text queued, or None."""
@@ -299,6 +357,7 @@ class Host:
             self.brain                       # builds it; errors are recorded
         while time.time() < deadline:
             try:
+                self.focus_tick()              # a timed session ends on time
                 self.tick()
             except Exception as exc:
                 self.note(f"brain tick failed: {exc!r}")
