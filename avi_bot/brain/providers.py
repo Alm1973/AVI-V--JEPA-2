@@ -36,6 +36,15 @@ from avi_bot.memory import locked
 CHAIN = [
     ("groq", "https://api.groq.com/openai/v1", "openai/gpt-oss-20b",
      1000, 30),
+    # Groq's free limits are PER MODEL: 8K tokens/min and 200K tokens/day
+    # each (console.groq.com/docs/rate-limits, 2026-10-08). A turn is ~2.3K
+    # tokens, so one model is ~85 turns a day -- a morning of testing used
+    # it up and every turn went to OpenRouter's 50/day. Same key, separate
+    # buckets; both made the right tool calls from the Mac (wake, nudge).
+    ("groq-120b", "https://api.groq.com/openai/v1", "openai/gpt-oss-120b",
+     1000, 30),
+    ("groq-qwen", "https://api.groq.com/openai/v1", "qwen/qwen3.8-27b",
+     1000, 30),
     # llama-3.3-70b-instruct:free was withdrawn (404 "unavailable for
     # free", 2026-10-08). Nemotron 3 Super is free, takes tools, and made
     # the right nudge call in 2.4 s from the MSI. Never a paid slug here.
@@ -46,7 +55,8 @@ CHAIN = [
     ("local", None, "Qwen2.5-VL-3B-Instruct", None, None),
 ]
 
-KEY_ENV = {"groq": "GROQ_API_KEY", "openrouter": "OPENROUTER_API_KEY",
+KEY_ENV = {"groq": "GROQ_API_KEY", "groq-120b": "GROQ_API_KEY",
+           "groq-qwen": "GROQ_API_KEY", "openrouter": "OPENROUTER_API_KEY",
            "github": "GITHUB_TOKEN", "local": None}
 
 # Stay this far inside each free limit. Not 100%: the counter and the
@@ -142,7 +152,13 @@ class Budget:
             pass
 
 
-_RETRY_IN = re.compile(r"try again in ([0-9.]+)\s*(ms|s)\b", re.I)
+# "try again in 2.5s", "450ms", and -- when a day's tokens are spent --
+# "8m15.072s" or "1h2m3s", which the seconds-only pattern read as nothing.
+_RETRY_IN = re.compile(
+    r"try again in ((?:[0-9.]+h)?(?:[0-9.]+m(?!s))?(?:[0-9.]+(?:ms|s))?)",
+    re.I)
+_PART = re.compile(r"([0-9.]+)(h|ms|m|s)", re.I)
+_UNIT_S = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
 
 
 def retry_after(why):
@@ -150,10 +166,10 @@ def retry_after(why):
     if not why or "429" not in why:
         return None
     m = _RETRY_IN.search(why)
-    if not m:
+    if not m or not m.group(1):
         return None
-    v = float(m.group(1))
-    return v / 1000.0 if m.group(2).lower() == "ms" else v
+    return sum(float(v) * _UNIT_S[u.lower()]
+               for v, u in _PART.findall(m.group(1)))
 
 
 class ProviderError(Exception):
@@ -186,6 +202,10 @@ class Chain:
         self.env = env if env is not None else os.environ
         self.clock = clock
         self.tried = []
+        # provider -> when it said to come back ("try again in 8m15s" when
+        # its day's tokens are spent). Skipped until then instead of being
+        # asked, and refused, on every turn.
+        self.cool_until = {}
 
     def have_key(self, name):
         var = KEY_ENV.get(name)
@@ -223,11 +243,17 @@ class Chain:
             if not self.budget.allows(name, per_day):
                 self.tried.append((name, "over budget"))
                 continue
+            back = self.cool_until.get(name, 0.0) - self.clock()
+            if back > 0:
+                self.tried.append((name, f"cooling down {back:.0f}s"))
+                continue
             try:
                 try:
                     result = self.send(name, url, model, safe, tools)
                 except ProviderError as exc:
                     wait = retry_after(exc.why)
+                    if wait is not None and wait > self.RETRY_MAX_WAIT_S:
+                        self.cool_until[name] = self.clock() + wait
                     if wait is None or wait > self.RETRY_MAX_WAIT_S:
                         raise
                     self.budget.note(name, failed=True)

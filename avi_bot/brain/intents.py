@@ -341,8 +341,10 @@ def _quiet(m):
     return Intent("quiet", {"minutes": mins} if mins else {})
 
 
-@rule(r"^guest\s+mode(?:\s+(?:on|off))?$")
+@rule(r"^guest\s+mode(?:\s+(?P<on>on|off))?$")
 def _guest(m):
+    if m.group("on"):
+        return Intent("guest_mode", {"on": m.group("on") == "on"})
     return Intent("guest_mode", {})
 
 

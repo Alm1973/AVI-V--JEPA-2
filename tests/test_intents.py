@@ -68,6 +68,10 @@ class Scripted(unittest.TestCase):
         self.assertGreaterEqual(got, 18,
                                 f"{got}/20. Misses:\n  " + "\n  ".join(wrong))
 
+    def test_guest_mode_on_and_off_say_which(self):
+        self.assertEqual(intents.match("guest mode on").args, {"on": True})
+        self.assertEqual(intents.match("guest mode off").args, {"on": False})
+
     def test_how_far_is_a_find(self):
         """The model made up "0.35 m" for the pen; the rule's hint sends
         it to find_object, which reads the desk scan."""

@@ -43,7 +43,8 @@ def _clip(text, limit):
 
 def build(now=None, activity=None, objects=None, mood=None, events=None,
           facts=None, turns=None, personality=None, max_chars=MAX_CHARS,
-          camera=None, pose=None, noticed=None, desk=None, light=None):
+          camera=None, pose=None, noticed=None, desk=None, light=None,
+          modes=None):
     """Assemble the context block. Returns a string.
 
     Sections are added in order of how much they change the answer, so that
@@ -57,6 +58,11 @@ def build(now=None, activity=None, objects=None, mood=None, events=None,
 
     if now is not None:
         parts.append(f"Now: {now:%A %d %B %Y, %H:%M}.")
+
+    if modes:
+        # What is switched on. Told "I'm done studying" with no idea focus
+        # mode was running, the model played a gesture (2026-10-08).
+        parts.append(f"On right now: {_clip(modes, 120)}.")
 
     if activity:
         parts.append(f"He appears to be: {_clip(activity, 80)}.")

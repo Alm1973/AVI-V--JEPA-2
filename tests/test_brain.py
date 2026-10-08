@@ -142,14 +142,56 @@ class Failover(unittest.TestCase):
 
         def send(name, url, model, messages, tool_list):
             seen.append(name)
-            if name == "groq":
-                raise providers.ProviderError("groq", "429 rate limited")
+            if name.startswith("groq"):
+                raise providers.ProviderError(name, "429 rate limited")
             return FakeResult(content='{"beep": "happy"}')
 
         c = chain(send)
         name, result = c.ask([{"role": "user", "content": "hi"}])
         self.assertEqual(name, "openrouter")
-        self.assertEqual(seen, ["groq", "openrouter"])
+        self.assertEqual(seen, ["groq", "groq-120b", "groq-qwen",
+                                "openrouter"])
+
+    def test_one_groq_models_day_spent_goes_to_the_next_model(self):
+        """Limits are per model: gpt-oss-20b's 200K tokens/day ran out
+        and every turn went to OpenRouter's 50/day (2026-10-08)."""
+        def send(name, url, model, messages, tool_list):
+            if model == "openai/gpt-oss-20b":
+                raise providers.ProviderError(
+                    name, "429 tokens per day (TPD): Limit 200000. Please "
+                    "try again in 8m15.072s.")
+            return FakeResult(content='{"beep": "happy"}')
+        c = chain(send)
+        self.assertEqual(c.ask([{"role": "user", "content": "hi"}])[0],
+                         "groq-120b")
+
+    def test_a_spent_model_is_skipped_until_it_said_to_come_back(self):
+        now = {"t": 1000.0}
+        sent = []
+
+        def send(name, url, model, messages, tool_list):
+            sent.append(name)
+            if name == "groq":
+                raise providers.ProviderError(
+                    name, "429 Please try again in 8m15s.")
+            return FakeResult(content='{"beep": "happy"}')
+        c = chain(send)
+        c.clock = lambda: now["t"]
+        c.ask([{"role": "user", "content": "hi"}])
+        c.ask([{"role": "user", "content": "hi"}])
+        self.assertEqual(sent.count("groq"), 1, "asked again while spent")
+        self.assertIn(("groq", "cooling down 495s"), c.tried)
+        now["t"] += 496
+        c.ask([{"role": "user", "content": "hi"}])
+        self.assertEqual(sent.count("groq"), 2)
+
+    def test_retry_waits_in_minutes_and_hours_are_read(self):
+        self.assertAlmostEqual(providers.retry_after(
+            "429 try again in 8m15.072s."), 495.072)
+        self.assertEqual(providers.retry_after("429 try again in 1h2m3s"),
+                         3723.0)
+        self.assertEqual(providers.retry_after("429 try again in 450ms"),
+                         0.45)
 
     def test_a_missing_key_is_skipped_without_a_request(self):
         seen = []
@@ -199,7 +241,7 @@ class Failover(unittest.TestCase):
         c.ask([{"role": "user", "content": "hi"}])
         report = c.budget.report()
         self.assertEqual(report["groq"]["failures"], 1)
-        self.assertEqual(report["openrouter"]["failures"], 0)
+        self.assertEqual(report["groq-120b"]["failures"], 0)
 
 
 class Redaction(unittest.TestCase):
@@ -475,7 +517,7 @@ class RateLimits(unittest.TestCase):
 
         def send(name, url, model, messages, tool_list):
             calls.append(name)
-            if name == "groq":
+            if name.startswith("groq"):
                 raise providers.ProviderError(
                     name, "HTTP 429: Please try again in 45s.")
             return FakeResult(content='{"beep": "neutral"}')

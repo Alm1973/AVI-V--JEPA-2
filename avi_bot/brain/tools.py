@@ -55,8 +55,10 @@ TOOLS = [
     _tool("get_schedule", "Read the calendar.",
           {"day": {"type": "string",
                    "enum": ["today", "tomorrow", "this week"]}}),
-    _tool("focus_start", "Start quiet focus mode.", {"minutes": MINUTES}),
-    _tool("focus_stop", "End focus mode and summarise it."),
+    _tool("focus_start", "Start focus mode while he studies or works.",
+          {"minutes": MINUTES}),
+    _tool("focus_stop", "End focus mode (he is done studying or working) "
+          "and summarise it."),
     _tool("focus_status", "How the current focus session is going."),
     _tool("find_object", "Where something was last seen on the desk.",
           {"name": {"type": "string", "maxLength": 40}}, ["name"]),
@@ -118,10 +120,13 @@ TOOLS = [
           {"name": {"type": "string", "maxLength": 40}}, ["name"]),
     _tool("robot_status", "Mood, uptime, VRAM, provider health, request counts."),
     _tool("get_time", "The current time."),
-    _tool("sleep", "Go to the rest pose and pause the observer."),
-    _tool("wake", "Wake up from sleep."),
+    _tool("sleep", "Go to sleep (bed, goodnight): rest pose, stop "
+          "watching and talking until woken."),
+    _tool("wake", "Wake up from sleep (good morning, rise and shine)."),
     _tool("quiet", "Nonverbal only for a while.", {"minutes": MINUTES}),
-    _tool("guest_mode", "Stop logging while someone else is here."),
+    _tool("guest_mode", "Someone else is here (a friend is coming over): "
+          "stop logging. on=false when they have gone.",
+          {"on": {"type": "boolean"}}),
     _tool("stop", "Stop moving right now."),
     _tool("praise", "He was pleased."),
     _tool("scold", "He was not pleased."),
@@ -228,6 +233,9 @@ def validate_call(name, args, lenient=False):
                 return None, f"{name}.{key}: {value} below {rule['minimum']}"
             if "maximum" in rule and value > rule["maximum"]:
                 return None, f"{name}.{key}: {value} above {rule['maximum']}"
+        elif kind == "boolean":
+            if not isinstance(value, bool):
+                return None, f"{name}.{key}: {value!r} is not true/false"
         elif kind == "string":
             if not isinstance(value, str):
                 return None, f"{name}.{key}: {value!r} is not a string"

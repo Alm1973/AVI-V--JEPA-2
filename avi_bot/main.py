@@ -531,6 +531,28 @@ class Avi:
         except Exception:
             return None
 
+    def _modes_words(self):
+        """'focus mode (12 of 25 min), quiet' -- what is on, for the
+        model; None when nothing is."""
+        on = []
+        try:
+            s = getattr(self.focus, "session", None)
+            if s is not None and s.ended is None:
+                m = int((self.clock() - s.started) // 60)
+                on.append(f"focus mode ({m}"
+                          + (f" of {int(s.minutes)}" if s.minutes else "")
+                          + " min)")
+            snap = self.modes.snapshot()
+            if snap.get("asleep"):
+                on.append("asleep")
+            if snap.get("quiet"):
+                on.append("quiet")
+            if snap.get("guest"):
+                on.append("guest mode (someone else is here)")
+        except Exception:
+            return None               # a turn is never lost to its context
+        return ", ".join(on) or None
+
     # --- the two entry points --------------------------------------------
     def handle(self, utterance):
         """One turn: hear, route, execute, speak. Never raises."""
@@ -552,7 +574,7 @@ class Avi:
             activity=sit.get("activity"), objects=sit.get("objects"),
             camera=sit.get("camera"), pose=sit.get("pose"),
             desk=sit.get("desk"), light=sit.get("light"),
-            noticed=noticed,
+            modes=self._modes_words(), noticed=noticed,
             mood=(self.mood.emotion() if self.mood else None),
             turns=self.turns[-6:])
         decision = self.router.handle(utterance, context=ctx)

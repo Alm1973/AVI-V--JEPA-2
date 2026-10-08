@@ -510,6 +510,34 @@ class ArmFailuresDoNotReachTheBrain(unittest.TestCase):
                         [r.error for r in results])
 
 
+
+class WhatIsOn(unittest.TestCase):
+    """'I'm done studying' -> a gesture: the model did not know focus mode
+    was running (routing eval, 2026-10-08)."""
+
+    def setUp(self):
+        self.clock = Clock()
+        self.avi = build(clock=self.clock)
+        self.addCleanup(self.avi.close)
+
+    def test_nothing_on_says_nothing(self):
+        self.assertIsNone(self.avi._modes_words())
+
+    def test_focus_and_quiet_are_told(self):
+        self.avi.focus.start(25)
+        self.clock.tick(12 * 60)
+        self.avi.modes.quiet(10)
+        self.assertEqual(self.avi._modes_words(),
+                         "focus mode (12 of 25 min), quiet")
+
+    def test_guest_mode_on_is_on_twice(self):
+        """It toggled: "guest mode on" said twice switched it off."""
+        self.avi.skills.run("guest_mode", {"on": True})
+        self.avi.skills.run("guest_mode", {"on": True})
+        self.assertTrue(self.avi.modes.guest)
+        self.avi.skills.run("guest_mode", {"on": False})
+        self.assertFalse(self.avi.modes.guest)
+
 if __name__ == "__main__":
     unittest.main()
 

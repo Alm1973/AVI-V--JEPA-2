@@ -92,5 +92,6 @@ def make(modes):
         "sleep": lambda: modes.sleep(),
         "wake": lambda: modes.wake(),
         "quiet": lambda minutes=None: modes.quiet(minutes),
-        "guest_mode": lambda: modes.guest_mode(),
+        # on=None toggles: "guest mode on" said twice switched it off.
+        "guest_mode": lambda on=None: modes.guest_mode(on),
     }

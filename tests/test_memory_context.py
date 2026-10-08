@@ -247,6 +247,10 @@ class Budgeted(unittest.TestCase):
         self.assertIn("Pose now: base_yaw 94", block)
         self.assertIn("You noticed: Your pen was left of the laptop.", block)
 
+    def test_what_is_on_reaches_the_prompt(self):
+        self.assertIn("On right now: focus mode (12 of 25 min).",
+                      context.build(modes="focus mode (12 of 25 min)"))
+
     def test_the_desk_distances_reach_the_prompt(self):
         block = context.build(desk="Desk at the last scan (5 h ago; things "
                                    "may have moved since), distance from "
