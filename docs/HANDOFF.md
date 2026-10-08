@@ -1177,3 +1177,19 @@ time; what do you know about me; stop.
 - Dark room: look_around says "It's too dark to make out more."; the model is
   told the room is dim. "Timer: 1 minute timer." -> "Your 1 minute timer is
   done." A blind move verdict logs why (ORB inliers / JEPA edge or flat).
+
+### 2026-10-08 morning (not yet on the MSI if Tailscale is still down)
+
+- **Redeploy with `./scripts/dashboard.sh restart`**, not `start 300`: it
+  runs to 22:00 ($AVI_DAY_END). A `start 300` at 08:27 would have ended the
+  day's dashboard at 13:27.
+- **/health "voice"**: off / ok (backend, count spoken) / broken. Piper
+  failing used to fall back to the Silent voice with nothing logged.
+- **Looks teach the map**: the search around an aim is
+  `perception/look_check.py` (tested with a fake camera); a find off the aim
+  calls `RoomMap.correct()`, which MOVES the place (keeps its weight, merges
+  a duplicate) instead of averaging it in at 1/18 per sighting.
+- The Mac's Tailscale logged out at ~08:50 Thursday and could not reach
+  controlplane.tailscale.com (the network, not the MSI). Log in again from a
+  network that allows it, then `./scripts/sync.sh && ./scripts/dashboard.sh
+  restart`.
