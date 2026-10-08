@@ -235,3 +235,22 @@ class BreakOutcomes(unittest.TestCase):
         _, t = run(p, "11" + "1" * 10)
         p.log_event("break_offered", at=t)
         self.assertEqual(p.break_outcomes(now=t + 60), [])
+
+
+class BackToTheSeat(unittest.TestCase):
+    """An arm left anywhere else means he can never be seen to leave."""
+
+    def test_idle_and_elsewhere_goes_back(self):
+        self.assertTrue(pm.seat_return_due(100.0, 0.0))
+
+    def test_never_while_he_is_driving_it(self):
+        self.assertFalse(pm.seat_return_due(100.0, hold_until=700.0))
+
+    def test_never_while_anything_else_has_the_arm(self):
+        for flag in ("busy", "surveying", "paused", "tracking"):
+            with self.subTest(flag):
+                self.assertFalse(pm.seat_return_due(100.0, 0.0,
+                                                    **{flag: True}))
+
+    def test_already_there_does_nothing(self):
+        self.assertFalse(pm.seat_return_due(100.0, 0.0, at_seat=True))

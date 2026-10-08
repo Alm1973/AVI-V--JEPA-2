@@ -55,6 +55,20 @@ CREATE TABLE IF NOT EXISTS events (
 """
 
 
+def seat_return_due(now, hold_until, busy=False, surveying=False,
+                    paused=False, tracking=False, at_seat=False):
+    """Should an idle arm go back to watching his seat?
+
+    Absence only counts from the seat view, so an arm left pointing
+    anywhere else -- after a restart, a slider session, a find -- means he
+    can never be seen to LEAVE: "here" sticks, a reminder is "told" to an
+    empty room, and sessions never end. Nothing else may want the arm.
+    """
+    if at_seat or busy or surveying or paused or tracking:
+        return False
+    return now >= hold_until
+
+
 class Presence:
     def __init__(self, path=":memory:", clock=time.time,
                  arrive_after=ARRIVE_AFTER, leave_after=LEAVE_AFTER):

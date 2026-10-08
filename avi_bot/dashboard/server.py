@@ -150,6 +150,10 @@ class Arm:
         self.attention = att_mod.Attention(config)
         self.idle_mode = threading.Event()
         self.tracking = threading.Event()
+        # Until when the arm is someone else's: his sliders and recalls hold
+        # it for SEAT_RETURN_AFTER_S, a find for its look. 0 = return to the
+        # seat view at the first idle check after start (seat_loop).
+        self.hold_until = 0.0
         self.last_behaviour = None
         self.detector = None
         self.last_person = None
@@ -313,6 +317,35 @@ class Arm:
         now = self.snapshot()
         return all(abs(float(now[j]) - float(seat[j])) <= self.SEAT_TOLERANCE_DEG
                    for j in poses.JOINTS if j in seat)
+
+    # How long his own slider or recall moves keep the arm before it goes
+    # back to watching the seat.
+    SEAT_RETURN_AFTER_S = 600.0
+
+    def hold(self, seconds):
+        self.hold_until = max(self.hold_until, time.time() + float(seconds))
+
+    def seat_loop(self, deadline, period=20.0):
+        """Back to the seat view whenever nothing else wants the arm
+        (presence.seat_return_due says why it matters)."""
+        while not self.stop.is_set() and time.time() < deadline:
+            time.sleep(period)
+            try:
+                seat = (load_taught() or {}).get(self.SEAT_VIEW)
+                if not seat:
+                    continue
+                if presence_mod.seat_return_due(
+                        time.time(), self.hold_until,
+                        busy=self.engine.busy(),
+                        surveying=self.survey_lock.locked(),
+                        paused=self.paused.is_set(),
+                        tracking=self.tracking.is_set(),
+                        at_seat=self.view_ok_for_presence()):
+                    self.set_pose({j: seat[j] for j in poses.JOINTS})
+                    self.note(f"back to {self.SEAT_VIEW}: absence only "
+                              "counts from there")
+            except Exception as exc:
+                self.note(f"seat loop: {exc!r}")
 
     def scan_loop(self, latest, deadline, period=60.0):
         """Scheduled desk scans, when switched on (perception/scan_policy).
@@ -1547,6 +1580,7 @@ def make_handler(st):
                     deg = float(body.get("deg"))
                 except (TypeError, ValueError):
                     return self._json({"error": "deg must be a number"}, 400)
+                arm.hold(arm.SEAT_RETURN_AFTER_S)
                 self._json({"ok": True, "joint": joint,
                             "deg": arm.set(joint, deg)})
             elif self.path == "/save":
@@ -1569,6 +1603,7 @@ def make_handler(st):
                 data = load_taught()
                 if name not in data:
                     return self._json({"error": "not taught"}, 404)
+                arm.hold(arm.SEAT_RETURN_AFTER_S)
                 arm.set_pose({j: data[name][j] for j in poses.JOINTS})
                 log(f"recalled {name}")
                 self._json({"ok": True})
@@ -1823,6 +1858,7 @@ def make_handler(st):
                 arm.note("paused" if want else "resumed")
                 self._json({"ok": True, "paused": want})
             elif self.path == "/selftest":
+                arm.hold(60.0)            # not the seat loop's mid-test
                 self._json({"ok": True, "lines": run_selftest(arm, latest)})
             elif self.path == "/stop":
                 self._json({"ok": True})
@@ -2339,6 +2375,8 @@ LOOK_HOLD_S = 15.0
 def _back_to_seat_later(arm, hold=LOOK_HOLD_S):
     """Return to the seat view after `hold` seconds -- unless something else
     moved the arm meanwhile, in which case that something is in charge."""
+    if hasattr(arm, "hold"):
+        arm.hold(hold + 5.0)       # the seat loop must not cut the look short
     looking_at = arm.snapshot()
 
     def later():
@@ -3446,6 +3484,8 @@ def main():
     threading.Thread(target=arm.pause_loop, args=(latest, deadline),
                      daemon=True).start()
     threading.Thread(target=arm.latent_loop, args=(latest, deadline),
+                     daemon=True).start()
+    threading.Thread(target=arm.seat_loop, args=(deadline,),
                      daemon=True).start()
     threading.Thread(target=arm.scan_loop, args=(latest, deadline),
                      daemon=True).start()
