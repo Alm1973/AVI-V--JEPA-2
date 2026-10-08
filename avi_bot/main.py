@@ -18,6 +18,7 @@ Hear, route, execute, then speak -- and the speech policy is applied once at
 the end, to every route. A tool that produced a sentence cannot bypass the
 policy by being reached through the local rules instead of the model.
 """
+import os
 import time
 from datetime import datetime
 
@@ -73,9 +74,17 @@ class Avi:
             self.loaded_keys = []
         self.budget = providers.Budget()
         self.chain = providers.Chain(budget=self.budget, send=send, env=env)
+        # Tools that cannot work here are not offered: a lamp with no host,
+        # a schedule with no calendar.
+        unusable = []
+        if not (ics_text or calendar_url):
+            unusable.append("get_schedule")
+        if not (lamp_host or os.environ.get("KASA_HOST")):
+            unusable.append("lamp")
         self.router = router_mod.Router(chain=self.chain, policy=self.policy,
                                         clock=clock, local_pick=local_pick,
-                                        cloud_first=cloud_first)
+                                        cloud_first=cloud_first,
+                                        wire_tools=tools.wire_tools(unusable))
         # Motion sequences run on their own thread so the reply is not held
         # up by a wave; tests turn this off to step through them.
         self.background = True

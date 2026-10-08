@@ -38,7 +38,7 @@ ARM_GESTURE = {
     "tilt": "curious_lean", "lean_in": "curious_lean",
     "shrug": "embarrassed", "look_around": "thinking", "greet": "perk_up",
     "glance_at_you": "perk_up", "fidget": "excited_wiggle",
-    "still": None, "breathe": None,
+    "still": None, "breathe": None, "wave": "wave",
 }
 
 # Until the speakers arrive a beep is silence, so "timer set" acknowledged

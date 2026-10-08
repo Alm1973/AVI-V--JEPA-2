@@ -22,7 +22,7 @@ EMOTION_NAMES = ("neutral", "happy", "excited", "curious", "sad", "sulky",
 # reason as EMOTION_NAMES. A name outside it failed silently on the arm.
 ARM_GESTURES = ("nod", "shake", "perk_up", "droop", "celebrate", "ahem",
                 "yawn_wake", "thinking", "embarrassed", "curious_lean",
-                "excited_wiggle", "startled", "doze")
+                "excited_wiggle", "startled", "doze", "wave")
 JOINT_NAMES = ("base_yaw", "shoulder", "elbow", "wrist")
 
 
@@ -149,8 +149,30 @@ REPLY_TOOL = _tool(
 BY_NAME = {t["function"]["name"]: t for t in TOOLS}
 NAMES = tuple(BY_NAME)
 
-# What gets SENT to a provider: the skills plus the reply envelope.
-WIRE_TOOLS = TOOLS + [REPLY_TOOL]
+def _compact(tool):
+    """A tool as sent: no empty "required", no "additionalProperties", no
+    local-only keys like "confirm". validate_call still enforces all of it
+    here. The free tier allows 8000 tokens a minute and the tool list was
+    ~2400 of each request's ~2550 -- three turns a minute, then refusals."""
+    f = tool["function"]
+    params = {k: v for k, v in f["parameters"].items()
+              if k != "additionalProperties"}
+    if not params.get("required"):
+        params.pop("required", None)
+    return {"type": "function",
+            "function": {"name": f["name"], "description": f["description"],
+                         "parameters": params}}
+
+
+def wire_tools(exclude=()):
+    """What gets SENT to a provider: the skills that can work on this
+    machine, plus the reply envelope."""
+    return ([_compact(t) for t in TOOLS
+             if t["function"]["name"] not in set(exclude)]
+            + [_compact(REPLY_TOOL)])
+
+
+WIRE_TOOLS = wire_tools()
 
 # Simple intents the local VLM fallback can choose between with a
 # multiple-choice, first-token call (BUILD_SPEC 8.1 step 3). Deliberately

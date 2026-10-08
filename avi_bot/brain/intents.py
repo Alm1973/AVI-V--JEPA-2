@@ -233,6 +233,31 @@ def _forget(m):
     return Intent("forget", {"text": m.group("fact").strip()})
 
 
+# Basic moves, for when the model is out of reach (rate-limited, offline):
+# the model decides first, and these keep the arm answering without it.
+@rule(r"^(?:can\s+(?:you|u)\s+)?(?:look|turn|move)\s+"
+      r"(?P<small>a\s+(?:little\s+)?bit\s+|a\s+little\s+|slightly\s+)?"
+      r"(?:to\s+(?:the|your)\s+)?(?P<dir>left|right|up|down)"
+      r"(?P<small2>\s+a\s+(?:little\s+)?bit|\s+a\s+little|\s+slightly)?"
+      r"[.!?]?$")
+def _nudge(m):
+    small = m.group("small") or m.group("small2")
+    return Intent("nudge", {"direction": m.group("dir"),
+                            "degrees": 8 if small else 15})
+
+
+@rule(r"^(?:can\s+(?:you|u)\s+)?(?:wave|say\s+hi)(?:\s+(?:hi|hello))?"
+      r"(?:\s+to\s+me)?[.!?]?$")
+def _wave(m):
+    return Intent("play_emotion", {"name": "wave"})
+
+
+@rule(r"^(?:can\s+(?:you|u)\s+)?(?P<g>nod|shake\s+your\s+head)[.!?]?$")
+def _nod_shake(m):
+    return Intent("play_emotion",
+                  {"name": "nod" if m.group("g") == "nod" else "shake"})
+
+
 @rule(r"^(?:look|turn)\s+(?:at|to|towards?)\s+(?:me|here|over\s+here)"
       r"[.!]?$")
 @rule(r"^(?:hey\s+)?(?:avi,?\s+)?look\s+at\s+me(?:\s+avi)?[.!]?$")

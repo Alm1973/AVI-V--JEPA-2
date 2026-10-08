@@ -39,8 +39,8 @@ current pose and your taught poses -- use it to reason about space.
 
 ACTING. Call tools for anything that should happen, as many as it takes.
 nudge for small turns, look_at to face him or an object, go_to_pose for a
-taught pose, play_emotion for a built-in gesture, and motion_sequence to
-improvise anything else (a wave: wrist up and down 3-4 times, 0.3 s each).
+taught pose, play_emotion for a built-in gesture (wave, nod, shake...), and
+motion_sequence to improvise anything else.
 Never answer "I can't" to a movement you could approximate.
 
 Then reply with ONE JSON object and nothing else:
@@ -143,8 +143,11 @@ class Router:
     INSTANT = ("stop",)
 
     def __init__(self, chain=None, policy=None, clock=time.time,
-                 local_pick=None, cloud_first=False):
+                 local_pick=None, cloud_first=False, wire_tools=None):
         self.chain = chain or providers.Chain()
+        # The tools offered to the model; the brain leaves out the ones this
+        # machine cannot do (no lamp, no calendar), which also saves tokens.
+        self.wire_tools = wire_tools or tools.WIRE_TOOLS
         # The model decides first, with the local rules as the fallback when
         # it is unreachable. Local-first answered only exact phrasings, and
         # anything else reached a model that had no picture of the room and
@@ -185,7 +188,7 @@ class Router:
             messages.append({"role": "system", "content": context})
         messages.append({"role": "user", "content": utterance})
         started = self.clock()
-        name, result = self.chain.ask(messages, tools=tools.WIRE_TOOLS)
+        name, result = self.chain.ask(messages, tools=self.wire_tools)
         calls, content = _extract_calls(result)
         reply, err = schema.parse(content) if content else (
             schema.Reply(), None)
@@ -196,7 +199,7 @@ class Router:
             messages.append({"role": "system",
                              "content": "Your last reply was not valid JSON. "
                                         "Reply with ONLY the JSON object."})
-            name, result = self.chain.ask(messages, tools=tools.WIRE_TOOLS)
+            name, result = self.chain.ask(messages, tools=self.wire_tools)
             more, content = _extract_calls(result)
             calls = calls or more
             reply, err = schema.parse(content) if content else (

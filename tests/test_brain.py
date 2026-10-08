@@ -395,3 +395,70 @@ class TheModelDecidesFirst(unittest.TestCase):
         names = {t["function"]["name"] for t in tools.WIRE_TOOLS}
         self.assertTrue({"nudge", "move_joints", "motion_sequence",
                          "go_to_pose"} <= names)
+
+
+class RateLimits(unittest.TestCase):
+    """Groq's free tier: 8000 tokens a minute, ~3 turns. Wait, don't fail."""
+
+    def test_the_wait_is_read_from_the_refusal(self):
+        why = ('HTTP 429: {"error":{"message":"Rate limit reached ... '
+               'Please try again in 6.0225s. Need more tokens?')
+        self.assertAlmostEqual(providers.retry_after(why), 6.0225)
+        self.assertAlmostEqual(providers.retry_after("HTTP 429: try again in "
+                                                     "450ms"), 0.45)
+        self.assertIsNone(providers.retry_after("HTTP 500: boom"))
+
+    def test_a_short_wait_is_waited_once_then_it_answers(self):
+        calls, slept = [], []
+
+        def send(name, url, model, messages, tool_list):
+            calls.append(name)
+            if len(calls) == 1:
+                raise providers.ProviderError(
+                    name, "HTTP 429: Please try again in 2.5s.")
+            return FakeResult(content='{"beep": "neutral"}')
+        c = chain(send)
+        c.sleep = slept.append
+        name, _ = c.ask([{"role": "user", "content": "hi"}])
+        self.assertEqual((name, calls), ("groq", ["groq", "groq"]))
+        self.assertAlmostEqual(slept[0], 2.8)
+
+    def test_a_long_wait_moves_on(self):
+        calls = []
+
+        def send(name, url, model, messages, tool_list):
+            calls.append(name)
+            if name == "groq":
+                raise providers.ProviderError(
+                    name, "HTTP 429: Please try again in 45s.")
+            return FakeResult(content='{"beep": "neutral"}')
+        c = chain(send)
+        c.sleep = lambda s: self.fail("waited 45 s")
+        name, _ = c.ask([{"role": "user", "content": "hi"}])
+        self.assertEqual(name, "openrouter")
+
+
+class MovesWithoutTheModel(unittest.TestCase):
+    """The fallback when the model is rate-limited: basic moves still work."""
+
+    def test_phrasings(self):
+        from avi_bot.brain import intents
+        cases = {
+            "look left": ("nudge", {"direction": "left", "degrees": 15}),
+            "look a bit to the left": ("nudge", {"direction": "left",
+                                                 "degrees": 8}),
+            "turn right a little": ("nudge", {"direction": "right",
+                                              "degrees": 8}),
+            "can u look up": ("nudge", {"direction": "up", "degrees": 15}),
+            "can u wave hi to me": ("play_emotion", {"name": "wave"}),
+            "shake your head": ("play_emotion", {"name": "shake"}),
+        }
+        for text, want in cases.items():
+            with self.subTest(text):
+                got = intents.match(text)
+                self.assertEqual((got.tool, got.args), want)
+
+    def test_wave_is_a_real_gesture(self):
+        from avi_bot.motion import gestures
+        self.assertIn("wave", gestures.GESTURES)
+        self.assertIn("wave", tools.ARM_GESTURES)

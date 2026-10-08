@@ -123,6 +123,24 @@ def nod():
     ], duration=1.1, ease="linear")
 
 
+def wave():
+    """Hi! The camera bobs up and down three times, like a hand.
+
+    He asked AVI to "wave hi" and it had nothing to do it with. Wrist only:
+    18-degree swings at ~42 deg/s, inside the cap, and nothing for the
+    base's backlash to eat.
+    """
+    return _kf("wave", [
+        (0.00, {"wrist": 0.0}),
+        (0.12, {"wrist": 14.0}),
+        (0.30, {"wrist": -4.0}),
+        (0.48, {"wrist": 14.0}),
+        (0.66, {"wrist": -4.0}),
+        (0.84, {"wrist": 14.0}),
+        (1.00, {"wrist": 0.0}),
+    ], duration=2.4, ease="linear")
+
+
 def shake():
     """Base yaw +-10, twice.  spec 0.9 s -> 1.35 s at the cap.
 
@@ -295,7 +313,7 @@ GESTURES = {
     "curious_lean": curious_lean, "excited_wiggle": excited_wiggle,
     "celebrate": celebrate, "startled": startled, "thinking": thinking,
     "embarrassed": embarrassed, "ahem": ahem, "doze": doze,
-    "yawn_wake": yawn_wake,
+    "yawn_wake": yawn_wake, "wave": wave,
 }
 
 # Nothing is a complete no-op any more: the wrist is driven. Kept as an empty

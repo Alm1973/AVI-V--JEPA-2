@@ -137,6 +137,20 @@ class Budget:
             pass
 
 
+_RETRY_IN = re.compile(r"try again in ([0-9.]+)\s*(ms|s)\b", re.I)
+
+
+def retry_after(why):
+    """Seconds a rate-limit refusal says to wait, or None if it is not one."""
+    if not why or "429" not in why:
+        return None
+    m = _RETRY_IN.search(why)
+    if not m:
+        return None
+    v = float(m.group(1))
+    return v / 1000.0 if m.group(2).lower() == "ms" else v
+
+
 class ProviderError(Exception):
     """A provider failed in a way that means: try the next one."""
 
@@ -152,8 +166,15 @@ class Chain:
     ordering, budget and failover rule is testable with no keys and no
     network -- which is the only way this could be built remotely at all."""
 
+    # A per-minute limit says when to try again ("Please try again in
+    # 6.02s"). Waiting that long once beats failing the turn: the free tier
+    # allows ~3 brain turns a minute, and the 4th used to come back
+    # "confused" (2026-10-08). Longer waits are not worth holding a turn.
+    RETRY_MAX_WAIT_S = 10.0
+
     def __init__(self, budget=None, chain=None, send=None, env=None,
-                 clock=time.time):
+                 clock=time.time, sleep=time.sleep):
+        self.sleep = sleep
         self.budget = budget or Budget()
         self.chain = list(chain if chain is not None else CHAIN)
         self.send = send or self._real_send
@@ -198,7 +219,17 @@ class Chain:
                 self.tried.append((name, "over budget"))
                 continue
             try:
-                result = self.send(name, url, model, safe, tools)
+                try:
+                    result = self.send(name, url, model, safe, tools)
+                except ProviderError as exc:
+                    wait = retry_after(exc.why)
+                    if wait is None or wait > self.RETRY_MAX_WAIT_S:
+                        raise
+                    self.budget.note(name, failed=True)
+                    self.tried.append((name, f"rate limited; retried after "
+                                             f"{wait:.1f}s"))
+                    self.sleep(wait + 0.3)
+                    result = self.send(name, url, model, safe, tools)
             except ProviderError as exc:
                 self.budget.note(name, failed=True)
                 self.tried.append((name, exc.why))
