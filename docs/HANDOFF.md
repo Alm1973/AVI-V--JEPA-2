@@ -1110,3 +1110,9 @@ start. Cloud context verified live ("2 hours 57 minutes until midnight" at
 21:03). **Daily start installed**: 08:10 for 830 min with --keep-awake.
 Last night's log also shows the break coach firing for real (21:49, 65 min,
 at a natural pause).
+
+**Voice (2026-10-07 21:12): en_US-ryan-high, speed 1.15, pitch 1.0** -- his
+pick ("so much better"); en_GB-alan-medium sounded scary to him even at
+1.15/1.12. Settings `voice`, `voice_speed`, `voice_pitch` in
+dashboard-settings.json, POST /settings, no restart. Amy and Alan are still in
+assistant/ on the MSI.
