@@ -140,6 +140,34 @@ class Threads(unittest.TestCase):
         h.brain.close()
 
 
+class SaysWhenTheModelWasNotThere(unittest.TestCase):
+    def test_a_quick_rules_answer_is_flagged_for_the_page(self):
+        """Out of free requests, AVI answers from the quick rules and
+        seems dumber; the chat log says why."""
+        from avi_bot import main as main_mod
+        from avi_bot.brain import providers
+
+        def spent(name, *a):
+            raise providers.ProviderError(name, "429 try again in 9m")
+        h = bh.Host(lambda: main_mod.Avi(send=spent, env={
+            "GROQ_API_KEY": "x"}, cloud_first=True), note=lambda m: None)
+        out = h.ask("what time is it")
+        self.assertEqual(out["route"], "local_rules")
+        self.assertTrue(out["fallback"])
+        h.brain.close()
+
+    def test_a_model_answer_is_not(self):
+        from avi_bot import main as main_mod
+        from tests.test_brain import FakeResult
+        h = bh.Host(lambda: main_mod.Avi(
+            send=lambda *a: FakeResult(content='{"say": "Hi."}'),
+            env={"GROQ_API_KEY": "x"}, cloud_first=True),
+            note=lambda m: None)
+        out = h.ask("hello")
+        self.assertNotIn("fallback", out)
+        h.brain.close()
+
+
 class RepliesAreMoreThanWords(unittest.TestCase):
     def test_a_confused_turn_shakes(self):
         from avi_bot import main as main_mod

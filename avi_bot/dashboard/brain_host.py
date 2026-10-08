@@ -210,6 +210,10 @@ class Host:
         if miss and decision.route != "cloud":
             self.note(f"model skipped for {text!r}: {miss}")
             brain.router.last_cloud_miss = None
+            # For the page: answered by the quick rules because the model
+            # could not be reached or had run out of free requests -- so a
+            # dumber answer is explained rather than a mystery.
+            out["fallback"] = True
         self.note(f"ask {text!r} -> {reply.say!r} via {decision.route}")
         return out
 

@@ -1290,7 +1290,8 @@ function paintChat(){
     (e.avi ? `<div class="avi">avi: ${esc(e.avi)}</div>` : "") +
     e.did.map(d => `<div class="did${d.bad ? " bad" : ""}">\\u2192 ` +
                    `${esc(d.text)}</div>`).join("") +
-    (e.err ? `<div class="did bad">(${esc(e.err)})</div>` : "")
+    (e.err ? `<div class="did bad">(${esc(e.err)})</div>` : "") +
+    (e.note ? `<div class="did">(${esc(e.note)})</div>` : "")
   ).join("");
   out.scrollTop = out.scrollHeight;
 }
@@ -1334,7 +1335,7 @@ async function ask(){
   const text = box.value.trim();
   if (!text) return;
   box.value = "";
-  const entry = {you: text, avi: "\\u2026", did: [], err: ""};
+  const entry = {you: text, avi: "\\u2026", did: [], err: "", note: ""};
   CHAT.push(entry);
   paintChat();
   try {
@@ -1342,6 +1343,8 @@ async function ask(){
     entry.avi = r.say || "";
     entry.did = (r.did || []).map(didLine);
     if (r.error && !r.say) entry.err = r.error;
+    if (r.fallback) entry.note = "quick rules: the AI model is unavailable " +
+      "or out of free requests";
     if (!entry.avi && !entry.did.length && !entry.err)
       entry.avi = r.gesture ? "(" + r.gesture + ")" : "(nothing to do)";
   } catch (e) {
