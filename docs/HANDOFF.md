@@ -1072,7 +1072,7 @@ Scheduled desk scans exist but are OFF: `POST /settings
 60 min); it is running until ~22:00 tonight. A daily schedule for it is his
 call.
 
-## 2026-10-07 morning: things that were built and never connected (Mac-side, NOT DEPLOYED)
+## 2026-10-07 morning: things that were built and never connected (deployed 21:01)
 
 The MSI was asleep and this network blocks Tailscale, so none of this has run
 on the robot. First thing on the home network: `./scripts/wake-msi.sh`,
@@ -1102,3 +1102,11 @@ on the robot. First thing on the home network: `./scripts/wake-msi.sh`,
 To verify on the robot: say "remind me in 2 minutes to test", walk away for
 15 min, come back -- expect "While you were away...". Start "focus for 5
 minutes", hold a phone up for 2+ min, pause -- expect the ahem glance.
+
+**Deployed 2026-10-07 21:01** (build 7efa6ec). 5 V 4 A supply now on the
+PCA9685 V+ terminal (board is reverse-polarity protected). /selftest: all four
+joints MOVED (camera diff 28-37). /health all running; the brain is built at
+start. Cloud context verified live ("2 hours 57 minutes until midnight" at
+21:03). **Daily start installed**: 08:10 for 830 min with --keep-awake.
+Last night's log also shows the break coach firing for real (21:49, 65 min,
+at a natural pause).
