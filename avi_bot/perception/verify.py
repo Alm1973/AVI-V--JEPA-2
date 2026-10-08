@@ -75,7 +75,9 @@ MAX_SHIFT = 9
 # 12- and 20-degree moves 0.67-0.73.
 STILL = 0.88
 # The best shift must stand this far above the median shift's score.
-MIN_PROMINENCE = 0.15
+# Robot, 2026-10-08, one-axis search: every real 6-20 degree move scored
+# 0.08-0.17; no-move controls are caught earlier, by STILL.
+MIN_PROMINENCE = 0.06
 
 
 def token_shift(a, b, max_shift=MAX_SHIFT, axis=None, band=1):
