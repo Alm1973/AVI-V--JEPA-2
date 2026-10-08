@@ -2589,9 +2589,12 @@ def centre_on(arm, px, py, w, h, settle=0.6):
     return yaw, wrist
 
 
-# Either side of a remembered aim, when the thing is not where the map
-# says: things on a desk get nudged, and the map can be a day old.
-CONFIRM_SWEEP_DEG = (-15.0, 15.0)
+# Around a remembered aim, when the thing is not where the map says:
+# things on a desk get nudged, and the map can be a day old. (base_yaw,
+# wrist) offsets, degrees. On the robot (2026-10-08) the mug turned up at
+# -15 yaw; the laptop, close and low, at none of the side stops.
+CONFIRM_STOPS = ((0.0, 0.0), (-15.0, 0.0), (15.0, 0.0), (0.0, -12.0),
+                 (0.0, 12.0))
 
 
 def _surveying(arm):
@@ -2629,10 +2632,12 @@ def live_look(arm, latest, name):
 
 def confirm_look(arm, latest, name):
     """After turning to where the map says `name` is: is it actually in
-    the picture? Centres it if so. "look at the laptop" turned to a day-old
-    aim and the camera saw a mug, while the reply said nothing (robot,
-    2026-10-08). Tries a little either side before giving up, then comes
-    back. True / False, or None when the detector has no word for it."""
+    the picture? Centres it if so, and files where it really was in the
+    room map -- the map learns from being wrong. "look at the laptop"
+    turned to a day-old aim and the camera saw a mug, while the reply said
+    nothing (robot, 2026-10-08). Tries around the aim before giving up,
+    then comes back. True / False, or None when the detector has no word
+    for it."""
     want = _detectable(name)
     if want is None:
         return None
@@ -2640,23 +2645,42 @@ def confirm_look(arm, latest, name):
     while arm.engine.busy() and time.time() < t_end:
         time.sleep(0.1)
     time.sleep(0.4)
-    start = arm.snapshot()["base_yaw"]
-    lo, hi = arm.config.soft_limits("base_yaw")
-    for off in (0.0,) + CONFIRM_SWEEP_DEG:
-        if off:
-            _yaw_to(arm, max(lo, min(hi, start + off)), 0.8)
+    start = arm.snapshot()
+    ylo, yhi = arm.config.soft_limits("base_yaw")
+    wlo, whi = arm.config.soft_limits("wrist")
+    for dyaw, dwr in CONFIRM_STOPS:
+        here = arm.snapshot()
+        yaw = max(ylo, min(yhi, start["base_yaw"] + dyaw))
+        if abs(here["base_yaw"] - yaw) > 0.5:
+            _yaw_to(arm, yaw, 0.8)
+        wrist = max(wlo, min(whi, start["wrist"] + dwr))
+        if abs(here["wrist"] - wrist) > 0.5:
+            arm.set("wrist", wrist)
+            time.sleep(0.6)
         got = steady_detections(arm, latest)
         hit = None
         if got is not None:
             kept, w, h, _ = got
             hit = max((d for d in kept if d["label"] == want),
                       key=lambda d: d["conf"], default=None)
-        if hit is not None:
-            centre_on(arm, hit["cx"], hit["cy"], w, h)
-            arm.note(f"look check: {want} in view "
-                     f"({hit['conf']:.2f}, {off:+.0f} deg), centred")
-            return True
-    _yaw_to(arm, start, 0.6)
+        if hit is None:
+            continue
+        pose = arm.snapshot()
+        try:
+            arm.roommap.observe(want, hit["cx"], hit["cy"], pose["base_yaw"],
+                                pose["wrist"], conf=hit["conf"],
+                                px_size=max(hit["w"], hit["h"]),
+                                shoulder=pose["shoulder"],
+                                elbow=pose["elbow"])
+            arm.save_roommap()
+        except Exception as exc:          # the look still counts
+            arm.note(f"look check: not filed in the map ({exc!r})")
+        centre_on(arm, hit["cx"], hit["cy"], w, h)
+        arm.note(f"look check: {want} in view ({hit['conf']:.2f}, "
+                 f"yaw {dyaw:+.0f} wrist {dwr:+.0f}), centred")
+        return True
+    _yaw_to(arm, start["base_yaw"], 0.6)
+    arm.set("wrist", start["wrist"])
     arm.note(f"look check: no {want} where the map says")
     return False
 
@@ -2884,10 +2908,11 @@ def find_object(arm, name, look=True, latest=None):
     except Exception as exc:                     # a layout is a bonus
         log(f"find: no layout ({exc!r})")
     if spot:
-        # Not seen today: the scan's place (with its age) IS the answer;
-        # "it usually sits near OBSERVE" named a pose, not a place.
-        text = (spot if text.startswith("Haven't seen it today")
-                else f"{text} {spot}")
+        # The scan's place, with its age, IS the answer. The finder's own
+        # words ("it usually sits near OBSERVE", "The desk, around 1:53.")
+        # name a pose or a zone, and in front of the place they used up
+        # the 20-word reply and cut it off.
+        text = spot
     moved = False
     if look and _surveying(arm):
         # A survey is sweeping the arm; moving it now would file the survey's
