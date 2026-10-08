@@ -312,6 +312,14 @@ class FreeMotion(unittest.TestCase):
         self.assertEqual(self.run_call("look_at", target="laptop").text,
                          "I can't see the laptop from here.")
 
+    def test_the_miss_survives_the_speech_policy(self):
+        """Actions are silent; a look that found nothing is an error to
+        own up to. On the robot the sentence was made, then muted."""
+        self.arm.look_at = lambda t: {"moved": True, "in_view": False}
+        decision, _ = self.avi.handle("look at the laptop")
+        self.assertEqual(decision.reply.say,
+                         "I can't see the laptop from here.")
+
     def test_a_look_that_lands_is_silent(self):
         self.arm.look_at = lambda t: {"moved": True, "in_view": True}
         self.assertIsNone(self.run_call("look_at", target="laptop").text)

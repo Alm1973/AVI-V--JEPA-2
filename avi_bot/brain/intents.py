@@ -279,6 +279,13 @@ def _look_at_me(m):
     return Intent("look_at", {"target": "me"})
 
 
+@rule(r"^(?:look|turn)\s+(?:at|to|towards?)\s+(?:my\s+|the\s+|your\s+)"
+      r"(?P<what>[a-z][a-z ]{1,30}?)(?:,?\s+please)?[.!]?$")
+def _look_at_thing(m):
+    """'look at the laptop' had no rule, so offline it was "confused"."""
+    return Intent("look_at", {"target": m.group("what").strip()})
+
+
 @rule(r"^what\s+timers?\s+(?:do\s+i\s+have|are\s+(?:on|set))\??$")
 def _which_timers(m):
     return Intent("list_timers", {}, reason="answer")

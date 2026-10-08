@@ -259,10 +259,11 @@ class Avi:
         if (target or "").strip().lower() in ("me", "him", "you", "person",
                                               "shaurya", "here", "over here"):
             if got.get("looked") is False:
-                return "I can't see you from here.", info
+                return "I can't see you from here.", dict(info, missed=True)
             return None, info
         if got.get("in_view") is False:
-            return f"I can't see the {target} from here.", info
+            return (f"I can't see the {target} from here.",
+                    dict(info, missed=True))
         if got.get("moved") is False and got.get("say"):
             return got["say"], info       # no aim: what it knows instead
         return None, info
@@ -505,9 +506,11 @@ class Avi:
         if said:
             # A move the picture says did not happen is an error to own up
             # to, not an action to stay quiet about (perception/verify.py).
+            # So is a look that found nothing (data "missed").
             missed = any(isinstance(r.data, dict)
-                         and (r.data.get("verdict") or {}).get("judged")
-                         and not r.data["verdict"].get("agrees")
+                         and (r.data.get("missed")
+                              or ((r.data.get("verdict") or {}).get("judged")
+                                  and not r.data["verdict"].get("agrees")))
                          for r in results if r.ok)
             decision.reply = self.policy.apply(
                 decision.reply.model_copy(update={"say": said}),
