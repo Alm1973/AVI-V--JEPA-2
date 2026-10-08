@@ -102,6 +102,54 @@ class TestServedPages(unittest.TestCase):
                                                        "\u2717 not in view"})
         self.assertEqual(out[3]["text"], "move joints base_yaw 60")
 
+    def test_the_mic_button_turns_speech_into_an_ask(self):
+        """Runs the page's micSetup()/listen() in node with a fake
+        browser: on https the words land in the ask box and ask() runs; on
+        plain http it says why not; with no speech API the button hides."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed")
+        html = dict(self.pages)["server.py"]
+        js = html.split("<script>")[1].split("</script>", 1)[0]
+        m = re.search(r"const SR = .*?\nfunction listen\(\)\{.*?\n\}\n",
+                      js, re.S)
+        self.assertIsNotNone(m, "mic code not found in the page")
+        harness = '''
+const els = {mic: {style: {}, title: "", classList: {add(){}, remove(){}}},
+             askin: {value: ""}};
+let said = [], asked = [];
+const document = {getElementById: id => els[id]};
+function msg(t){ said.push(t); }
+function ask(){ asked.push(els.askin.value); }
+function run(secure, hasSR){
+  const window = {isSecureContext: secure};
+  if (hasSR) window.webkitSpeechRecognition = class {
+    start(){ this.onresult({results: [[{transcript: "look left"}]]});
+             this.onend(); } };
+  said = []; asked = []; els.askin.value = ""; els.mic.style = {};
+  eval(CODE.replace("const SR", "var SR"));
+  micSetup(); listen();
+  return {said, asked, hidden: els.mic.style.display === "none"};
+}
+console.log(JSON.stringify([run(true, true), run(false, true),
+                            run(true, false)]));
+'''
+        prog = "const CODE = " + __import__("json").dumps(m.group(0)) + \
+            ";\n" + harness
+        tmp = ROOT / ".page_mic_check.js"
+        tmp.write_text(prog)
+        try:
+            r = subprocess.run([node, str(tmp)], capture_output=True,
+                               text=True)
+        finally:
+            tmp.unlink(missing_ok=True)
+        self.assertEqual(r.returncode, 0, r.stderr[:600])
+        https, http, none = __import__("json").loads(r.stdout)
+        self.assertEqual(https["asked"], ["look left"])
+        self.assertEqual(http["asked"], [])
+        self.assertIn("https", http["said"][0])
+        self.assertTrue(none["hidden"])
+
     def test_no_script_reaches_for_an_element_that_is_not_there(self):
         """A null from getElementById throws, and the throw kills the rest of
         the callback it was in -- which is how a stale id froze the whole UI

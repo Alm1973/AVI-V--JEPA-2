@@ -1181,6 +1181,7 @@ PAGE = b"""<!doctype html>
  .ask{display:flex;gap:6px;margin:0 0 6px}
  .ask input{flex:1;min-width:0;font:inherit;padding:7px 10px;border-radius:7px;
             border:1px solid #3a3a42;background:#18181b;color:#e7e7ea}
+ #mic.on{background:#b91c1c;color:#fff}
  #said{min-height:20px;font-size:14px;color:#a7f3d0;margin:0 0 4px;
         max-height:260px;overflow-y:auto}
  #said .you{color:#94a3b8;margin-top:6px}
@@ -1210,6 +1211,8 @@ PAGE = b"""<!doctype html>
     <form class="ask" onsubmit="ask(); return false;">
       <input id="askin" autocomplete="off"
              placeholder="talk to avi: look left / wave hi / where's my pen?">
+      <button type="button" id="mic" onclick="listen()"
+              title="say it instead of typing">&#127908;</button>
       <button class="pri" type="submit">ask</button>
     </form>
     <div id="said"></div>
@@ -1291,6 +1294,41 @@ function paintChat(){
   ).join("");
   out.scrollTop = out.scrollHeight;
 }
+// Saying it instead of typing: the browser's own speech recognition
+// (Chrome, Edge, Safari). Nothing to install on the MSI, and the MSI never
+// hears anything -- the words arrive as text, like typing. The audio goes
+// to the browser maker's speech service. Browsers only give a page the mic
+// over https, so on the plain http address the button explains that.
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function micSetup(){
+  const b = document.getElementById("mic");
+  if (!SR) { b.style.display = "none"; return; }
+  if (!window.isSecureContext) {
+    b.title = "voice needs the https address of this page";
+    b.style.opacity = 0.45;
+  }
+}
+function listen(){
+  if (!SR) return;
+  if (!window.isSecureContext) {
+    msg("voice needs the https address of this page");
+    return;
+  }
+  const r = new SR();
+  r.lang = "en-US";
+  r.interimResults = false;
+  r.maxAlternatives = 1;
+  const b = document.getElementById("mic");
+  b.classList.add("on");
+  r.onresult = e => {
+    document.getElementById("askin").value = e.results[0][0].transcript;
+    ask();
+  };
+  r.onerror = e => msg("didn't catch that (" + e.error + ")");
+  r.onend = () => b.classList.remove("on");
+  r.start();
+}
+
 async function ask(){
   const box = document.getElementById("askin");
   const text = box.value.trim();
@@ -1556,6 +1594,7 @@ setInterval(paintHealth, 15000);
 refresh();
 loadSettings();
 paintHealth();
+micSetup();
 </script>
 </body></html>
 """
