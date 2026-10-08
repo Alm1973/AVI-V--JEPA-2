@@ -233,6 +233,19 @@ class FreeMotion(unittest.TestCase):
         wrist = [d for j, d in self.arm.sent if j == "wrist"]
         self.assertEqual(wrist, [170.0, 140.0, 170.0, 140.0, 150.0])
 
+    def test_a_big_move_joints_is_judged_in_steps(self):
+        seen = []
+
+        def judged_move(direction, do):
+            do()
+            seen.append((direction, round(self.arm.pose["base_yaw"], 1)))
+            return {"commanded": direction, "votes": {"jepa": direction},
+                    "judged": True, "agrees": True, "motion": {}}
+        self.arm.judged_move = judged_move
+        r = self.run_call("move_joints", base_yaw=60)
+        self.assertEqual(seen, [("left", 75.0), ("left", 60.0)])
+        self.assertEqual(r.data["steps"], 2)
+
     def test_move_joints_is_clamped_by_the_arm(self):
         self.run_call("move_joints", wrist=5)
         self.assertEqual(self.arm.pose["wrist"], 20.0)

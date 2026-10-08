@@ -366,12 +366,6 @@ class Avi:
         moved = {j: round(float(joints[j]), 1) for j in tools.JOINT_NAMES
                  if joints.get(j) is not None}
 
-        def do():
-            for j, deg in moved.items():
-                if j == "base_yaw":
-                    self._safe(lambda: self._yaw_to(deg))
-                else:
-                    self._safe(lambda: self.arm.set(j, deg))
         # Judged by its larger change; clamped targets are what the arm
         # will actually do, so judge against those.
         lo_hi = getattr(getattr(self.arm, "config", None), "soft_limits",
@@ -380,8 +374,30 @@ class Avi:
         for j, deg in moved.items():
             lo, hi = lo_hi(j) if callable(lo_hi) else (-1e9, 1e9)
             expect[j] = max(lo, min(hi, deg))
-        said, verdict = self._judged(verify_mod.dominant(before, expect), do)
-        return said, {"moved": moved, "verdict": verdict}
+        direction = verify_mod.dominant(before, expect)
+        # Like a big nudge, a big move goes in judged steps: base_yaw 90 ->
+        # 60 in one go came back blind on the robot (2026-10-08).
+        big = max(abs(expect[j] - before[j]) for j in ("base_yaw", "wrist")
+                  if j in before)
+        steps = (max(1, math.ceil(big / self.JUDGE_STEP_DEG - 1e-9))
+                 if direction else 1)
+        verdicts, said = [], None
+        for k in range(1, steps + 1):
+            pose = {j: before[j] + (expect[j] - before[j]) * k / steps
+                    for j in moved}
+
+            def do(pose=pose):
+                for j, deg in pose.items():
+                    if j == "base_yaw":
+                        self._safe(lambda: self._yaw_to(deg))
+                    else:
+                        self._safe(lambda: self.arm.set(j, deg))
+            said, v = self._judged(direction, do)
+            verdicts.append(v)
+            if said:
+                break
+        return said, {"moved": moved, "steps": steps,
+                      "verdict": _combined(verdicts)}
 
     MAX_STEPS = 10
 
