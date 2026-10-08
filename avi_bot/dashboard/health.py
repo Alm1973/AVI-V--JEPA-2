@@ -13,7 +13,8 @@ LATENT_STALE_S = 120            # one latent every 15 s
 
 def check(now, presence_last_ts=None, latents_on=False, latent_last_ts=None,
           latent_error=None, brain_error=None, brain_started=False,
-          scan_every_min=0.0, last_scan_ts=None, ends_in_s=None):
+          scan_every_min=0.0, last_scan_ts=None, ends_in_s=None,
+          voice=None):
     out = {}
     if presence_last_ts is None:
         out["presence"] = {"state": "stale", "why": "no looks recorded"}
@@ -40,6 +41,18 @@ def check(now, presence_last_ts=None, latents_on=False, latent_last_ts=None,
         "state": "on" if scan_every_min else "off",
         "every_min": scan_every_min or 0,
         "last_s": None if last_scan_ts is None else round(now - last_scan_ts)}
+    if voice is not None:
+        # Speaker.status(). "silent" is the fallback when Piper fails: it
+        # "speaks" without a sound, so it counts as broken, not quiet.
+        if not voice.get("on"):
+            out["voice"] = {"state": "off"}
+        elif voice.get("error") or voice.get("backend") == "silent":
+            out["voice"] = {"state": "broken",
+                            "why": voice.get("error")
+                            or "fell back to the silent voice"}
+        else:
+            out["voice"] = {"state": "ok", "said": voice.get("said", 0),
+                            "backend": voice.get("backend")}
     if ends_in_s is not None:
         out["dashboard"] = {"state": "ok", "ends_in_min":
                             round(ends_in_s / 60.0)}

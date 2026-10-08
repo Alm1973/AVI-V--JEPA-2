@@ -38,6 +38,11 @@ def winsound_play(wav_bytes):
 
 
 class Speaker:
+    def status(self):
+        """For /health: on/off, which voice spoke last, how often, errors."""
+        return {"on": bool(self.enabled()), "backend": self.last_backend,
+                "said": self.said, "error": self.last_error}
+
     def __init__(self, voice=None, play=winsound_play, enabled=lambda: False,
                  hour=lambda: time.localtime().tm_hour, note=print):
         self.voice = voice
@@ -47,6 +52,11 @@ class Speaker:
         self.note = note
         # One sound at a time; a chirp must not talk over a sentence.
         self._lock = threading.Lock()
+        # For /health: with speech on and nothing logged, a voice that had
+        # quietly fallen back to Silent looked exactly like a working one.
+        self.said = 0
+        self.last_backend = None
+        self.last_error = None
 
     def say(self, text):
         """Speak, sentence by sentence. Returns True if anything played."""
@@ -55,9 +65,12 @@ class Speaker:
         played = False
         with self._lock:
             for spoken in self.voice.stream(text):
+                self.last_backend = getattr(spoken, "backend", None)
                 if spoken.samples:
                     self.play(to_wav(spoken.samples, spoken.rate))
                     played = True
+        if played:
+            self.said += 1
         return played
 
     def chirp(self, emotion, urgent=False):
@@ -85,4 +98,5 @@ class Speaker:
         try:
             fn(arg)
         except Exception as exc:
+            self.last_error = repr(exc)[:160]
             self.note(f"speaker: {exc!r}")

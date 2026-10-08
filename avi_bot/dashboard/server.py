@@ -1792,7 +1792,10 @@ def make_handler(st):
                         settings_mod.path()).get("desk_scan_every_min", 0)
                         or 0),
                     last_scan_ts=last_scan,
-                    ends_in_s=max(0.0, deadline - time.time())))
+                    ends_in_s=max(0.0, deadline - time.time()),
+                    voice=(host.speaker.status()
+                           if host is not None and host.speaker is not None
+                           else None)))
             elif self.path == "/settings":
                 path = settings_mod.path()
                 for key, name in (("voice_speed", "speed"),

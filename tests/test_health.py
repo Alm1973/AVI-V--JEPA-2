@@ -31,5 +31,23 @@ class Health(unittest.TestCase):
         self.assertIn("brain", h["summary"])
 
 
+
+class Voice(unittest.TestCase):
+    def test_off_is_off(self):
+        h = health.check(NOW, presence_last_ts=NOW, voice={"on": False})
+        self.assertEqual(h["voice"]["state"], "off")
+
+    def test_the_silent_fallback_is_broken_not_quiet(self):
+        h = health.check(NOW, presence_last_ts=NOW,
+                         voice={"on": True, "backend": "silent", "said": 0})
+        self.assertEqual(h["voice"]["state"], "broken")
+        self.assertIn("voice", h["summary"])
+
+    def test_piper_speaking_is_ok(self):
+        h = health.check(NOW, presence_last_ts=NOW,
+                         voice={"on": True, "backend": "piper", "said": 3})
+        self.assertEqual(h["voice"], {"state": "ok", "said": 3,
+                                      "backend": "piper"})
+
 if __name__ == "__main__":
     unittest.main()
