@@ -263,6 +263,40 @@ class FreeMotion(unittest.TestCase):
         self.assertIsNone(r.text)
         self.assertTrue(r.data["verdict"]["agrees"])
 
+    def test_a_big_turn_is_judged_in_steps(self):
+        """30 degrees in one go slid the picture past both judges."""
+        seen = []
+
+        def judged_move(direction, do):
+            before = self.arm.pose["base_yaw"]
+            do()
+            seen.append(round(self.arm.pose["base_yaw"] - before, 1))
+            return {"commanded": direction, "votes": {"jepa": direction},
+                    "judged": True, "agrees": True, "motion": {}}
+        self.arm.judged_move = judged_move
+        r = self.run_call("nudge", direction="left", degrees=30)
+        self.assertEqual(seen, [-15.0, -15.0])
+        self.assertAlmostEqual(self.arm.pose["base_yaw"], 60.0)
+        self.assertIsNone(r.text)
+        self.assertEqual(r.data["verdict"]["steps"], 2)
+
+    def test_a_step_that_failed_ends_the_move(self):
+        calls = []
+
+        def judged_move(direction, do):
+            calls.append(1)
+            return {"commanded": direction, "votes": {"orb": "right"},
+                    "judged": True, "agrees": False, "motion": {}}
+        self.arm.judged_move = judged_move
+        r = self.run_call("nudge", direction="left", degrees=40)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("went right", r.text)
+
+    def test_at_the_limit_says_so(self):
+        self.arm.pose["base_yaw"] = 20.0
+        r = self.run_call("nudge", direction="left", degrees=10)
+        self.assertEqual(r.text, "I can't turn any further left.")
+
     def test_what_it_sees_in_words(self):
         self.avi.situation = lambda: {"camera": ["person (centre, 0.92)",
                                                  "mug (bottom left, 0.71)"]}

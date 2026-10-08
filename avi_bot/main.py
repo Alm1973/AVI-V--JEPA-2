@@ -18,6 +18,7 @@ Hear, route, execute, then speak -- and the speech policy is applied once at
 the end, to every route. A tool that produced a sentence cannot bypass the
 policy by being reached through the local rules instead of the model.
 """
+import math
 import os
 import time
 from datetime import datetime
@@ -37,6 +38,20 @@ from .skills import (apps as apps_mod, calendar as cal_mod,
 
 
 from avi_bot.motion import backlash as backlash_mod             # noqa: E402
+
+
+def _combined(verdicts):
+    """One verdict for a move made in steps: the first step the picture
+    disagreed with, else a step it confirmed, else (all blind) the last."""
+    verdicts = [v for v in verdicts if v]
+    if not verdicts:
+        return None
+    bad = [v for v in verdicts if v.get("judged") and not v.get("agrees")]
+    good = [v for v in verdicts if v.get("judged") and v.get("agrees")]
+    out = dict(bad[0] if bad else good[0] if good else verdicts[-1])
+    out["steps_judged"] = len(bad) + len(good)
+    out["steps"] = len(verdicts)
+    return out
 
 
 class Avi:
@@ -294,26 +309,53 @@ class Avi:
                 verdict["retried"] = True
         return verify_mod.sentence(verdict), verdict
 
+    # The most one judged move may be. A 30-degree pan slides the picture
+    # past both judges -- ORB kept 4 inliers, JEPA's best shift sat on its
+    # 9-token edge -- and the verdict came back blind (robot, 2026-10-08).
+    # Bigger nudges go in judged steps no larger than this.
+    JUDGE_STEP_DEG = 15.0
+
     def _nudge(self, direction, degrees=10):
         if self.arm is None:
             return "I have no arm attached.", None
         d = float(degrees or 10)
         here = self.arm.snapshot()
         self._hold(60.0)
-        if direction in ("left", "right"):
-            # +base_yaw turns the camera right (perception/world.py).
-            target = here["base_yaw"] + (d if direction == "right" else -d)
+        sideways = direction in ("left", "right")
+        joint = "base_yaw" if sideways else "wrist"
+        # +base_yaw turns the camera right, +wrist tilts it up
+        # (perception/world.py).
+        sign = 1.0 if direction in ("right", "up") else -1.0
+        start = float(here[joint])
+        target = start + sign * d
+        limits = getattr(getattr(self.arm, "config", None), "soft_limits",
+                         None)
+        if callable(limits):
+            lo, hi = limits(joint)
+            target = max(lo, min(hi, target))
+        if abs(target - start) < 1.0:
+            # Asking the judge would only report "the camera didn't move".
+            return (f"I can't turn any further {direction}.",
+                    {"direction": direction, "degrees": 0.0, "verdict": None,
+                     "missed": True})
+        steps = max(1, math.ceil(abs(target - start) / self.JUDGE_STEP_DEG
+                                 - 1e-9))
+        verdicts, said = [], None
+        for k in range(1, steps + 1):
+            step_to = start + (target - start) * k / steps
 
-            def do():
-                self._yaw_to(target)
-        else:
-            target = here["wrist"] + (d if direction == "up" else -d)
-
-            def do():
-                self.arm.set("wrist", target)
-        said, verdict = self._judged(direction, do)
-        return said, {"direction": direction, "degrees": d,
-                      "verdict": verdict}
+            def do(t=step_to):
+                if sideways:
+                    self._yaw_to(t)
+                else:
+                    self.arm.set("wrist", t)
+            said, v = self._judged(direction, do)
+            verdicts.append(v)
+            if said:
+                break                # a step that went wrong ends the move
+        return said, {"direction": direction,
+                      "degrees": round(abs(target - start), 1),
+                      "steps": steps, "verdict": _combined(verdicts)}
 
     def _move_joints(self, **joints):
         if self.arm is None:
