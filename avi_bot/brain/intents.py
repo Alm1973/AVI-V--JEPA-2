@@ -313,7 +313,7 @@ def _time(m):
 
 # --- feedback -------------------------------------------------------------
 @rule(r"^(?:good|nice|well done|thank you|thanks|great)"
-      r"(?:\s+(?:job|boy|robot|avi|work))?!?$")
+      r"(?:\s+(?:job|boy|robot|avi|work))?(?:,?\s+avi)?[.!]*$")
 def _praise(m):
     return Intent("praise", {})
 

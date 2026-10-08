@@ -30,7 +30,10 @@ EMOTIONS = ("neutral", "happy", "excited", "curious", "sad", "sulky",
 GESTURES = ("nod", "shake", "tilt", "perk_up", "droop", "shrug", "lean_in",
             "look_around", "celebrate", "ahem", "yawn_wake", "thinking",
             "embarrassed", "greet", "glance_at_you", "fidget", "still",
-            "breathe", "curious_lean")
+            "breathe", "curious_lean",
+            # The model is told play_emotion can wave and puts it in the
+            # reply too; refused here, "good job avi" became a head shake.
+            "wave")
 
 MAX_WORDS = 20          # BUILD_SPEC 7.2
 CONFUSED = "confused"

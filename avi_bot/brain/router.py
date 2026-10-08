@@ -79,7 +79,7 @@ class Decision:
                 f"say={self.reply.say!r} beep={self.reply.beep}>")
 
 
-def _extract_calls(result):
+def _extract_calls(result, rejected=None):
     """Pull tool calls and the reply out of an OpenAI-compatible response.
 
     Returns (skill_calls, reply_source), where reply_source is whatever should
@@ -92,6 +92,7 @@ def _extract_calls(result):
     behaviour of gpt-oss-20b -- see tools.REPLY_TOOL.
     """
     out = []
+    rejected = [] if rejected is None else rejected   # why, per refused call
     envelope = None
     choice = None
     try:
@@ -129,9 +130,11 @@ def _extract_calls(result):
             # skills.
             envelope = raw_args if isinstance(raw_args, dict) else None
             continue
-        args, err = tools.validate_call(name, raw_args or {})
+        args, err = tools.validate_call(name, raw_args or {}, lenient=True)
         if err is None:
             out.append((name, args))
+        else:
+            rejected.append(err)
     content = getattr(message, "content", None)
     if content is None and isinstance(message, dict):
         content = message.get("content")
@@ -157,6 +160,7 @@ class Router:
         # nothing to move with -- "wave hi to me" did nothing (2026-10-07).
         self.cloud_first = cloud_first
         self.last_cloud_miss = None
+        self.last_rejected = None
         self.policy = policy or speech.SpeechPolicy()
         self.clock = clock
         # Injected so the 3B multiple-choice fallback can be tested without a
@@ -192,7 +196,8 @@ class Router:
         messages.append({"role": "user", "content": utterance})
         started = self.clock()
         name, result = self.chain.ask(messages, tools=self.wire_tools)
-        calls, content = _extract_calls(result)
+        rejected = []
+        calls, content = _extract_calls(result, rejected)
         reply, err = schema.parse(content) if content else (
             schema.Reply(), None)
         if err is not None:
@@ -203,11 +208,17 @@ class Router:
                              "content": "Your last reply was not valid JSON. "
                                         "Reply with ONLY the JSON object."})
             name, result = self.chain.ask(messages, tools=self.wire_tools)
-            more, content = _extract_calls(result)
+            more, content = _extract_calls(result, rejected)
             calls = calls or more
             reply, err = schema.parse(content) if content else (
                 schema.Reply(), None)
         if err is not None:
+            self.last_rejected = [f"reply: {err}"[:160]]
+            return None
+        if rejected and not calls:
+            # It meant to act and every action was malformed: the quick
+            # rules' reading beats doing nothing while looking fine.
+            self.last_rejected = rejected[:3]
             return None
         return Decision(CLOUD, calls=calls, reply=reply, provider=name,
                         latency_ms=(self.clock() - started) * 1000.0,
@@ -268,13 +279,31 @@ class Router:
                             f"({', '.join(f'{k}={v!r}' for k, v in args.items())})"
                             ". Use it unless he clearly meant something else.")
                     hinted = f"{context}\n{hint}" if context else hint
+                self.last_rejected = None
                 decision = self._try_cloud(utterance, hinted)
+                if (decision is not None and not decision.calls
+                        and not decision.reply.say
+                        and local is not None and local.calls):
+                    # Nothing done and nothing said, while the rules read an
+                    # action: "wake up" and "am I in focus mode" came back
+                    # empty and looked fine (robot, 2026-10-08). The rules
+                    # act; the model's beep and gesture are kept.
+                    local.reply = local.reply.model_copy(update={
+                        "beep": decision.reply.beep,
+                        "gesture": decision.reply.gesture})
+                    self.last_rejected = ["model did and said nothing"]
+                    decision = None
+                    fallback_local = local
+                else:
+                    fallback_local = None
                 if decision is None:
                     # Why the model was skipped, for the log: the providers
-                    # tried and what each said (no keys, no content).
-                    self.last_cloud_miss = list(self.chain.tried) or [
-                        ("cloud", "reply was not valid JSON twice")]
-                    decision = local
+                    # tried and what each said (no keys, no content), and
+                    # what was refused in what it sent.
+                    self.last_cloud_miss = (list(self.chain.tried) + [
+                        ("refused", r) for r in self.last_rejected or []]
+                    ) or [("cloud", "reply was not valid JSON twice")]
+                    decision = fallback_local or local
             else:
                 decision = local
                 if decision is None:

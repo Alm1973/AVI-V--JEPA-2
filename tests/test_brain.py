@@ -390,6 +390,53 @@ class TheModelDecidesFirst(unittest.TestCase):
         d = self.router(send).handle("turn the lamp off")
         self.assertEqual(d.route, router_mod.LOCAL)
 
+    def test_a_stray_argument_does_not_cost_the_action(self):
+        """The model sent sleep {"name": "sleep"}; refused whole, "go to
+        sleep" did nothing and said nothing (robot, 2026-10-08)."""
+        def send(name, *a):
+            return FakeResult(calls=[FakeCall("sleep", '{"name": "sleep"}'),
+                                     FakeCall("focus_stop",
+                                              '{"minutes": null}')])
+        d = self.router(send).handle("go to sleep")
+        self.assertEqual(d.calls, [("sleep", {}), ("focus_stop", {})])
+
+    def test_a_kept_argument_is_still_checked(self):
+        args, err = tools.validate_call("lamp", {"action": "dim",
+                                                 "extra": 1}, lenient=True)
+        self.assertIsNone(args)
+        self.assertIn("dim", err)
+        self.assertIsNotNone(tools.validate_call(
+            "sleep", {"name": "sleep"})[1], "strict stays strict")
+
+    def test_every_action_malformed_falls_back_to_the_rules(self):
+        def send(name, *a):
+            return FakeResult(calls=[FakeCall("set_timer",
+                                              '{"seconds": "soon"}')])
+        r = self.router(send)
+        d = r.handle("set a timer for 5 minutes")
+        self.assertEqual(d.route, router_mod.LOCAL)
+        self.assertEqual(d.calls, [("set_timer", {"seconds": 300})])
+        self.assertTrue(any(k == "refused" for k, _ in r.last_cloud_miss))
+
+    def test_an_empty_answer_to_a_command_falls_back_to_the_rules(self):
+        def send(name, *a):
+            return FakeResult(content='{"beep": "happy", "gesture": "nod"}')
+        d = self.router(send).handle("wake up")
+        self.assertEqual(d.calls, [("wake", {})])
+        self.assertEqual(d.reply.gesture, "nod", "the model's nod is kept")
+
+    def test_an_empty_answer_to_chat_stays_the_models(self):
+        def send(name, *a):
+            return FakeResult(content='{"beep": "happy"}')
+        d = self.router(send).handle("you're cool")
+        self.assertEqual(d.route, router_mod.CLOUD)
+
+    def test_the_arms_wave_is_a_reply_gesture(self):
+        """'good job avi' -> {"gesture": "wave"} was refused, twice, and
+        the turn ended in a confused head shake."""
+        r, err = schema.parse('{"beep": "happy", "gesture": "wave"}')
+        self.assertIsNone(err)
+
     def test_it_is_told_it_can_improvise_movement(self):
         self.assertIn("motion_sequence", router_mod.SYSTEM)
         names = {t["function"]["name"] for t in tools.WIRE_TOOLS}

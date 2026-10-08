@@ -187,12 +187,19 @@ LOCAL_CHOICES = ("set_timer", "focus_start", "focus_stop", "lamp", "media",
                  "sleep", "wake", "quiet", "stop")
 
 
-def validate_call(name, args):
+def validate_call(name, args, lenient=False):
     """Check a tool call against its schema. Returns (ok_args, error).
 
     Hand-rolled rather than jsonschema: the shapes used here are small and
     adding a dependency to the one module that guards what a model is allowed
     to make the robot DO is a poor trade.
+
+    `lenient` (for what a model sent) drops arguments the tool does not
+    have, and nulls for optional ones, before checking what is left. The
+    model called sleep {"name": "sleep"} and focus_stop {"minutes": null};
+    refused whole, "go to sleep" and "stop focus mode" did nothing and
+    said nothing (robot, 2026-10-08). Every argument that IS kept is still
+    checked in full.
     """
     tool = BY_NAME.get(name)
     if tool is None:
@@ -200,6 +207,9 @@ def validate_call(name, args):
     spec = tool["function"]["parameters"]
     props, required = spec["properties"], spec["required"]
     args = dict(args or {})
+    if lenient:
+        args = {k: v for k, v in args.items()
+                if k in props and (v is not None or k in required)}
     for key in required:
         if key not in args:
             return None, f"{name}: missing {key!r}"
