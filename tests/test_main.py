@@ -305,6 +305,29 @@ class FreeMotion(unittest.TestCase):
                                    [("describe_view", {})]), speech.ANSWER)
         self.assertTrue(speech.is_question("describe what you see"))
 
+    def test_a_look_that_lands_on_nothing_is_said(self):
+        """'look at the laptop' ended on a mug, silently (2026-10-08)."""
+        self.arm.look_at = lambda t: {"moved": True, "in_view": False,
+                                      "say": "Behind the book."}
+        self.assertEqual(self.run_call("look_at", target="laptop").text,
+                         "I can't see the laptop from here.")
+
+    def test_a_look_that_lands_is_silent(self):
+        self.arm.look_at = lambda t: {"moved": True, "in_view": True}
+        self.assertIsNone(self.run_call("look_at", target="laptop").text)
+
+    def test_no_aim_says_what_it_knows(self):
+        self.arm.look_at = lambda t: {"moved": False,
+                                      "say": "I can't recognise a charger "
+                                             "yet."}
+        self.assertEqual(self.run_call("look_at", target="charger").text,
+                         "I can't recognise a charger yet.")
+
+    def test_nobody_in_frame_for_look_at_me(self):
+        self.arm.look_at = lambda t: {"looked": False}
+        self.assertEqual(self.run_call("look_at", target="me").text,
+                         "I can't see you from here.")
+
     def test_a_taught_pose_by_name(self):
         self.run_call("go_to_pose", name="TALL")
         self.assertEqual(self.arm.recalled, ["TALL"])

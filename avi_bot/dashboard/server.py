@@ -2522,25 +2522,10 @@ def camera_now(arm, latest, frames=3, floor=0.25, sure=0.50, agree=2):
     around 0.40, so a single-frame 0.40 cutoff answered "nothing I
     recognise" with both in view.
     """
-    looks = [f for f in _look(latest, frames)]
-    if not looks:
+    got = steady_detections(arm, latest, frames, floor, sure, agree)
+    if got is None:
         return None
-    if arm.detector is None:
-        from detector import DeskDetector
-        arm.detector = LockedDetector(DeskDetector())
-    h, w = looks[-1].shape[:2]
-    best, count = {}, {}
-    for frame in looks:
-        here = {}
-        for d in arm.detector.everything(frame, min_conf=floor):
-            if d["conf"] > here.get(d["label"], {}).get("conf", 0.0):
-                here[d["label"]] = d
-        for label, d in here.items():
-            count[label] = count.get(label, 0) + 1
-            if d["conf"] > best.get(label, {}).get("conf", 0.0):
-                best[label] = d
-    kept = [d for label, d in best.items()
-            if count[label] >= min(agree, len(looks)) or d["conf"] >= sure]
+    kept, w, h, looks = got
     out = []
     for d in sorted(kept, key=lambda d: -d["conf"])[:10]:
         x, y = d["cx"] / float(w), d["cy"] / float(h)
@@ -2552,6 +2537,97 @@ def camera_now(arm, latest, frames=3, floor=0.25, sure=0.50, agree=2):
     # level was only measured while tracking him.
     arm.last_light = round(float(looks[-1].mean()), 1)
     return out
+
+
+def steady_detections(arm, latest, frames=3, floor=0.25, sure=0.50,
+                      agree=2):
+    """Detections that held up over `frames` frames (see camera_now), one
+    per CANONICAL label: the open-vocabulary detector called one mug both
+    "cup" and "mug", and AVI said "a cup (centre), a mug (centre)".
+    Returns (detections, width, height, frames), or None with no stream."""
+    looks = [f for f in _look(latest, frames)]
+    if not looks:
+        return None
+    if arm.detector is None:
+        from detector import DeskDetector
+        arm.detector = LockedDetector(DeskDetector())
+    h, w = looks[-1].shape[:2]
+    best, count = {}, {}
+    for frame in looks:
+        here = {}
+        for d in arm.detector.everything(frame, min_conf=floor):
+            label = roommap_mod.canonical_label(d["label"])
+            if d["conf"] > here.get(label, {}).get("conf", 0.0):
+                here[label] = dict(d, label=label)
+        for label, d in here.items():
+            count[label] = count.get(label, 0) + 1
+            if d["conf"] > best.get(label, {}).get("conf", 0.0):
+                best[label] = d
+    kept = [d for label, d in best.items()
+            if count[label] >= min(agree, len(looks)) or d["conf"] >= sure]
+    return kept, w, h, looks
+
+
+def centre_on(arm, px, py, w, h, settle=0.6):
+    """Turn so picture point (px, py) of a w x h frame comes to the
+    centre (world.View.recentre). Returns (yaw, wrist), or None without a
+    calibrated view."""
+    view = getattr(arm.roommap, "view", None)
+    if view is None:
+        return None
+    sx, sy = view.width / float(w), view.height / float(h)
+    here = arm.snapshot()
+    yaw, wrist = view.recentre(px * sx, py * sy, here["base_yaw"],
+                               here["wrist"])
+    lo, hi = arm.config.soft_limits("base_yaw")
+    yaw = max(lo, min(hi, yaw))
+    lo, hi = arm.config.soft_limits("wrist")
+    wrist = max(lo, min(hi, wrist))
+    _yaw_to(arm, yaw, settle)
+    arm.set("wrist", wrist)
+    time.sleep(settle)
+    return yaw, wrist
+
+
+# Either side of a remembered aim, when the thing is not where the map
+# says: things on a desk get nudged, and the map can be a day old.
+CONFIRM_SWEEP_DEG = (-15.0, 15.0)
+
+
+def confirm_look(arm, latest, name):
+    """After turning to where the map says `name` is: is it actually in
+    the picture? Centres it if so. "look at the laptop" turned to a day-old
+    aim and the camera saw a mug, while the reply said nothing (robot,
+    2026-10-08). Tries a little either side before giving up, then comes
+    back. True / False, or None when the detector has no word for it."""
+    want = roommap_mod.canonical_label(find_mod.canonical(name))
+    vocab = {roommap_mod.canonical_label(v)
+             for v in getattr(settings, "DESK_OBJECTS", [])} | {"person"}
+    if want not in vocab:
+        return None
+    t_end = time.time() + 3.0
+    while arm.engine.busy() and time.time() < t_end:
+        time.sleep(0.1)
+    time.sleep(0.4)
+    start = arm.snapshot()["base_yaw"]
+    lo, hi = arm.config.soft_limits("base_yaw")
+    for off in (0.0,) + CONFIRM_SWEEP_DEG:
+        if off:
+            _yaw_to(arm, max(lo, min(hi, start + off)), 0.8)
+        got = steady_detections(arm, latest)
+        hit = None
+        if got is not None:
+            kept, w, h, _ = got
+            hit = max((d for d in kept if d["label"] == want),
+                      key=lambda d: d["conf"], default=None)
+        if hit is not None:
+            centre_on(arm, hit["cx"], hit["cy"], w, h)
+            arm.note(f"look check: {want} in view "
+                     f"({hit['conf']:.2f}, {off:+.0f} deg), centred")
+            return True
+    _yaw_to(arm, start, 0.6)
+    arm.note(f"look check: no {want} where the map says")
+    return False
 
 
 # Mean frame level (0-255) below which the room is "dim": the night of
@@ -2683,18 +2759,8 @@ def look_at_person(arm, latest):
     view = getattr(arm.roommap, "view", None)
     if target is not None and view is not None:
         h, w = frame.shape[:2]
-        sx, sy = view.width / float(w), view.height / float(h)
-        here = arm.snapshot()
-        yaw, wrist = view.recentre(target[0] * sx, target[1] * sy,
-                                   here["base_yaw"], here["wrist"])
         arm.hold(LOOK_HOLD_S + 5.0)
-        lo, hi = arm.config.soft_limits("base_yaw")
-        yaw = max(lo, min(hi, yaw))
-        lo, hi = arm.config.soft_limits("wrist")
-        wrist = max(lo, min(hi, wrist))
-        _yaw_to(arm, yaw, 0.6)
-        arm.set("wrist", wrist)
-        time.sleep(0.6)
+        yaw, wrist = centre_on(arm, target[0], target[1], w, h)
         how = f"centred on him (yaw {yaw:.0f}, wrist {wrist:.0f})"
     else:
         seat = (load_taught() or {}).get(arm.SEAT_VIEW)
@@ -2786,7 +2852,10 @@ def find_object(arm, name, look=True, latest=None):
         # A survey is sweeping the arm; moving it now would file the survey's
         # next stops under a pose it never held. Answer from the map, stay put.
         look = False
+    in_view = None
     if look and aim and aim.get("confident"):
+        if hasattr(arm, "hold"):
+            arm.hold(LOOK_HOLD_S + 20.0)   # the seat loop waits for the check
         for joint in ("shoulder", "elbow", "base_yaw", "wrist"):
             if aim.get(joint) is None:
                 continue
@@ -2795,6 +2864,10 @@ def find_object(arm, name, look=True, latest=None):
             else:
                 arm.set(joint, aim[joint])
         moved = True
+        if latest is not None:
+            in_view = confirm_look(arm, latest, name)
+            if in_view is False:
+                text = f"{text} Not there now."
         _back_to_seat_later(arm)
     elif look and not aim and latest is not None and name:
         # Only search for what the detector has a word for: a scan cannot
@@ -2808,7 +2881,7 @@ def find_object(arm, name, look=True, latest=None):
         elif _search(arm, latest, name):
             text = f"{text} I'll look."
     log(f"find {name!r}: {text} moved={moved}")
-    return {"say": text, "aim": aim, "moved": moved,
+    return {"say": text, "aim": aim, "moved": moved, "in_view": in_view,
             "known": [p.label for p, _ in arm.roommap.known()]}
 
 

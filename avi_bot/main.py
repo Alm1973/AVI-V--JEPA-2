@@ -249,8 +249,23 @@ class Avi:
         return None, {"stopped": True}
 
     def _look_at(self, target):
-        self._safe(lambda: self.arm.look_at(target))
-        return None, {"target": target}
+        """Silent when it worked -- the turn is the answer. When the camera
+        could not find what it turned to, say so: "look at the laptop" once
+        ended on a mug with nothing said."""
+        got = self._safe(lambda: self.arm.look_at(target))
+        got = got if isinstance(got, dict) else {}
+        info = {"target": target, "in_view": got.get("in_view"),
+                "moved": got.get("moved")}
+        if (target or "").strip().lower() in ("me", "him", "you", "person",
+                                              "shaurya", "here", "over here"):
+            if got.get("looked") is False:
+                return "I can't see you from here.", info
+            return None, info
+        if got.get("in_view") is False:
+            return f"I can't see the {target} from here.", info
+        if got.get("moved") is False and got.get("say"):
+            return got["say"], info       # no aim: what it knows instead
+        return None, info
 
     # --- free motion: what the model improvises with ---------------------
     def _hold(self, seconds):
