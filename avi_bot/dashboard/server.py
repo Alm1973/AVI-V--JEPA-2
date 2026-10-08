@@ -385,7 +385,7 @@ class Arm:
                     continue
                 if self.detector is None:
                     from detector import DeskDetector
-                    self.detector = DeskDetector()
+                    self.detector = LockedDetector(DeskDetector())
                 h = frame.shape[0]
                 seen = self.detector.everything(
                     frame, min_conf=min(self.PERSON_MIN_CONF,
@@ -502,7 +502,7 @@ class Arm:
                 if self.detector is None:
                     self.note("loading YOLO-World for person tracking ...")
                     from detector import DeskDetector
-                    self.detector = DeskDetector()
+                    self.detector = LockedDetector(DeskDetector())
                     self.note("tracking: looking for you")
                 jpeg, _ = latest.get_after(-1, timeout=1.5)
                 if not jpeg:
@@ -600,11 +600,34 @@ class Arm:
         return observations_mod.notes(self.presence.summary(),
                                       spatial_mod.layout(placed))
 
-    def situation(self):
+    def situation(self, latest=None):
         """Right now, as text the cloud brain may be told: whether he is at
-        the desk, and the objects solidly seen there (labels only -- never a
-        frame; brain/context.py)."""
+        the desk, what the camera sees, where the arm is, and the objects
+        solidly seen on the desk (labels only -- never a frame;
+        brain/context.py)."""
         out = {}
+        if latest is not None:
+            try:
+                out["camera"] = camera_now(self, latest)
+            except Exception as exc:
+                self.note(f"camera for the brain: {exc!r}")
+        try:
+            here = self.snapshot()
+            taught = load_taught() or {}
+            at = [n for n, p in taught.items()
+                  if all(abs(float(here[j]) - float(p[j])) <= 4.0
+                         for j in poses.JOINTS if j in p)]
+            limits = ", ".join(
+                f"{j} {lo:.0f}-{hi:.0f}" for j in poses.JOINTS
+                for lo, hi in [self.config.soft_limits(j)])
+            out["pose"] = (
+                "Pose now: " + ", ".join(f"{j} {here[j]:.0f}"
+                                         for j in poses.JOINTS)
+                + (f" (= {at[0]})" if at else "")
+                + f". Limits: {limits}. Taught poses: "
+                + ", ".join(sorted(taught)) + ".")
+        except Exception:
+            pass
         try:
             s = self.presence.summary()
             if s.get("here"):
@@ -657,7 +680,8 @@ class Arm:
             return main_mod.Avi(db_path=self.store_path(self.BRAIN_PROFILES),
                                 arm=body, mood=self.mood,
                                 observed=self.observed_notes,
-                                situation=self.situation)
+                                situation=lambda: self.situation(latest),
+                                cloud_first=True)
 
         speaker = output_mod.Speaker(
             voice=tts_mod.Voice(backends=[tts_mod.Piper(
@@ -1946,7 +1970,7 @@ def detect_debug(arm, latest, min_conf=0.05):
     """
     if arm.detector is None:
         from detector import DeskDetector
-        arm.detector = DeskDetector()
+        arm.detector = LockedDetector(DeskDetector())
     frame, _ = _frame(latest)
     if frame is None:
         return {"error": "no picture"}
@@ -2074,7 +2098,7 @@ def _run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
     """
     if arm.detector is None:
         from detector import DeskDetector
-        arm.detector = DeskDetector()
+        arm.detector = LockedDetector(DeskDetector())
     taught = load_taught()
     for name, joints in (taught or {}).items():
         if "base_yaw" in joints and "wrist" in joints:
@@ -2373,6 +2397,45 @@ def desk_scan(arm, latest, min_conf=0.30, el_step=10.0, az_step=16.0,
 LOOK_HOLD_S = 15.0
 
 
+class LockedDetector:
+    """One detection at a time. Presence, tracking, surveys, finds and now
+    every brain turn share one YOLO model, and ultralytics' predict is not
+    thread-safe."""
+    _lock = threading.Lock()
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def everything(self, frame, **kw):
+        with self._lock:
+            return self._inner.everything(frame, **kw)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def camera_now(arm, latest, min_conf=0.40):
+    """What the camera sees right now, as words: "person (centre, 0.92)".
+    Positions are in the PICTURE: left of centre means turn left to face
+    it. Labels and places only -- the frame never leaves this function."""
+    frame, _ = _frame(latest)
+    if frame is None:
+        return None
+    if arm.detector is None:
+        from detector import DeskDetector
+        arm.detector = LockedDetector(DeskDetector())
+    h, w = frame.shape[:2]
+    out = []
+    for d in sorted(arm.detector.everything(frame, min_conf=min_conf),
+                    key=lambda d: -d["conf"])[:10]:
+        x, y = d["cx"] / float(w), d["cy"] / float(h)
+        side = "left" if x < 0.36 else "right" if x > 0.64 else "centre"
+        tier = "top" if y < 0.33 else "bottom" if y > 0.67 else "middle"
+        where = side if tier == "middle" else f"{tier} {side}"
+        out.append(f"{d['label']} ({where}, {d['conf']:.2f})")
+    return out
+
+
 def look_at_person(arm, latest):
     """Find him in the picture and centre him. "look at me" used to recall
     the seat pose -- and from the seat pose (where the arm usually is) that
@@ -2387,7 +2450,7 @@ def look_at_person(arm, latest):
     if frame is not None:
         if arm.detector is None:
             from detector import DeskDetector
-            arm.detector = DeskDetector()
+            arm.detector = LockedDetector(DeskDetector())
         people = [d for d in arm.detector.everything(
                       frame, min_conf=arm.PERSON_MIN_CONF)
                   if d["label"] == "person"]
@@ -2835,7 +2898,7 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
     """
     if arm.detector is None:
         from detector import DeskDetector
-        arm.detector = DeskDetector()
+        arm.detector = LockedDetector(DeskDetector())
     prefer = prefer or poses.OBSERVE_POSE
     taught = load_taught() or {}
     if dome_mod.POLE not in taught:
@@ -3036,7 +3099,7 @@ def probe_depth(arm, latest, swing=40.0, steps=9, settle=1.6,
     import numpy as np
     if arm.detector is None:
         from detector import DeskDetector
-        arm.detector = DeskDetector()
+        arm.detector = LockedDetector(DeskDetector())
     start = arm.snapshot()
     lo, hi = arm.config.soft_limits("base_yaw")
     here = start["base_yaw"]
@@ -3292,7 +3355,7 @@ def probe_parallax(arm, latest, swing=15.0, settle=1.8, min_conf=0.35,
     """
     if arm.detector is None:
         from detector import DeskDetector
-        arm.detector = DeskDetector()
+        arm.detector = LockedDetector(DeskDetector())
     need = parallax.MIN_SEPARATION_PX / arm.rejector.px_per_deg(1280)
     if swing < need:
         return {"error": f"swing {swing} deg is too small to tell the two "
@@ -3346,7 +3409,7 @@ def probe_axis(arm, latest, joint="wrist", axis="cy", step=6.0, n=5,
     """
     if arm.detector is None:
         from detector import DeskDetector
-        arm.detector = DeskDetector()
+        arm.detector = LockedDetector(DeskDetector())
     start = arm.snapshot()
     lo, hi = arm.config.soft_limits(joint)
     here = start[joint]

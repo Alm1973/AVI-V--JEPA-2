@@ -18,6 +18,14 @@ EMOTION_NAMES = ("neutral", "happy", "excited", "curious", "sad", "sulky",
                  "confused", "alert", "sleepy", "affectionate", "proud")
 
 
+# The arm's own gesture library (motion/gestures.py), mirrored for the same
+# reason as EMOTION_NAMES. A name outside it failed silently on the arm.
+ARM_GESTURES = ("nod", "shake", "perk_up", "droop", "celebrate", "ahem",
+                "yawn_wake", "thinking", "embarrassed", "curious_lean",
+                "excited_wiggle", "startled", "doze")
+JOINT_NAMES = ("base_yaw", "shoulder", "elbow", "wrist")
+
+
 def _tool(name, description, properties=None, required=None, **extra):
     schema = {"type": "object", "properties": properties or {},
               "required": required or [], "additionalProperties": False}
@@ -72,12 +80,38 @@ TOOLS = [
           {"text": {"type": "string", "maxLength": 280}}, ["text"]),
     _tool("what_do_you_know", "List stored facts, optionally matching a query.",
           {"query": {"type": "string", "maxLength": 80}}),
-    _tool("look_at", "Turn to look at something.",
-          {"target": {"type": "string",
-                      "enum": ["me", "desk", "door", "window", "screen"]}},
-          ["target"]),
-    _tool("play_emotion", "Express an emotion with motion and a chirp.",
-          {"name": {"type": "string"}}, ["name"]),
+    _tool("look_at", "Turn the camera to him ('me') or to a named object "
+                     "AVI has seen (it searches the desk if unknown).",
+          {"target": {"type": "string", "maxLength": 40}}, ["target"]),
+    _tool("play_emotion", "Play one of the arm's built-in gestures.",
+          {"name": {"type": "string", "enum": list(ARM_GESTURES)}},
+          ["name"]),
+    # Free motion: what lets the model do something it was not given a
+    # gesture for ("wave hi", "look a bit left") instead of nothing.
+    _tool("nudge", "Turn the camera a little: left/right turns the base, "
+                   "up/down tilts the wrist.",
+          {"direction": {"type": "string",
+                         "enum": ["left", "right", "up", "down"]},
+           "degrees": {"type": "integer", "minimum": 2, "maximum": 45}},
+          ["direction"]),
+    _tool("move_joints", "Set joints to absolute degrees (clamped to their "
+                         "limits). Omit a joint to leave it where it is.",
+          {j: {"type": "number", "minimum": 0, "maximum": 180}
+           for j in JOINT_NAMES}),
+    _tool("motion_sequence", "Improvise a movement: 2-10 poses played in "
+                             "order, each held hold_s seconds, then back to "
+                             "where it started. E.g. a wave: wrist up/down "
+                             "a few times.",
+          {"steps": {"type": "array", "minItems": 1, "maxItems": 10,
+                     "items": {"type": "object", "properties": {
+                         **{j: {"type": "number", "minimum": 0,
+                                "maximum": 180} for j in JOINT_NAMES},
+                         "hold_s": {"type": "number", "minimum": 0.1,
+                                    "maximum": 3.0}}}}},
+          ["steps"]),
+    _tool("go_to_pose", "Move to a taught pose by name (listed in the "
+                        "context).",
+          {"name": {"type": "string", "maxLength": 40}}, ["name"]),
     _tool("robot_status", "Mood, uptime, VRAM, provider health, request counts."),
     _tool("get_time", "The current time."),
     _tool("sleep", "Go to the rest pose and pause the observer."),

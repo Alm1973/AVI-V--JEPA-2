@@ -358,3 +358,40 @@ class ToolSchemas(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheModelDecidesFirst(unittest.TestCase):
+    """Local-first answered only exact phrasings; everything else reached a
+    model that could neither see nor move."""
+
+    def router(self, send):
+        return router_mod.Router(chain=chain(send), cloud_first=True)
+
+    def test_even_a_known_phrase_goes_to_the_model(self):
+        seen = []
+
+        def send(name, url, model, messages, tool_list):
+            seen.append(messages[-1]["content"])
+            return FakeResult(content='{"beep": "neutral"}',
+                              calls=[FakeCall("lamp", '{"action": "off"}')])
+        d = self.router(send).handle("turn the lamp off")
+        self.assertEqual(seen, ["turn the lamp off"])
+        self.assertEqual(d.route, router_mod.CLOUD)
+
+    def test_stop_never_waits_for_the_network(self):
+        def send(*a):
+            raise AssertionError("'stop' went to the cloud")
+        d = self.router(send).handle("stop")
+        self.assertEqual(d.calls, [("stop", {})])
+
+    def test_the_local_rules_catch_it_when_the_cloud_is_down(self):
+        def send(name, *a):
+            raise providers.ProviderError(name, "offline")
+        d = self.router(send).handle("turn the lamp off")
+        self.assertEqual(d.route, router_mod.LOCAL)
+
+    def test_it_is_told_it_can_improvise_movement(self):
+        self.assertIn("motion_sequence", router_mod.SYSTEM)
+        names = {t["function"]["name"] for t in tools.WIRE_TOOLS}
+        self.assertTrue({"nudge", "move_joints", "motion_sequence",
+                         "go_to_pose"} <= names)

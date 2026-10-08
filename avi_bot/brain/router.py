@@ -27,20 +27,31 @@ CLOUD = "cloud"
 FALLBACK = "local_model"
 CONFUSED = "confused"
 
-SYSTEM = """You are AVI, a small desk robot with a 4-joint arm and a camera.
-You are not a chat assistant: you act, and you mostly express yourself with
-beeps and movement rather than words.
+SYSTEM = """You are AVI, a small desk robot: a 4-joint arm with a camera on
+the end, on Shaurya's desk. You are not a chat assistant: you act, and you
+express yourself with movement as much as with words.
 
-Call a tool for anything that should happen. Then reply with ONE JSON object
-and nothing else:
+YOUR BODY. base_yaw turns the camera (higher = right, lower = left).
+wrist tilts it (higher = up, lower = down). shoulder and elbow set reach and
+height; their current values and limits are in the context. The context also
+says what the camera sees right now, where things are on the desk, your
+current pose and your taught poses -- use it to reason about space.
+
+ACTING. Call tools for anything that should happen, as many as it takes.
+nudge for small turns, look_at to face him or an object, go_to_pose for a
+taught pose, play_emotion for a built-in gesture, and motion_sequence to
+improvise anything else (a wave: wrist up and down 3-4 times, 0.3 s each).
+Never answer "I can't" to a movement you could approximate.
+
+Then reply with ONE JSON object and nothing else:
   {"say": string or null, "beep": emotion or null, "gesture": name or null}
 
 Rules:
-- "say" only to answer a question, read a reminder or schedule, give the
-  morning rundown, or explain an error. Otherwise null.
+- "say" to answer a question, read a reminder or schedule, give the morning
+  rundown, or explain an error. Otherwise null.
 - 20 words maximum, ever.
-- Prefer a beep to a sentence.
-- Never invent a sighting, a calendar event or a fact. Call the tool.
+- Never invent a sighting, a calendar event or a fact: use the context or a
+  tool.
 """
 
 
@@ -128,9 +139,17 @@ def _extract_calls(result):
 
 
 class Router:
+    # Cannot wait for a network round trip: said to a robot that is moving.
+    INSTANT = ("stop",)
+
     def __init__(self, chain=None, policy=None, clock=time.time,
-                 local_pick=None):
+                 local_pick=None, cloud_first=False):
         self.chain = chain or providers.Chain()
+        # The model decides first, with the local rules as the fallback when
+        # it is unreachable. Local-first answered only exact phrasings, and
+        # anything else reached a model that had no picture of the room and
+        # nothing to move with -- "wave hi to me" did nothing (2026-10-07).
+        self.cloud_first = cloud_first
         self.policy = policy or speech.SpeechPolicy()
         self.clock = clock
         # Injected so the 3B multiple-choice fallback can be tested without a
@@ -153,6 +172,12 @@ class Router:
                         reason=intent.reason)
 
     # --- route 2 --------------------------------------------------------
+    def _try_cloud(self, utterance, context):
+        try:
+            return self._cloud(utterance, context=context)
+        except providers.ProviderError:
+            return None
+
     def _cloud(self, utterance, context=None):
         messages = [{"role": "system", "content": SYSTEM}]
         if context:
@@ -221,14 +246,19 @@ class Router:
         started = self.clock()
         decision = None
         try:
-            decision = self._local(utterance)
-            if decision is None:
-                try:
-                    decision = self._cloud(utterance, context=context)
-                except providers.ProviderError:
-                    decision = None
+            local = self._local(utterance)
+            instant = bool(local is not None and local.calls
+                           and local.calls[0][0] in self.INSTANT)
+            if self.cloud_first and not instant:
+                decision = self._try_cloud(utterance, context)
                 if decision is None:
-                    decision = self._fallback(utterance)
+                    decision = local
+            else:
+                decision = local
+                if decision is None:
+                    decision = self._try_cloud(utterance, context)
+            if decision is None:
+                decision = self._fallback(utterance)
         except Exception as exc:                 # never take the robot down
             decision = Decision(CONFUSED, reply=schema.confused_reply(),
                                 reason=speech.ERROR, error=repr(exc))

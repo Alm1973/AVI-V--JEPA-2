@@ -237,6 +237,27 @@ class Budgeted(unittest.TestCase):
     def test_nothing_in_means_nothing_out(self):
         self.assertEqual(context.build(), "")
 
+    def test_the_scene_as_words(self):
+        block = context.build(camera=["person (centre, 0.92)",
+                                      "laptop (bottom left, 0.81)"],
+                              pose="Pose now: base_yaw 94 (= ATTENTIVE).",
+                              noticed=["Your pen was left of the laptop."])
+        self.assertIn("Camera now: person (centre, 0.92); laptop (bottom "
+                      "left, 0.81).", block)
+        self.assertIn("Pose now: base_yaw 94", block)
+        self.assertIn("You noticed: Your pen was left of the laptop.", block)
+
+    def test_an_empty_camera_says_so(self):
+        self.assertIn("nothing recognised", context.build(camera=[]))
+
+    def test_about_me_with_no_word_match_still_gets_the_facts(self):
+        store = memdb.Store()
+        self.addCleanup(store.close)
+        store.remember("chemistry test on Friday")
+        block = context.from_store(store, utterance="what do you know about "
+                                                    "me", now=self.NOW)
+        self.assertIn("chemistry test on Friday", block)
+
     def test_from_store_recalls_against_the_utterance(self):
         store = memdb.Store()
         self.addCleanup(store.close)

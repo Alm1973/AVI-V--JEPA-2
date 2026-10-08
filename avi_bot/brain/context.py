@@ -42,7 +42,8 @@ def _clip(text, limit):
 
 
 def build(now=None, activity=None, objects=None, mood=None, events=None,
-          facts=None, turns=None, personality=None, max_chars=MAX_CHARS):
+          facts=None, turns=None, personality=None, max_chars=MAX_CHARS,
+          camera=None, pose=None, noticed=None):
     """Assemble the context block. Returns a string.
 
     Sections are added in order of how much they change the answer, so that
@@ -60,9 +61,24 @@ def build(now=None, activity=None, objects=None, mood=None, events=None,
     if activity:
         parts.append(f"He appears to be: {_clip(activity, 80)}.")
 
+    if camera:
+        # What the camera sees right now, as labels and positions in the
+        # picture -- never the picture (the NEVER list above).
+        seen = [_clip(c, 50) for c in list(camera)[:10]]
+        parts.append("Camera now: " + "; ".join(seen) + ".")
+    elif camera is not None:
+        parts.append("Camera now: nothing recognised.")
+
+    if pose:
+        parts.append(_clip(pose, 400))
+
     if objects:
         names = [_clip(o, 30) for o in list(objects)[:8]]
         parts.append("Verified on the desk: " + ", ".join(names) + ".")
+
+    if noticed:
+        kept = [_clip(n, 140) for n in list(noticed)[:8]]
+        parts.append("You noticed: " + " | ".join(kept))
 
     if mood:
         parts.append(f"Your mood: {_clip(mood, 40)}.")
@@ -106,5 +122,12 @@ def from_store(store, utterance=None, **kwargs):
     are the ten that might bear on what was just said rather than the ten most
     recent.
     """
-    facts = store.recall(query=utterance, limit=MAX_FACTS) if store else None
-    return build(facts=facts, **kwargs)
+    facts = []
+    if store:
+        facts = list(store.recall(query=utterance, limit=MAX_FACTS))
+        if not facts:
+            # Nothing matched the words: the most-used facts instead.
+            # "what do you know about me" matched nothing, and the model
+            # said "no stored facts" while one sat in the store.
+            facts = list(store.recall(limit=MAX_FACTS))
+    return build(facts=facts or None, **kwargs)

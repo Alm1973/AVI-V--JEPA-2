@@ -44,7 +44,8 @@ class Avi:
     def __init__(self, db_path=":memory:", clock=time.time,
                  arm=None, mood=None, ics_text=None, calendar_url=None,
                  lamp_host=None, apps_path=None, env=None,
-                 send=None, local_pick=None, observed=None, situation=None):
+                 send=None, local_pick=None, observed=None, situation=None,
+                 cloud_first=False):
         self.clock = clock
         self.started_at = clock()
         # Sentences AVI noticed by watching (presence, desk layout); see
@@ -73,7 +74,11 @@ class Avi:
         self.budget = providers.Budget()
         self.chain = providers.Chain(budget=self.budget, send=send, env=env)
         self.router = router_mod.Router(chain=self.chain, policy=self.policy,
-                                        clock=clock, local_pick=local_pick)
+                                        clock=clock, local_pick=local_pick,
+                                        cloud_first=cloud_first)
+        # Motion sequences run on their own thread so the reply is not held
+        # up by a wave; tests turn this off to step through them.
+        self.background = True
 
         self.timers = timers_mod.Timers(store=self.store, clock=clock)
         self.focus = focus_mod.Focus(clock=clock,
@@ -126,6 +131,10 @@ class Avi:
             "stop": self._stop,
             "look_at": self._look_at,
             "play_emotion": self._play,
+            "nudge": self._nudge,
+            "move_joints": self._move_joints,
+            "motion_sequence": self._sequence,
+            "go_to_pose": self._go_to_pose,
         }
         handlers.update(memory_tools.make(self.store,
                                           observed=self.observed))
@@ -232,6 +241,83 @@ class Avi:
         self._safe(lambda: self.arm.look_at(target))
         return None, {"target": target}
 
+    # --- free motion: what the model improvises with ---------------------
+    def _hold(self, seconds):
+        """Keep the dashboard's seat loop off the arm while a move plays."""
+        hold = getattr(self.arm, "hold", None)
+        if callable(hold):
+            self._safe(lambda: hold(seconds))
+
+    def _nudge(self, direction, degrees=10):
+        if self.arm is None:
+            return "I have no arm attached.", None
+        d = float(degrees or 10)
+        here = self.arm.snapshot()
+        self._hold(60.0)
+        if direction in ("left", "right"):
+            # +base_yaw turns the camera right (perception/world.py).
+            target = here["base_yaw"] + (d if direction == "right" else -d)
+            self._safe(lambda: self._yaw_to(target))
+        else:
+            target = here["wrist"] + (d if direction == "up" else -d)
+            self._safe(lambda: self.arm.set("wrist", target))
+        return None, {"direction": direction, "degrees": d}
+
+    def _move_joints(self, **joints):
+        if self.arm is None:
+            return "I have no arm attached.", None
+        self._hold(60.0)
+        moved = {}
+        for j in tools.JOINT_NAMES:
+            if joints.get(j) is None:
+                continue
+            deg = float(joints[j])
+            if j == "base_yaw":
+                self._safe(lambda: self._yaw_to(deg))
+            else:
+                self._safe(lambda: self.arm.set(j, deg))
+            moved[j] = round(deg, 1)
+        return None, {"moved": moved}
+
+    MAX_STEPS = 10
+
+    def _sequence(self, steps):
+        """Poses in order, each held, then back to where it started."""
+        if self.arm is None:
+            return "I have no arm attached.", None
+        steps = [st for st in (steps or [])[:self.MAX_STEPS]
+                 if isinstance(st, dict)]
+        if not steps:
+            return "Nothing to move.", None
+        holds = [min(3.0, max(0.1, float(st.get("hold_s") or 0.5)))
+                 for st in steps]
+        start = dict(self.arm.snapshot())
+        self._hold(sum(holds) + 30.0)
+
+        def run():
+            for st, hold in zip(steps, holds):
+                for j in tools.JOINT_NAMES:
+                    if st.get(j) is not None:
+                        self._safe(lambda: self.arm.set(j, float(st[j])))
+                self._sleep(hold)
+            for j in tools.JOINT_NAMES:
+                if j in start:
+                    self._safe(lambda: self.arm.set(j, start[j]))
+
+        if self.background:
+            import threading
+            threading.Thread(target=run, daemon=True).start()
+        else:
+            run()
+        return None, {"steps": len(steps), "seconds": round(sum(holds), 1)}
+
+    def _go_to_pose(self, name):
+        if self.arm is None:
+            return "I have no arm attached.", None
+        self._hold(60.0)
+        self._safe(lambda: self.arm.recall(name))
+        return None, {"pose": name}
+
     def _play(self, name):
         self._safe(lambda: self.arm.play(name))
         return None, {"gesture": name}
@@ -267,10 +353,18 @@ class Avi:
                 sit = self.situation() or {}
             except Exception:
                 sit = {}              # a turn is never lost to its context
+        noticed = None
+        if self.observed is not None:
+            try:
+                noticed = self.observed()
+            except Exception:
+                noticed = None
         ctx = context_mod.from_store(
             self.store, utterance=utterance,
             now=datetime.fromtimestamp(self.clock()),
             activity=sit.get("activity"), objects=sit.get("objects"),
+            camera=sit.get("camera"), pose=sit.get("pose"),
+            noticed=noticed,
             mood=(self.mood.emotion() if self.mood else None),
             turns=self.turns[-6:])
         decision = self.router.handle(utterance, context=ctx)

@@ -173,6 +173,75 @@ class MoodFollowsWhatHappens(unittest.TestCase):
         self.assertEqual(mood.log, [])
 
 
+class MotionArm:
+    """Records joint commands; clamps like the real one."""
+
+    class config:
+        @staticmethod
+        def soft_limits(j):
+            return {"base_yaw": (20, 160), "wrist": (20, 176)}.get(j, (25, 155))
+
+    def __init__(self):
+        self.pose = {"base_yaw": 90.0, "shoulder": 60.0, "elbow": 100.0,
+                     "wrist": 150.0}
+        self.sent, self.held, self.recalled = [], [], []
+
+    def snapshot(self):
+        return dict(self.pose)
+
+    def set(self, j, deg):
+        lo, hi = self.config.soft_limits(j)
+        self.pose[j] = max(lo, min(hi, float(deg)))
+        self.sent.append((j, round(self.pose[j], 1)))
+        return self.pose[j]
+
+    def hold(self, s):
+        self.held.append(s)
+
+    def recall(self, name):
+        self.recalled.append(name)
+
+
+class FreeMotion(unittest.TestCase):
+    """What the model improvises with."""
+
+    def setUp(self):
+        self.arm = MotionArm()
+        self.avi = build(clock=Clock(), arm=self.arm)
+        self.addCleanup(self.avi.close)
+        self.avi._sleep = lambda s: None
+        self.avi.background = False
+
+    def run_call(self, tool, **args):
+        return self.avi.skills.run(tool, args)
+
+    def test_nudge_left_turns_the_base_down(self):
+        self.assertTrue(self.run_call("nudge", direction="left",
+                                      degrees=10).ok)
+        self.assertAlmostEqual(self.arm.pose["base_yaw"], 80.0)
+        self.assertTrue(self.arm.held, "the seat loop would undo it")
+
+    def test_nudge_up_raises_the_wrist(self):
+        self.run_call("nudge", direction="up", degrees=12)
+        self.assertAlmostEqual(self.arm.pose["wrist"], 162.0)
+
+    def test_a_wave_plays_and_comes_back(self):
+        steps = [{"wrist": 170, "hold_s": 0.3}, {"wrist": 140, "hold_s": 0.3},
+                 {"wrist": 170, "hold_s": 0.3}, {"wrist": 140, "hold_s": 0.3}]
+        r = self.run_call("motion_sequence", steps=steps)
+        self.assertTrue(r.ok, r.error)
+        wrist = [d for j, d in self.arm.sent if j == "wrist"]
+        self.assertEqual(wrist, [170.0, 140.0, 170.0, 140.0, 150.0])
+
+    def test_move_joints_is_clamped_by_the_arm(self):
+        self.run_call("move_joints", wrist=5)
+        self.assertEqual(self.arm.pose["wrist"], 20.0)
+
+    def test_a_taught_pose_by_name(self):
+        self.run_call("go_to_pose", name="TALL")
+        self.assertEqual(self.arm.recalled, ["TALL"])
+
+
 class Turns(unittest.TestCase):
     def setUp(self):
         self.clock = Clock()
