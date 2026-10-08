@@ -69,6 +69,17 @@ class JepaTokens(unittest.TestCase):
         self.assertAlmostEqual(got["dx"], 0, delta=0.5)
         self.assertTrue(got["confident"])
 
+    def test_the_position_signal_does_not_bend_a_turn(self):
+        """The difference method turned a 3-token pan into a diagonal on
+        the robot; the self-referenced score must keep it on its axis."""
+        c = smooth(grid()) * 5.0
+        p = positional(c)
+        for dx, dy in ((3, 0), (-3, 0), (0, -6), (2, 4)):
+            with self.subTest((dx, dy)):
+                got = vf.token_shift(c + p, slid(c, dx, dy) + p)
+                self.assertAlmostEqual(got["dx"], dx, delta=0.5)
+                self.assertAlmostEqual(got["dy"], dy, delta=0.5)
+
     def test_an_unmoved_scene_is_still(self):
         g = smooth(grid()) + positional(grid())
         got = vf.token_shift(g, g + 0.02 * grid(seed=3))

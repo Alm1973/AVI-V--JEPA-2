@@ -71,8 +71,9 @@ def _refine(m, c, p):
 # (2026-10-08). +-9 still leaves 7/16 of the grid overlapping.
 MAX_SHIFT = 9
 # Two grids this alike at zero shift are the same view: nothing moved.
-# PROVISIONAL until measured on the robot with a no-move control.
-STILL = 0.93
+# Robot, 2026-10-08: a no-move control scored 0.925 (sensor noise, light);
+# real 12- and 20-degree moves scored 0.68-0.72.
+STILL = 0.85
 # The best shift must stand this far above the median shift's score.
 MIN_PROMINENCE = 0.15
 
@@ -81,47 +82,40 @@ def token_shift(a, b, max_shift=MAX_SHIFT):
     """How the scene moved from token grid `a` to `b`, both (H, W, D).
 
     Returns {"dx", "dy"} in tokens (content in `a` at x appears in `b` at
-    x + dx), "still" (the two grids are the same scene unmoved), "edge" (the
-    best shift is on the search boundary: the real one may be beyond it),
-    "confident", the peak's "prominence", and the score profiles through
-    zero along each axis.
+    x + dx), "still" (the same view, unmoved), "edge" (the best shift is on
+    the search boundary: the real one may be beyond it), "confident", the
+    peak's "prominence", and the score profiles through zero on each axis.
 
-    MATCHED ON THE DIFFERENCE, NOT THE FEATURES. V-JEPA's tokens carry a
-    strong signal of their own grid position: a token resembles whatever sat
-    at that spot in the other frame, whatever it shows. On the robot that
-    made "no shift" a second peak as high as the true one (a 12-degree tilt
-    up: 0.729 at zero, 0.735 at +6.6 rows), and the judge said the camera
-    had not moved. d = a - b cancels anything identical at a position in
-    both frames -- the position signal exactly. For a pure shift s, d at p
-    is a(p) - a(p - s), and -d at p + s is a(p) - a(p + s): they share
-    a(p), so matching d against -d peaks at s -- and at -s, which the raw
-    features then rule out.
+    V-JEPA's tokens carry their GRID POSITION: a token resembles whatever
+    sat at the same spot in another frame, whatever it shows. Matching the
+    raw features made "no shift" a peak as high as the true one (robot,
+    2026-10-08: a 12-degree tilt up scored 0.729 at zero, 0.735 at +6.6
+    rows). So each shift is scored against the frames' match with
+    THEMSELVES at that shift:
+
+        score(s) = S_ab(s) - (S_aa(s) + S_bb(s)) / 2
+
+    The position signal enters all three terms identically and cancels;
+    the content enters S_ab at lag s - s0 but the self terms at lag s, so
+    the score peaks at the true shift s0 -- and only there. (Matching the
+    frame DIFFERENCE also cancels position but peaks at +s0 and -s0 alike,
+    and on the robot it turned horizontal turns into diagonals.)
     """
     ua, ub = _unit(a), _unit(b)
     raw0 = float((ua * ub).sum(-1).mean())
     if raw0 >= STILL:
         return {"dx": 0.0, "dy": 0.0, "still": True, "edge": False,
-                "confident": True, "prominence": None, "raw0": round(raw0, 4),
-                "profile_x": None, "profile_y": None}
-    d = ua - ub
-    da, db = _unit(d), _unit(-d)
+                "confident": True, "prominence": None,
+                "raw0": round(raw0, 4), "profile_x": None, "profile_y": None}
     scores = {}
     for dy in range(-max_shift, max_shift + 1):
         for dx in range(-max_shift, max_shift + 1):
-            if (dx, dy) == (0, 0):
-                continue           # d against -d at zero is -1 by definition
-            sc = _score(da, db, dx, dy)
-            if sc is not None:
-                scores[(dx, dy)] = sc
+            ab = _score(ua, ub, dx, dy)
+            if ab is None:
+                continue
+            aa, bb = _score(ua, ua, dx, dy), _score(ub, ub, dx, dy)
+            scores[(dx, dy)] = ab - (aa + bb) / 2.0
     (bx, by), best = max(scores.items(), key=lambda kv: kv[1])
-    # The difference finds the shift's size and axis but peaks at +s AND -s
-    # alike (-d at p - s also shares a term with d at p). The raw features
-    # break the tie: at the true shift the content matches as well, at the
-    # mirror shift it does not, and the position signal is the same at both.
-    plus, minus = _score(ua, ub, bx, by), _score(ua, ub, -bx, -by)
-    if plus is not None and minus is not None and minus > plus:
-        bx, by = -bx, -by
-        best = scores.get((bx, by), best)
     rest = sorted(scores.values())
     prominence = best - rest[len(rest) // 2]
     fx = bx + _refine(scores.get((bx - 1, by)), best, scores.get((bx + 1, by)))
