@@ -1256,10 +1256,21 @@ function didLine(d){
   else if (a.target) s += " " + a.target;
   else if (a.name) s += " " + a.name;
   else if (a.steps) s += " (" + a.steps.length + " steps)";
+  else {
+    const js = ["base_yaw", "shoulder", "elbow", "wrist"]
+      .filter(k => a[k] != null).map(k => k + " " + a[k]);
+    if (js.length) s += " " + js.join(", ");
+  }
   if (!d.ok) return {bad: true, text: s + " \\u2717 " + (d.error || "failed")};
+  // A look: did the camera find what it turned to?
+  if (d.in_view === true) return {bad: false,
+    text: s + " \\u2713 camera found it"};
+  if (d.in_view === false) return {bad: true,
+    text: s + " \\u2717 not in view"};
   const v = d.verdict;
   if (v && v.judged) {
-    const who = Object.keys(v.votes).join(" + ");
+    const who = Object.keys(v.votes).join(" + ") +
+      (v.steps > 1 ? ", " + v.steps + " steps" : "");
     if (v.agrees) return {bad: false,
       text: s + " \\u2713 camera saw it (" + who + ")"};
     return {bad: true, text: s + " \\u2717 camera saw " +

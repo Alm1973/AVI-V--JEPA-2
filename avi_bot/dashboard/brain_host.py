@@ -192,7 +192,10 @@ class Host:
                         "error": r.error,
                         "verdict": _brief(r.data.get("verdict")
                                           if isinstance(r.data, dict)
-                                          else None)}
+                                          else None),
+                        # A look's own check: was the thing in the picture?
+                        "in_view": (r.data.get("in_view")
+                                    if isinstance(r.data, dict) else None)}
                        for c, r in zip(decision.calls, results)],
                "ok": all(r.ok for r in results)}
         err = getattr(decision, "error", None)
@@ -402,7 +405,8 @@ def _brief(verdict):
     if not verdict:
         return None
     return {k: verdict.get(k) for k in ("commanded", "votes", "judged",
-                                        "agrees", "motion", "retried")
+                                        "agrees", "motion", "retried",
+                                        "steps")
             if k in verdict}
 
 
