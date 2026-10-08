@@ -596,6 +596,13 @@ class Arm:
 
     def make_brain_host(self, latest):
         """The voice brain, built when its loop starts (brain_host.py)."""
+        def voice_model():
+            # dashboard-settings.json "voice": a Piper model file in
+            # assistant/ (its .onnx.json beside it). Read per sentence, so
+            # a new voice is heard from the next thing AVI says.
+            name = settings_mod.load(settings_mod.path()).get("voice")
+            return voice_path(name)
+
         def recall(name):
             taught = load_taught() or {}
             if name in taught:
@@ -613,11 +620,8 @@ class Arm:
                                 observed=self.observed_notes,
                                 situation=self.situation)
 
-        model = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__)))), "assistant",
-            "en_US-amy-medium.onnx")
         speaker = output_mod.Speaker(
-            voice=tts_mod.Voice(backends=[tts_mod.Piper(model=model),
+            voice=tts_mod.Voice(backends=[tts_mod.Piper(model=voice_model),
                                           tts_mod.Silent()]),
             enabled=lambda: bool(settings_mod.load(settings_mod.path()).get(
                 "speak", False)),
@@ -1638,6 +1642,11 @@ def make_handler(st):
                     ends_in_s=max(0.0, deadline - time.time())))
             elif self.path == "/settings":
                 path = settings_mod.path()
+                if "voice" in body:
+                    chosen = voice_path(body["voice"])
+                    settings_mod.save(path, "voice",
+                                      os.path.basename(chosen))
+                    arm.note(f"voice: {os.path.basename(chosen)}")
                 if "speak" in body:
                     settings_mod.save(path, "speak", bool(body["speak"]))
                     arm.note("speaking: " + ("on" if body["speak"] else "off"))
@@ -1949,6 +1958,24 @@ def _clipped(d, frame):
             or d["cx"] + d["w"] / 2 >= fw - EDGE_PX
             or d["cy"] - d["h"] / 2 <= EDGE_PX
             or d["cy"] + d["h"] / 2 >= fh - EDGE_PX)
+
+
+DEFAULT_VOICE = "en_US-amy-medium.onnx"
+
+
+def voice_path(name=None):
+    """The Piper model for a voice name; the default if it is missing.
+    Only a bare file name in assistant/ -- the setting comes over HTTP."""
+    folder = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))), "assistant")
+    if name:
+        name = os.path.basename(str(name))
+        if not name.endswith(".onnx"):
+            name += ".onnx"
+        path = os.path.join(folder, name)
+        if os.path.exists(path) and os.path.exists(path + ".json"):
+            return path
+    return os.path.join(folder, DEFAULT_VOICE)
 
 
 def run_survey(arm, latest, **kw):

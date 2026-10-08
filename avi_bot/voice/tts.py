@@ -136,8 +136,11 @@ class Piper:
     name = "piper"
 
     def __init__(self, model=None):
+        # A path, or a callable returning one: the dashboard passes a lookup
+        # of its "voice" setting, so switching voices needs no restart.
         self.model = model
         self._voice = None
+        self._loaded = None
 
     @property
     def available(self):
@@ -151,10 +154,12 @@ class Piper:
         import io
         import wave
         from piper import PiperVoice
-        if self._voice is None:
-            if not self.model:
-                raise RuntimeError("piper needs a voice model path")
-            self._voice = PiperVoice.load(self.model)
+        path = self.model() if callable(self.model) else self.model
+        if not path:
+            raise RuntimeError("piper needs a voice model path")
+        if self._voice is None or path != self._loaded:
+            self._voice = PiperVoice.load(path)
+            self._loaded = path
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wav:
             self._voice.synthesize_wav(text, wav)
