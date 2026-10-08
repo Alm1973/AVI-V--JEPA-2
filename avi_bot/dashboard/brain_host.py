@@ -179,6 +179,11 @@ class Host:
             # Key NAMES only, never values: enough to tell "no key on this
             # machine" from "the provider failed".
             out["keys_loaded"] = list(getattr(brain, "loaded_keys", []))
+        miss = getattr(getattr(brain, "router", None), "last_cloud_miss",
+                       None)
+        if miss and decision.route != "cloud":
+            self.note(f"model skipped for {text!r}: {miss}")
+            brain.router.last_cloud_miss = None
         self.note(f"ask {text!r} -> {reply.say!r} via {decision.route}")
         return out
 

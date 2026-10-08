@@ -150,6 +150,7 @@ class Router:
         # anything else reached a model that had no picture of the room and
         # nothing to move with -- "wave hi to me" did nothing (2026-10-07).
         self.cloud_first = cloud_first
+        self.last_cloud_miss = None
         self.policy = policy or speech.SpeechPolicy()
         self.clock = clock
         # Injected so the 3B multiple-choice fallback can be tested without a
@@ -252,6 +253,10 @@ class Router:
             if self.cloud_first and not instant:
                 decision = self._try_cloud(utterance, context)
                 if decision is None:
+                    # Why the model was skipped, for the log: the providers
+                    # tried and what each said (no keys, no content).
+                    self.last_cloud_miss = list(self.chain.tried) or [
+                        ("cloud", "reply was not valid JSON twice")]
                     decision = local
             else:
                 decision = local
