@@ -118,7 +118,8 @@ class Host:
         # scheduler ticks on another, and the brain's stores are one sqlite
         # connection each.
         self._turn = threading.Lock()
-        self.present = present
+        self._here = present
+        self.last_ask = None           # when he last typed or said something
         self.note = note
         self.cue = cue
         self.clock = clock
@@ -128,6 +129,19 @@ class Host:
         # search he asked for. Delivered like scheduler announcements: only
         # while he is at the desk.
         self.pending = []
+
+    # Someone who asked something this recently is around, whatever the
+    # seat camera says. Presence only counts looks from the seat view, and
+    # while he drove the arm around it never was: "set a timer for 1
+    # minute" was announced 8 minutes late, when presence caught up
+    # (robot, 2026-10-08).
+    ENGAGED_S = 600.0
+
+    def present(self):
+        if self.last_ask is not None and (self.clock() - self.last_ask
+                                          < self.ENGAGED_S):
+            return True
+        return bool(self._here())
 
     @property
     def brain(self):
@@ -145,6 +159,7 @@ class Host:
         text = (text or "").strip()
         if not text:
             return {"error": "say something"}
+        self.last_ask = self.clock()
         brain = self.brain
         if brain is None:
             return {"error": f"brain unavailable: {self.error}"}

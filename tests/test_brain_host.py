@@ -231,6 +231,22 @@ class WhileYouWereAway(unittest.TestCase):
         self.assertIsNone(self.host.tick())
         self.assertEqual(self.host.brain.scheduler.missed_reminders(), [])
 
+    def test_someone_who_just_asked_is_around(self):
+        """'set a timer for 1 minute' from the page was told 8 minutes
+        late: the seat camera had not counted him, but he had just typed
+        it. (This stub brain cannot answer; the ask still counts.)"""
+        self.host.ask("remind me in a minute to stretch")
+        self.store.add_reminder(self.now["t"] + 60, "stretch")
+        self.now["t"] += 61
+        self.assertEqual(self.host.tick(), "stretch")
+
+    def test_engagement_wears_off(self):
+        self.host.ask("hi")
+        self.now["t"] += bh.Host.ENGAGED_S + 1
+        self.store.add_reminder(self.now["t"] + 5, "call mom")
+        self.now["t"] += 6
+        self.assertIsNone(self.host.tick(), "told an empty room")
+
     def test_a_restart_does_not_lose_it(self):
         self.store.add_reminder(self.now["t"] + 5, "call mom")
         self.now["t"] += 6
