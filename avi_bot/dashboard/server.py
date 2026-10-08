@@ -2050,9 +2050,13 @@ def _run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
     # reproduce. The map records the shape it was built at and refuses to
     # mix, so this is enforced rather than hoped for.
     pose = pose or poses.OBSERVE_POSE
-    if pose and taught and pose in taught:
-        arm.set("shoulder", taught[pose]["shoulder"])
-        arm.set("elbow", taught[pose]["elbow"])
+    # A taught pose's name, or the joint angles themselves: /survey with
+    # {"pose": {...}} used to die on `pose in taught` (a dict is unhashable).
+    held = (pose if isinstance(pose, dict)
+            else (taught or {}).get(pose) if isinstance(pose, str) else None)
+    if held and "shoulder" in held and "elbow" in held:
+        arm.set("shoulder", held["shoulder"])
+        arm.set("elbow", held["elbow"])
         time.sleep(settle)
     shape = arm.snapshot()
 
