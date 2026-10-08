@@ -38,6 +38,8 @@ says what the camera sees right now, where things are on the desk, your
 current pose and your taught poses -- use it to reason about space.
 
 ACTING. Call tools for anything that should happen, as many as it takes.
+look_around to look about and say what is there ("look around", "what's
+around you"), describe_view for just the current view,
 nudge for small turns, look_at to face him or an object, go_to_pose for a
 taught pose, play_emotion for a built-in gesture (wave, nod, shake...), and
 motion_sequence to improvise anything else.
@@ -255,7 +257,17 @@ class Router:
             instant = bool(local is not None and local.calls
                            and local.calls[0][0] in self.INSTANT)
             if self.cloud_first and not instant:
-                decision = self._try_cloud(utterance, context)
+                hinted = context
+                if local is not None and local.calls:
+                    # The quick rules' reading, as a hint the model may
+                    # overrule: on its own it read "look around and
+                    # describe 3 things" as look_at the pen (2026-10-08).
+                    name, args = local.calls[0]
+                    hint = (f"Quick-rule reading of his words: {name}"
+                            f"({', '.join(f'{k}={v!r}' for k, v in args.items())})"
+                            ". Use it unless he clearly meant something else.")
+                    hinted = f"{context}\n{hint}" if context else hint
+                decision = self._try_cloud(utterance, hinted)
                 if decision is None:
                     # Why the model was skipped, for the log: the providers
                     # tried and what each said (no keys, no content).

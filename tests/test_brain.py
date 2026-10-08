@@ -462,3 +462,17 @@ class MovesWithoutTheModel(unittest.TestCase):
         from avi_bot.motion import gestures
         self.assertIn("wave", gestures.GESTURES)
         self.assertIn("wave", tools.ARM_GESTURES)
+
+
+class TheQuickRulesHint(unittest.TestCase):
+    def test_the_model_is_told_what_the_rules_read(self):
+        seen = []
+
+        def send(name, url, model, messages, tool_list):
+            seen.append("\n".join(m["content"] for m in messages))
+            return FakeResult(content='{"beep": "neutral"}')
+        r = router_mod.Router(chain=chain(send), cloud_first=True)
+        r.handle("look around and describe 3 things u see", context="Now: x.")
+        self.assertIn("Quick-rule reading of his words: look_around(count=3)",
+                      seen[0])
+        self.assertIn("Now: x.", seen[0])
