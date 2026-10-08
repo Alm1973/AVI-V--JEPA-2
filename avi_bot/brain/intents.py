@@ -246,6 +246,12 @@ def _nudge(m):
                             "degrees": 8 if small else 15})
 
 
+@rule(r"^what\s+(?:do\s+you|can\s+you|are\s+you\s+looking\s+at|"
+      r"is\s+in\s+front\s+of\s+you)(?:\s+see)?(?:\s+(?:right\s+)?now)?\??$")
+def _describe_view(m):
+    return Intent("describe_view", {}, reason="answer")
+
+
 @rule(r"^(?:can\s+(?:you|u)\s+)?(?:wave|say\s+hi)(?:\s+(?:hi|hello))?"
       r"(?:\s+to\s+me)?[.!?]?$")
 def _wave(m):

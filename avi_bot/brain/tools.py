@@ -109,6 +109,7 @@ TOOLS = [
                          "hold_s": {"type": "number", "minimum": 0.1,
                                     "maximum": 3.0}}}}},
           ["steps"]),
+    _tool("describe_view", "Say what the camera sees right now."),
     _tool("go_to_pose", "Move to a taught pose by name (listed in the "
                         "context).",
           {"name": {"type": "string", "maxLength": 40}}, ["name"]),

@@ -144,6 +144,7 @@ class Avi:
             "move_joints": self._move_joints,
             "motion_sequence": self._sequence,
             "go_to_pose": self._go_to_pose,
+            "describe_view": self._describe_view,
         }
         handlers.update(memory_tools.make(self.store,
                                           observed=self.observed))
@@ -353,6 +354,27 @@ class Avi:
         else:
             run()
         return None, {"steps": len(steps), "seconds": round(sum(holds), 1)}
+
+    def _describe_view(self):
+        """What the camera sees now, from the same labels the model gets --
+        so the answer exists even when the model is out of reach."""
+        seen = None
+        if self.situation is not None:
+            try:
+                seen = (self.situation() or {}).get("camera")
+            except Exception:
+                seen = None
+        if seen is None:
+            return "I can't see right now.", None
+        if not seen:
+            return "Nothing I recognise.", {"camera": []}
+        names = []
+        for item in seen:
+            label, _, where = item.partition(" (")
+            where = where.split(",")[0]
+            names.append(f"{'you' if label == 'person' else 'a ' + label}"
+                         f" ({where})")
+        return "I see " + ", ".join(names[:4]) + ".", {"camera": seen}
 
     def _go_to_pose(self, name):
         if self.arm is None:

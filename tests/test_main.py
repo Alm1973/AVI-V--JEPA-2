@@ -263,6 +263,12 @@ class FreeMotion(unittest.TestCase):
         self.assertIsNone(r.text)
         self.assertTrue(r.data["verdict"]["agrees"])
 
+    def test_what_it_sees_in_words(self):
+        self.avi.situation = lambda: {"camera": ["person (centre, 0.92)",
+                                                 "mug (bottom left, 0.71)"]}
+        r = self.run_call("describe_view")
+        self.assertEqual(r.text, "I see you (centre), a mug (bottom left).")
+
     def test_a_taught_pose_by_name(self):
         self.run_call("go_to_pose", name="TALL")
         self.assertEqual(self.arm.recalled, ["TALL"])
