@@ -1954,13 +1954,15 @@ def make_handler(st):
                     return self._json({"error": "direction must be one of "
                                        + ", ".join(verify_mod.DIRECTIONS)},
                                       400)
-                deg = max(2.0, min(30.0, float(body.get("degrees", 12))))
+                # 0 is the control: nothing moves, and the judge must say so.
+                deg = max(0.0, min(30.0, float(body.get("degrees", 12))))
                 if arm.survey_lock.locked():
                     return self._json({"error": "the arm is surveying"}, 409)
                 arm.hold(60.0)
                 pose0 = arm.snapshot()
                 v = judged_move(arm, latest, direction,
-                                lambda: nudge_arm(arm, direction, deg))
+                                (lambda: nudge_arm(arm, direction, deg))
+                                if deg > 0 else (lambda: None))
                 v["pose_before"] = {j: round(pose0[j], 1)
                                     for j in poses.JOINTS}
                 v["pose_after"] = {j: round(arm.snapshot()[j], 1)

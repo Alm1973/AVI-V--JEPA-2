@@ -51,7 +51,29 @@ class WhichWayTheCameraWent(unittest.TestCase):
         self.assertEqual(vf.camera_direction(4, -3), "none")
 
 
+def positional(g, strength=1.0, seed=7):
+    """V-JEPA's tokens carry their grid position: a fixed per-position
+    vector, the same in every frame, about as strong as the content (the
+    robot's moved frames still scored ~0.7 raw at zero shift)."""
+    return np.random.default_rng(seed).normal(size=g.shape) * strength
+
+
 class JepaTokens(unittest.TestCase):
+    def test_the_position_signal_does_not_hide_a_tilt(self):
+        """The robot's 'up': raw matching peaked at no-shift because both
+        frames share the position signal. The difference cancels it."""
+        c = smooth(grid()) * 5.0          # unit-ish content, like real tokens
+        p = positional(c)
+        got = vf.token_shift(c + p, slid(c, 0, 6) + p)
+        self.assertAlmostEqual(got["dy"], 6, delta=0.5)
+        self.assertAlmostEqual(got["dx"], 0, delta=0.5)
+        self.assertTrue(got["confident"])
+
+    def test_an_unmoved_scene_is_still(self):
+        g = smooth(grid()) + positional(grid())
+        got = vf.token_shift(g, g + 0.02 * grid(seed=3))
+        self.assertTrue(got["still"])
+
     def test_finds_the_shift(self):
         g = grid()
         for dx, dy in ((-3, 0), (2, 0), (0, 2), (-1, -2)):
@@ -83,6 +105,7 @@ class JepaTokens(unittest.TestCase):
         g = grid()
         got = vf.token_shift(g, g + 0.01 * grid(seed=5))
         self.assertEqual((round(got["dx"]), round(got["dy"])), (0, 0))
+        self.assertTrue(got["still"])
 
 
 class Verdict(unittest.TestCase):

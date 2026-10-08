@@ -70,37 +70,75 @@ def _refine(m, c, p):
 # A +-6 search could not see it: "up" came back as "none" on the robot
 # (2026-10-08). +-9 still leaves 7/16 of the grid overlapping.
 MAX_SHIFT = 9
-MIN_GAIN = 0.02
+# Two grids this alike at zero shift are the same view: nothing moved.
+# PROVISIONAL until measured on the robot with a no-move control.
+STILL = 0.93
+# The best shift must stand this far above the median shift's score.
+MIN_PROMINENCE = 0.15
 
 
 def token_shift(a, b, max_shift=MAX_SHIFT):
     """How the scene moved from token grid `a` to `b`, both (H, W, D).
 
     Returns {"dx", "dy"} in tokens (content in `a` at x appears in `b` at
-    x + dx), "score" at that shift, "score0" with no shift, and "edge":
-    True when the best shift sits on the search boundary -- the real shift
-    may be beyond it, so the caller should not trust it.
+    x + dx), "still" (the two grids are the same scene unmoved), "edge" (the
+    best shift is on the search boundary: the real one may be beyond it),
+    "confident", the peak's "prominence", and the score profiles through
+    zero along each axis.
+
+    MATCHED ON THE DIFFERENCE, NOT THE FEATURES. V-JEPA's tokens carry a
+    strong signal of their own grid position: a token resembles whatever sat
+    at that spot in the other frame, whatever it shows. On the robot that
+    made "no shift" a second peak as high as the true one (a 12-degree tilt
+    up: 0.729 at zero, 0.735 at +6.6 rows), and the judge said the camera
+    had not moved. d = a - b cancels anything identical at a position in
+    both frames -- the position signal exactly. For a pure shift s, d at p
+    is a(p) - a(p - s), and -d at p + s is a(p) - a(p + s): they share
+    a(p), so matching d against -d peaks at s -- and at -s, which the raw
+    features then rule out.
     """
-    a, b = _unit(a), _unit(b)
+    ua, ub = _unit(a), _unit(b)
+    raw0 = float((ua * ub).sum(-1).mean())
+    if raw0 >= STILL:
+        return {"dx": 0.0, "dy": 0.0, "still": True, "edge": False,
+                "confident": True, "prominence": None, "raw0": round(raw0, 4),
+                "profile_x": None, "profile_y": None}
+    d = ua - ub
+    da, db = _unit(d), _unit(-d)
     scores = {}
     for dy in range(-max_shift, max_shift + 1):
         for dx in range(-max_shift, max_shift + 1):
-            s = _score(a, b, dx, dy)
-            if s is not None:
-                scores[(dx, dy)] = s
+            if (dx, dy) == (0, 0):
+                continue           # d against -d at zero is -1 by definition
+            sc = _score(da, db, dx, dy)
+            if sc is not None:
+                scores[(dx, dy)] = sc
     (bx, by), best = max(scores.items(), key=lambda kv: kv[1])
-    s0 = scores.get((0, 0), best)
+    # The difference finds the shift's size and axis but peaks at +s AND -s
+    # alike (-d at p - s also shares a term with d at p). The raw features
+    # break the tie: at the true shift the content matches as well, at the
+    # mirror shift it does not, and the position signal is the same at both.
+    plus, minus = _score(ua, ub, bx, by), _score(ua, ub, -bx, -by)
+    if plus is not None and minus is not None and minus > plus:
+        bx, by = -bx, -by
+        best = scores.get((bx, by), best)
+    rest = sorted(scores.values())
+    prominence = best - rest[len(rest) // 2]
     fx = bx + _refine(scores.get((bx - 1, by)), best, scores.get((bx + 1, by)))
     fy = by + _refine(scores.get((bx, by - 1)), best, scores.get((bx, by + 1)))
     edge = abs(bx) >= max_shift or abs(by) >= max_shift
-    moved = (bx, by) != (0, 0)
-    return {"dx": round(fx, 2), "dy": round(fy, 2),
-            "score": round(best, 4), "score0": round(s0, 4), "edge": edge,
-            # Trust a shift only if it is inside the search and clearly
-            # beats "nothing moved". On the robot a real 12-degree turn
-            # gained ~0.10; the edge-clipped 'down' gained 0.006.
-            "confident": not edge and (not moved
-                                       or best - s0 >= MIN_GAIN)}
+
+    def prof(axis):
+        out = []
+        for k in range(-max_shift, max_shift + 1):
+            v = scores.get((k, 0) if axis == "x" else (0, k))
+            out.append(None if v is None else round(v, 3))
+        return out
+    return {"dx": round(fx, 2), "dy": round(fy, 2), "still": False,
+            "edge": edge, "prominence": round(prominence, 4),
+            "confident": not edge and prominence >= MIN_PROMINENCE,
+            "raw0": round(raw0, 4), "score": round(best, 4),
+            "profile_x": prof("x"), "profile_y": prof("y")}
 
 
 def judge(commanded, orb_px=None, jepa_tokens=None, token_px=(80.0, 45.0),
