@@ -60,6 +60,33 @@ class Units(unittest.TestCase):
         self.assertAlmostEqual(sp.metres(2.0, 0.25), 0.5)
 
 
+
+class ToldToTheModel(unittest.TestCase):
+    """"how far is my pen" got a made-up 0.35 m: the model was sent names
+    only. Now it gets distances, nearest first, with the scan's age."""
+
+    def test_distances_nearest_first_with_the_age(self):
+        s = sp.desk_sentence(DESK, 0.344, 5 * 3600)
+        self.assertIn("5 h ago", s)
+        self.assertLess(s.index("pen"), s.index("laptop"))
+        pen = sp.metres(sp.range_from_me(DESK[0]), 0.344)
+        self.assertIn(f"pen {pen:.1f} m", s)
+
+    def test_nothing_without_a_ruler_or_a_place(self):
+        self.assertIsNone(sp.desk_sentence(DESK, 0.0, 60))
+        self.assertIsNone(sp.desk_sentence([{"label": "pen"}], 0.344, 60))
+
+    def test_one_line_per_label(self):
+        two = DESK + [{"label": "pen", "x": 6.0, "y": 2.0}]
+        self.assertEqual(sp.desk_sentence(two, 0.344, 60).count("pen"), 1)
+
+    def test_ago(self):
+        self.assertEqual(sp.ago(30), "just now")
+        self.assertEqual(sp.ago(600), "10 min ago")
+        self.assertEqual(sp.ago(30 * 3600), "30 h ago")
+        self.assertEqual(sp.ago(3 * 86400), "3 days ago")
+
+
 if __name__ == "__main__":
     unittest.main()
 

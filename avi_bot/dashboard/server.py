@@ -624,6 +624,7 @@ class Arm:
         if latest is not None:
             try:
                 out["camera"] = camera_now(self, latest)
+                out["light"] = light_words(self.last_light)
             except Exception as exc:
                 self.note(f"camera for the brain: {exc!r}")
         try:
@@ -654,16 +655,27 @@ class Arm:
         except Exception:
             pass
         try:
-            _, objects = self.desk.last()
+            ts, objects = self.desk.last()
+            objects = objects or []
+            out["desk"] = spatial_mod.desk_sentence(
+                objects, self.lens_height_m(), time.time() - (ts or 0.0))
             labels = []
-            for o in objects or []:
+            for o in objects:
                 if (desk_mod.solid(o) and o["label"] != "person"
-                        and o["label"] not in labels):
+                        and o["label"] not in labels
+                        # already in the desk sentence, with its distance
+                        and not (out["desk"] and "x" in o)):
                     labels.append(o["label"])
             out["objects"] = labels
         except Exception:
             pass
         return out
+
+    def lens_height_m(self):
+        """The ruler's lens height above the desk at TALL (joints.toml
+        [horizon]); 0 when unmeasured."""
+        return float(self.config.raw.get("horizon", {}).get(
+            "lens_height_m", 0.0) or 0.0)
 
     def make_brain_host(self, latest):
         """The voice brain, built when its loop starts (brain_host.py)."""
@@ -1809,8 +1821,7 @@ def make_handler(st):
             elif self.path == "/desk_layout":
                 ts, objects = arm.desk.last()
                 placed = [o for o in (objects or []) if "x" in o]
-                lens_m = float(arm.config.raw.get("horizon", {}).get(
-                    "lens_height_m", 0.0) or 0.0)
+                lens_m = arm.lens_height_m()
                 self._json({"scanned_at": ts,
                             "units": ("lens heights above the desk, and "
                                       f"metres (lens at {lens_m} m)"
@@ -2537,7 +2548,22 @@ def camera_now(arm, latest, frames=3, floor=0.25, sure=0.50, agree=2):
         tier = "top" if y < 0.33 else "bottom" if y > 0.67 else "middle"
         where = side if tier == "middle" else f"{tier} {side}"
         out.append(f"{d['label']} ({where}, {d['conf']:.2f})")
+    # The light, so "I only see a laptop" can say it is dark: the latest
+    # level was only measured while tracking him.
+    arm.last_light = round(float(looks[-1].mean()), 1)
     return out
+
+
+# Mean frame level (0-255) below which the room is "dim": the night of
+# 2026-10-08 was 39, and a mug scored 0.31 there against 0.8 by day.
+DIM_LIGHT = 60.0
+
+
+def light_words(level):
+    """'dim (39/255)' when detections are unreliable, else None."""
+    if level is None or float(level) >= DIM_LIGHT:
+        return None
+    return f"dim ({float(level):.0f}/255)"
 
 
 def _jepa_grid(arm, frame):
@@ -2743,10 +2769,14 @@ def find_object(arm, name, look=True, latest=None):
     aim = f.aim(name)
     where = None
     try:
-        _, objects = arm.desk.last()
+        ts, objects = arm.desk.last()
         placed = [o for o in (objects or []) if "x" in o]
-        where = spatial_mod.describe(roommap_mod.canonical_label(name),
-                                     placed)
+        label = roommap_mod.canonical_label(name)
+        where = spatial_mod.describe(label, placed)
+        far = distance_words(label, placed, arm.lens_height_m(),
+                             time.time() - (ts or 0.0))
+        if far:
+            where = f"{where or ''} {far}".strip()
     except Exception as exc:                     # a layout is a bonus
         log(f"find: no layout ({exc!r})")
     if where:
@@ -2781,6 +2811,17 @@ def find_object(arm, name, look=True, latest=None):
     log(f"find {name!r}: {text} moved={moved}")
     return {"say": text, "aim": aim, "moved": moved,
             "known": [p.label for p, _ in arm.roommap.known()]}
+
+
+def distance_words(label, placed, lens_m, age_s):
+    """"About 0.8 m from me (scan 5 h ago)." for the most-seen `label` on
+    the desk, or None without a placed one or a measured lens height."""
+    same = [o for o in placed if o["label"] == label]
+    if not same or not lens_m:
+        return None
+    me = max(same, key=lambda o: o.get("hits", 0))
+    m = spatial_mod.metres(spatial_mod.range_from_me(me), lens_m)
+    return f"About {m:.1f} m from me (desk scan {spatial_mod.ago(age_s)})."
 
 
 def _pixel_distances(thumbs):

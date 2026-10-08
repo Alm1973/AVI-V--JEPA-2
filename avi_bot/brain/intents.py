@@ -288,6 +288,8 @@ def _which_timers(m):
 @rule(r"^(?:where(?:'s| is| are)\s+)(?:my\s+|the\s+)?(?P<what>.+?)\??$")
 @rule(r"^(?:have\s+you\s+seen\s+)(?:my\s+|the\s+)?(?P<what>.+?)\??$")
 @rule(r"^find\s+(?:my\s+|the\s+)?(?P<what>.+)$")
+@rule(r"^how\s+far\s+(?:away\s+)?(?:is|are)\s+(?:my\s+|the\s+)?"
+      r"(?P<what>.+?)(?:\s+away)?(?:\s+from\s+(?:you|me))?\??$")
 def _find(m):
     what = m.group("what").strip().rstrip("?")
     if not what or len(what) > 40:

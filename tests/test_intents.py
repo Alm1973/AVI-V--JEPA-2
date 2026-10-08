@@ -68,6 +68,17 @@ class Scripted(unittest.TestCase):
         self.assertGreaterEqual(got, 18,
                                 f"{got}/20. Misses:\n  " + "\n  ".join(wrong))
 
+    def test_how_far_is_a_find(self):
+        """The model made up "0.35 m" for the pen; the rule's hint sends
+        it to find_object, which reads the desk scan."""
+        for text, what in (("how far away is my pen", "pen"),
+                           ("how far is the book from you?", "book"),
+                           ("how far is my mug away", "mug")):
+            with self.subTest(text):
+                i = intents.match(text)
+                self.assertEqual((i.tool, i.args), ("find_object",
+                                                    {"name": what}))
+
     def test_all_twenty_would_be_better(self):
         """Not the acceptance bar, but record where it actually stands."""
         got = sum(1 for t, tool, a in SCRIPTED

@@ -391,15 +391,17 @@ class Avi:
         start = dict(self.arm.snapshot())
         lo, hi = self.arm.config.soft_limits("base_yaw")
         self._hold(90.0)
-        seen = {}
+        seen, dim = {}, None
         for off in self.LOOK_AROUND_DEG:
             target = max(lo, min(hi, start["base_yaw"] + off))
             self._safe(lambda: self._yaw_to(target))
             self._sleep(0.8)
             try:
-                cam = (self.situation() or {}).get("camera") or []
+                sit = self.situation() or {}
             except Exception:
-                cam = []
+                sit = {}
+            cam = sit.get("camera") or []
+            dim = dim or sit.get("light")
             side = "left" if off < 0 else "right" if off > 0 else "ahead"
             for item in cam:
                 label = item.split(" (")[0]
@@ -408,12 +410,18 @@ class Avi:
         things = [(lb, w) for lb, w in seen.items() if lb != "person"]
         if "person" in seen:
             things.append(("person", seen["person"]))
+        # Fewer than asked for is said, with the reason when it is the dark
+        # (robot, 2026-10-08, brightness 39: "describe 3 things" got one).
+        dark = " It's too dark to make out more." if dim else ""
         if not things:
-            return "I looked around and didn't recognise anything.", {
-                "seen": {}}
+            return ("I looked around and didn't recognise anything."
+                    + dark), {"seen": {}, "light": dim}
         words = [("you" if lb == "person" else f"a {lb}") + f" ({w})"
                  for lb, w in things[:count]]
-        return "I see " + ", ".join(words) + ".", {"seen": seen}
+        lead = "I see " if len(things) >= count else "I can only make out "
+        return (lead + ", ".join(words) + "."
+                + (dark if len(things) < count else "")), {"seen": seen,
+                                                          "light": dim}
 
     def _go_to_pose(self, name):
         if self.arm is None:
@@ -468,6 +476,7 @@ class Avi:
             now=datetime.fromtimestamp(self.clock()),
             activity=sit.get("activity"), objects=sit.get("objects"),
             camera=sit.get("camera"), pose=sit.get("pose"),
+            desk=sit.get("desk"), light=sit.get("light"),
             noticed=noticed,
             mood=(self.mood.emotion() if self.mood else None),
             turns=self.turns[-6:])

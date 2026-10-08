@@ -43,7 +43,7 @@ def _clip(text, limit):
 
 def build(now=None, activity=None, objects=None, mood=None, events=None,
           facts=None, turns=None, personality=None, max_chars=MAX_CHARS,
-          camera=None, pose=None, noticed=None):
+          camera=None, pose=None, noticed=None, desk=None, light=None):
     """Assemble the context block. Returns a string.
 
     Sections are added in order of how much they change the answer, so that
@@ -68,9 +68,15 @@ def build(now=None, activity=None, objects=None, mood=None, events=None,
         parts.append("Camera now: " + "; ".join(seen) + ".")
     elif camera is not None:
         parts.append("Camera now: nothing recognised.")
+    if light:
+        parts.append(f"The room is {_clip(light, 30)}: you may miss things; "
+                     "say so rather than guess.")
 
     if pose:
         parts.append(_clip(pose, 400))
+
+    if desk:
+        parts.append(_clip(desk, 300))
 
     if objects:
         names = [_clip(o, 30) for o in list(objects)[:8]]

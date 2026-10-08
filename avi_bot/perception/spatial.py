@@ -112,3 +112,37 @@ def layout(objects, lens_height_m=0.0):
                                                lens_height_m), 2)
         out.append(row)
     return sorted(out, key=lambda r: r["range"])
+
+
+def ago(seconds):
+    """'12 min ago', '5 h ago', '2 days ago' -- how old a scan is, in the
+    words he'd use."""
+    s = max(0.0, float(seconds))
+    if s < 90:
+        return "just now"
+    if s < 90 * 60:
+        return f"{s / 60:.0f} min ago"
+    if s < 36 * 3600:
+        return f"{s / 3600:.0f} h ago"
+    return f"{s / 86400:.0f} days ago"
+
+
+def desk_sentence(objects, lens_height_m, age_s, limit=6):
+    """The desk as the model is told it: each placed object's distance from
+    AVI, nearest first, and how old that is. The prompt promised the model
+    "where things are on the desk" and sent only names, so asked "how far
+    is my pen" it made up 0.35 m while the scan said 0.76 (2026-10-08).
+    None when nothing is placed or the lens height is unmeasured."""
+    if not lens_height_m:
+        return None
+    rows = layout([o for o in objects if "x" in o], lens_height_m)
+    seen, parts = set(), []
+    for r in rows:
+        if r["label"] in seen or r["label"] == "person":
+            continue
+        seen.add(r["label"])
+        parts.append(f"{r['label']} {r['range_m']:.1f} m")
+    if not parts:
+        return None
+    return (f"Desk at the last scan ({ago(age_s)}; things may have moved "
+            "since), distance from you: " + ", ".join(parts[:limit]) + ".")

@@ -281,6 +281,21 @@ class FreeMotion(unittest.TestCase):
         self.assertAlmostEqual(self.arm.pose["base_yaw"], 110.0,
                                msg="came back to where it started")
 
+    def test_fewer_than_asked_in_the_dark_says_why(self):
+        self.arm.pose["base_yaw"] = 110.0
+        self.avi.situation = lambda: {
+            "camera": (["laptop (right, 0.5)"]
+                       if round(self.arm.pose["base_yaw"]) == 140 else []),
+            "light": "dim (39/255)"}
+        r = self.run_call("look_around", count=3)
+        self.assertEqual(r.text, "I can only make out a laptop (right). "
+                                 "It's too dark to make out more.")
+
+    def test_the_dim_room_reaches_the_prompt(self):
+        from avi_bot.brain import context
+        self.assertIn("The room is dim (39/255)",
+                      context.build(camera=[], light="dim (39/255)"))
+
     def test_an_answer_tool_is_never_muted(self):
         """'look around and describe 3 things u see' got silence: the reply
         was treated as an action, and actions do not speak."""

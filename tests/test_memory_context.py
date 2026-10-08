@@ -247,6 +247,12 @@ class Budgeted(unittest.TestCase):
         self.assertIn("Pose now: base_yaw 94", block)
         self.assertIn("You noticed: Your pen was left of the laptop.", block)
 
+    def test_the_desk_distances_reach_the_prompt(self):
+        block = context.build(desk="Desk at the last scan (5 h ago; things "
+                                   "may have moved since), distance from "
+                                   "you: pen 0.8 m.")
+        self.assertIn("pen 0.8 m", block)
+
     def test_an_empty_camera_says_so(self):
         self.assertIn("nothing recognised", context.build(camera=[]))
 
