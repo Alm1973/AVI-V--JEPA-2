@@ -2594,16 +2594,47 @@ def centre_on(arm, px, py, w, h, settle=0.6):
 CONFIRM_SWEEP_DEG = (-15.0, 15.0)
 
 
+def _surveying(arm):
+    scanning = getattr(arm, "survey_lock", None)
+    return scanning is not None and scanning.locked()
+
+
+def _detectable(name):
+    """The canonical label for `name` if the detector has a word for it,
+    else None."""
+    want = roommap_mod.canonical_label(find_mod.canonical(name))
+    vocab = {roommap_mod.canonical_label(v)
+             for v in getattr(settings, "DESK_OBJECTS", [])} | {"person"}
+    return want if want in vocab else None
+
+
+def live_look(arm, latest, name):
+    """If `name` is in the picture now, centre it and return True."""
+    want = _detectable(name)
+    if want is None:
+        return False
+    got = steady_detections(arm, latest)
+    if got is None:
+        return False
+    kept, w, h, _ = got
+    hit = max((d for d in kept if d["label"] == want),
+              key=lambda d: d["conf"], default=None)
+    if hit is None:
+        return False
+    if hasattr(arm, "hold"):
+        arm.hold(LOOK_HOLD_S + 5.0)
+    centre_on(arm, hit["cx"], hit["cy"], w, h)
+    return True
+
+
 def confirm_look(arm, latest, name):
     """After turning to where the map says `name` is: is it actually in
     the picture? Centres it if so. "look at the laptop" turned to a day-old
     aim and the camera saw a mug, while the reply said nothing (robot,
     2026-10-08). Tries a little either side before giving up, then comes
     back. True / False, or None when the detector has no word for it."""
-    want = roommap_mod.canonical_label(find_mod.canonical(name))
-    vocab = {roommap_mod.canonical_label(v)
-             for v in getattr(settings, "DESK_OBJECTS", [])} | {"person"}
-    if want not in vocab:
+    want = _detectable(name)
+    if want is None:
         return None
     t_end = time.time() + 3.0
     while arm.engine.busy() and time.time() < t_end:
@@ -2828,6 +2859,17 @@ def find_object(arm, name, look=True, latest=None):
     this process has no sightings database, so a thing the map does not know
     is reported as unknown rather than guessed.
     """
+    if look and latest is not None and not _surveying(arm):
+        # In the picture right now beats any memory of it: "look at the
+        # mug" with the mug in view started a two-minute desk scan, because
+        # the map had no mug (robot, 2026-10-08).
+        here = live_look(arm, latest, name)
+        if here:
+            _back_to_seat_later(arm)
+            log(f"find {name!r}: in view now, centred")
+            return {"say": "It's right in front of me.", "aim": None,
+                    "moved": True, "in_view": True,
+                    "known": [p.label for p, _ in arm.roommap.known()]}
     yaw_dpf, wrist_dpf = arm.frame_constants(arm.config)
     f = find_mod.Finder(None, yaw_dpf, wrist_deg_per_frame=wrist_dpf,
                         roommap=arm.roommap)
@@ -2847,8 +2889,7 @@ def find_object(arm, name, look=True, latest=None):
         text = (spot if text.startswith("Haven't seen it today")
                 else f"{text} {spot}")
     moved = False
-    scanning = getattr(arm, "survey_lock", None)
-    if look and scanning is not None and scanning.locked():
+    if look and _surveying(arm):
         # A survey is sweeping the arm; moving it now would file the survey's
         # next stops under a pose it never held. Answer from the map, stay put.
         look = False

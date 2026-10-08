@@ -265,7 +265,8 @@ class Avi:
             return (f"I can't see the {target} from here.",
                     dict(info, missed=True))
         if got.get("moved") is False and got.get("say"):
-            return got["say"], info       # no aim: what it knows instead
+            # No aim: what it knows instead, and that it will search.
+            return got["say"], dict(info, tell=True)
         return None, info
 
     # --- free motion: what the model improvises with ---------------------
@@ -512,9 +513,14 @@ class Avi:
                               or ((r.data.get("verdict") or {}).get("judged")
                                   and not r.data["verdict"].get("agrees")))
                          for r in results if r.ok)
+            # An action whose words he needs ("Haven't seen it today. I'll
+            # look.") is an answer, not chatter.
+            tell = any(isinstance(r.data, dict) and r.data.get("tell")
+                       for r in results if r.ok)
             decision.reply = self.policy.apply(
                 decision.reply.model_copy(update={"say": said}),
-                speech.ERROR if missed else decision.reason)
+                speech.ERROR if missed else
+                speech.ANSWER if tell else decision.reason)
 
         # The mood's task events (BUILD_SPEC 5.2) had no caller: doing what
         # he asked lifts valence, failing lowers it. Praise and scold are

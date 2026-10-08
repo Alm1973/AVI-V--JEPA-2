@@ -320,6 +320,16 @@ class FreeMotion(unittest.TestCase):
         self.assertEqual(decision.reply.say,
                          "I can't see the laptop from here.")
 
+    def test_what_it_knows_instead_is_heard(self):
+        """'look at the mug' -> "Haven't seen it today. I'll look." was
+        made and then muted as an action's chatter."""
+        self.arm.look_at = lambda t: {"moved": False,
+                                      "say": "Haven't seen it today. "
+                                             "I'll look."}
+        decision, _ = self.avi.handle("look at the mug")
+        self.assertEqual(decision.reply.say,
+                         "Haven't seen it today. I'll look.")
+
     def test_a_look_that_lands_is_silent(self):
         self.arm.look_at = lambda t: {"moved": True, "in_view": True}
         self.assertIsNone(self.run_call("look_at", target="laptop").text)
