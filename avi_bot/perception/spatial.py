@@ -77,22 +77,54 @@ def describe(target, objects, landmarks=("laptop", "mug", "book")):
         me = max(same, key=lambda o: o.get("hits", 0)) if same else None
     if me is None:
         return None
-    others = [o for o in objects if o is not me]
-    if not others:
-        return None
-    anchor = None
-    for want in landmarks:
-        anchor = next((o for o in others if o["label"] == want), None)
-        if anchor is not None:
-            break
+    anchor = _anchor(me, objects, landmarks)
     if anchor is None:
-        anchor = min(others, key=lambda o: math.hypot(o["x"] - me["x"],
-                                                      o["y"] - me["y"]))
+        return None
     rel = relation(me, anchor)
     nearer = range_from_me(me) < range_from_me(anchor)
     tail = "" if rel["words"].startswith("next to") else (
         ", nearer to me" if nearer else ", farther from me")
     return f"{rel['words'].capitalize()}{tail}."
+
+
+def _anchor(me, objects, landmarks=("laptop", "mug", "book")):
+    """What to place `me` against: the most familiar landmark present (the
+    laptop first: it is what he looks at most of the day), else the
+    nearest other object. None when it is alone."""
+    others = [o for o in objects if o is not me]
+    if not others:
+        return None
+    for want in landmarks:
+        anchor = next((o for o in others if o["label"] == want), None)
+        if anchor is not None:
+            return anchor
+    return min(others, key=lambda o: math.hypot(o["x"] - me["x"],
+                                                o["y"] - me["y"]))
+
+
+def where_words(label, objects, lens_height_m=0.0, age_s=None):
+    """The answer to "where's my pen" / "how far is my pen", as ONE short
+    sentence, most useful part first: "Left of the laptop, 0.8 m from me,
+    as of 31 h ago." Replies are capped at 20 words and cut at a sentence;
+    built as finder text + place + distance, the distance was the part cut
+    (robot, 2026-10-08). None when `label` has no desk position."""
+    same = [o for o in objects if o["label"] == label and "x" in o]
+    if not same:
+        return None
+    me = max(same, key=lambda o: o.get("hits", 0))
+    parts = []
+    anchor = _anchor(me, [o for o in objects if "x" in o])
+    if anchor is not None:
+        parts.append(relation(me, anchor)["words"])
+    if lens_height_m:
+        parts.append(f"{metres(range_from_me(me), lens_height_m):.1f} m "
+                     "from me")
+    if not parts:
+        return None
+    s = ", ".join(parts)
+    if age_s is not None:
+        s += f", as of {ago(age_s)}"
+    return s[0].upper() + s[1:] + "."
 
 
 def layout(objects, lens_height_m=0.0):

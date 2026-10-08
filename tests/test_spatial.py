@@ -80,6 +80,20 @@ class ToldToTheModel(unittest.TestCase):
         two = DESK + [{"label": "pen", "x": 6.0, "y": 2.0}]
         self.assertEqual(sp.desk_sentence(two, 0.344, 60).count("pen"), 1)
 
+    def test_where_is_one_sentence_place_then_metres(self):
+        s = sp.where_words("pen", DESK, 0.344, 31 * 3600)
+        self.assertTrue(s.startswith("In front of and left of the laptop, "))
+        self.assertIn(" m from me, as of 31 h ago.", s)
+        self.assertEqual(s.count("."), 2, "one sentence (plus the decimal)")
+        self.assertLessEqual(len(s.split()), 20, "fits the reply cap whole")
+
+    def test_where_without_a_ruler_is_still_a_place(self):
+        self.assertEqual(sp.where_words("mug", DESK, 0.0),
+                         "Right of the laptop.")
+
+    def test_where_of_something_unplaced_is_none(self):
+        self.assertIsNone(sp.where_words("phone", DESK, 0.344, 60))
+
     def test_ago(self):
         self.assertEqual(sp.ago(30), "just now")
         self.assertEqual(sp.ago(600), "10 min ago")

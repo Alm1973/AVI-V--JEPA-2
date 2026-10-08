@@ -2767,20 +2767,19 @@ def find_object(arm, name, look=True, latest=None):
                         roommap=arm.roommap)
     text, _, _ = f.find(name)
     aim = f.aim(name)
-    where = None
+    spot = None
     try:
         ts, objects = arm.desk.last()
-        placed = [o for o in (objects or []) if "x" in o]
-        label = roommap_mod.canonical_label(name)
-        where = spatial_mod.describe(label, placed)
-        far = distance_words(label, placed, arm.lens_height_m(),
-                             time.time() - (ts or 0.0))
-        if far:
-            where = f"{where or ''} {far}".strip()
+        spot = spatial_mod.where_words(
+            roommap_mod.canonical_label(name), objects or [],
+            arm.lens_height_m(), time.time() - (ts or 0.0))
     except Exception as exc:                     # a layout is a bonus
         log(f"find: no layout ({exc!r})")
-    if where:
-        text = f"{text} {where}"
+    if spot:
+        # Not seen today: the scan's place (with its age) IS the answer;
+        # "it usually sits near OBSERVE" named a pose, not a place.
+        text = (spot if text.startswith("Haven't seen it today")
+                else f"{text} {spot}")
     moved = False
     scanning = getattr(arm, "survey_lock", None)
     if look and scanning is not None and scanning.locked():
@@ -2811,17 +2810,6 @@ def find_object(arm, name, look=True, latest=None):
     log(f"find {name!r}: {text} moved={moved}")
     return {"say": text, "aim": aim, "moved": moved,
             "known": [p.label for p, _ in arm.roommap.known()]}
-
-
-def distance_words(label, placed, lens_m, age_s):
-    """"About 0.8 m from me (scan 5 h ago)." for the most-seen `label` on
-    the desk, or None without a placed one or a measured lens height."""
-    same = [o for o in placed if o["label"] == label]
-    if not same or not lens_m:
-        return None
-    me = max(same, key=lambda o: o.get("hits", 0))
-    m = spatial_mod.metres(spatial_mod.range_from_me(me), lens_m)
-    return f"About {m:.1f} m from me (desk scan {spatial_mod.ago(age_s)})."
 
 
 def _pixel_distances(thumbs):
