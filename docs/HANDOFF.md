@@ -1116,3 +1116,24 @@ pick ("so much better"); en_GB-alan-medium sounded scary to him even at
 1.15/1.12. Settings `voice`, `voice_speed`, `voice_pitch` in
 dashboard-settings.json, POST /settings, no restart. Amy and Alan are still in
 assistant/ on the MSI.
+
+## 2026-10-08 ~00:15-01:00: model-first brain, moves judged by ORB + V-JEPA
+
+- **Router(cloud_first=True)**: every utterance goes to the model with the
+  scene as text (camera labels + place in picture, pose + limits + taught
+  poses, noticed facts). Local rules are the fallback; "stop" stays local.
+  New tools: nudge, move_joints, motion_sequence, go_to_pose, describe_view;
+  "wave" is a gesture. Ask box is a chat log showing what AVI DID with a
+  check/cross from the camera.
+- **Judge** (`perception/verify.py`, POST /verify_move {direction, degrees};
+  0 = control): ORB content slide + V-JEPA token-grid shift, each turned into
+  which way the camera went. V-JEPA tokens carry GRID POSITION, so raw
+  matching peaks at no-shift; the fix is score(s) = S_ab(s) - (S_aa+S_bb)/2,
+  searched along the moved joint's axis. Measured: all 10 moves (6/12/20 deg,
+  four directions) read correctly; controls "still" (raw0 0.92; moves
+  0.66-0.81). 20-degree TILTS are beyond both judges (picture changes too
+  much); pans to 20 are fine. JEPA overestimates size ~25%.
+- **Free-tier limit**: Groq is 8000 tokens/min; a turn was ~2550, so the 4th
+  command in a minute failed. Tools now compacted and pruned (~1930), 429s
+  with "try again in <=10 s" are waited out once. An OpenRouter key on the
+  MSI (only on the Mac today) would add a second provider -- his call.
