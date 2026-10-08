@@ -2598,8 +2598,25 @@ def judged_move(arm, latest, commanded, do, settle=1.0):
     arm.last_verdict = v
     arm.note(f"judged {commanded}: votes {v['votes']} "
              f"{'OK' if v['agrees'] else 'MISMATCH' if v['judged'] else 'blind'}"
-             f" {v['motion']}")
+             f" {v['motion']}" + ("" if v["judged"] else
+                                  " -- " + blind_why(detail, before, after)))
     return v
+
+
+def blind_why(detail, before=None, after=None):
+    """Why neither judge voted, in a few words for the log. A bare "blind"
+    on the robot (2026-10-08, 'look right a little') could not be told
+    apart from a dead encoder."""
+    if before is None or after is None:
+        return "no frame"
+    why = [str(detail.get("orb", "orb ?"))[:40]]
+    j = detail.get("jepa")
+    if isinstance(j, dict):
+        why.append("jepa on the search edge" if j.get("edge") else
+                   f"jepa peak too flat ({j.get('prominence')})")
+    else:
+        why.append(str(j)[:60])
+    return "; ".join(why)
 
 
 def nudge_arm(arm, direction, degrees, settle=0.6):

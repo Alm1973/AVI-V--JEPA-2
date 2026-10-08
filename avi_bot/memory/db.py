@@ -17,6 +17,8 @@ import sqlite3
 import time
 from datetime import date
 
+from avi_bot.memory import locked
+
 MAX_FACTS = 100
 MAX_FACT_CHARS = 280
 
@@ -82,7 +84,7 @@ class Store:
         # and the scheduler ticks on another; the default per-thread check
         # failed every turn after the first. Turns are serialised by the
         # host (dashboard/brain_host.py), so sharing the connection is safe.
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = locked.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         self.db.commit()
@@ -97,26 +99,30 @@ class Store:
         if len(text) > MAX_FACT_CHARS:
             raise ValueError(f"facts cap at {MAX_FACT_CHARS} characters; "
                              f"this one is {len(text)}")
-        existing = self.db.execute("SELECT id FROM facts WHERE text=?",
-                                   (text,)).fetchone()
-        if existing:
-            return existing["id"], None
-        dropped = None
-        if self.count_facts() >= MAX_FACTS:
-            # Oldest UNUSED, not oldest: something he brings up constantly is
-            # the last thing to forget.
-            row = self.db.execute(
-                "SELECT id, text FROM facts"
-                " ORDER BY cites ASC, uses ASC,"
-                " COALESCE(used_at, created_at) ASC LIMIT 1").fetchone()
-            if row:
-                dropped = row["text"]
-                self.db.execute("DELETE FROM facts WHERE id=?", (row["id"],))
-        cur = self.db.execute(
-            "INSERT INTO facts (text, created_at, source) VALUES (?,?,?)",
-            (text, self.clock(), source))
-        self.db.commit()
-        return cur.lastrowid, dropped
+        # Check, evict, insert as one step: two threads remembering at once
+        # both saw room and the store went past its cap (test_locked_db).
+        with self.db.lock:
+            existing = self.db.execute("SELECT id FROM facts WHERE text=?",
+                                       (text,)).fetchone()
+            if existing:
+                return existing["id"], None
+            dropped = None
+            if self.count_facts() >= MAX_FACTS:
+                # Oldest UNUSED, not oldest: something he brings up
+                # constantly is the last thing to forget.
+                row = self.db.execute(
+                    "SELECT id, text FROM facts"
+                    " ORDER BY cites ASC, uses ASC,"
+                    " COALESCE(used_at, created_at) ASC LIMIT 1").fetchone()
+                if row:
+                    dropped = row["text"]
+                    self.db.execute("DELETE FROM facts WHERE id=?",
+                                    (row["id"],))
+            cur = self.db.execute(
+                "INSERT INTO facts (text, created_at, source) VALUES (?,?,?)",
+                (text, self.clock(), source))
+            self.db.commit()
+            return cur.lastrowid, dropped
 
     def forget(self, text):
         text = " ".join((text or "").split())

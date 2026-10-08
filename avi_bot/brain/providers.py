@@ -27,6 +27,8 @@ import sqlite3
 import time
 from datetime import date
 
+from avi_bot.memory import locked
+
 # (name, base_url, model, requests/day at the free tier, requests/min)
 # Limits are from the Aug-Oct 2026 docs listed in BUILD_SPEC 17 and MOVE.
 # Re-check them when a provider starts refusing; do not raise them to make a
@@ -88,7 +90,7 @@ class Budget:
     def __init__(self, path=":memory:", today=None):
         # Shared across the dashboard's request threads; the host
         # serialises turns (see memory/db.py).
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = locked.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         self.db.commit()

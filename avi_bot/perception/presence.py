@@ -29,6 +29,7 @@ import sqlite3
 import time
 from datetime import datetime
 
+from avi_bot.memory import locked
 from avi_bot.perception import habits
 
 ARRIVE_AFTER = 2          # consecutive sightings before he counts as arrived
@@ -72,7 +73,7 @@ def seat_return_due(now, hold_until, busy=False, surveying=False,
 class Presence:
     def __init__(self, path=":memory:", clock=time.time,
                  arrive_after=ARRIVE_AFTER, leave_after=LEAVE_AFTER):
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = locked.connect(path)
         self.db.executescript(SCHEMA)
         self.clock = clock
         self.arrive_after = int(arrive_after)

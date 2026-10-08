@@ -22,6 +22,8 @@ import math
 import sqlite3
 import time
 
+from avi_bot.memory import locked
+
 SAME_DEG = 12.0          # one object if two sightings are this close in view
 MOVED_DEG = 15.0         # a matched object this far from before has moved
 # On the desk plane (lens heights; world.on_plane), when both scans placed
@@ -201,7 +203,7 @@ class DeskLog:
 
     def __init__(self, path=":memory:", clock=time.time,
                  version=SNAPSHOT_VERSION):
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = locked.connect(path)
         self.db.executescript(self.SCHEMA)
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(scans)")}
         if "version" not in cols:
