@@ -326,6 +326,60 @@ class RoomMap:
         self.places.append(place)
         return place
 
+    # How close the aim a look used must be to a place for that place to be
+    # the one it was looking for (degrees). Aims come from where_is(), so
+    # this is rounding, not judgement.
+    WAS_HERE_DEG = 3.0
+
+    def correct(self, label, cx, cy, yaw, wrist, was, conf=0.0,
+                px_size=None, at=None, shoulder=None, elbow=None):
+        """A deliberate look at `was` = (yaw, wrist), where where_is()
+        pointed, did not show `label`; a stop near it did, at pixel (cx, cy)
+        from (yaw, wrist). Move the place there.
+
+        observe() would average the sighting in -- right for a jittery box,
+        wrong for this: the look PROVED the place is not at the old
+        direction. On the robot the mug was found 15 degrees off its place
+        look after look, and a place with weight 17 moves under a degree
+        per sighting (2026-10-08). The place keeps its weight and history:
+        it is the same object, believed in the wrong direction. A second
+        place of the label already at the new direction is merged in.
+        """
+        at = self.clock() if at is None else float(at)
+        label = canonical_label(label)
+        if (shoulder is not None and self.shoulder is not None
+                and not self.valid_for(shoulder, elbow)):
+            raise Unreachable(
+                f"map was built at shoulder {self.shoulder:.1f} elbow "
+                f"{self.elbow:.1f}; the arm is at {shoulder:.1f}/"
+                f"{elbow:.1f}")
+        mine = [p for p in self.places if p.label == label]
+        old = min(mine, key=lambda p: self._gap((p.yaw, p.wrist), was),
+                  default=None)
+        if old is None or self._gap((old.yaw, old.wrist),
+                                    was) > self.WAS_HERE_DEG:
+            return self.observe(label, cx, cy, yaw, wrist, conf=conf,
+                                px_size=px_size, at=at, shoulder=shoulder,
+                                elbow=elbow)
+        want = self.direction_of(cx, cy, yaw, wrist)
+        old.yaw, old.wrist = float(want[0]), float(want[1])
+        old.last_at = at
+        old.count += 1
+        old.stops.add((round(float(yaw), 1), round(float(wrist), 1)))
+        old.note_visit(at)
+        old.best_conf = max(old.best_conf, float(conf))
+        if px_size:
+            old.px_size = px_size
+        for p in list(self.places):
+            if (p is not old and p.label == label
+                    and self._gap((p.yaw, p.wrist), want)
+                    <= self.same_deg(p.px_size, px_size)):
+                old.weight = min(MAX_WEIGHT, old.weight + p.decayed(at))
+                old.stops |= p.stops
+                old.count += p.count
+                self.places.remove(p)
+        return old
+
     def anchor(self, name, yaw, wrist):
         """Tie the map to a pose he named, so it can be described in his terms."""
         self.anchors[name] = (float(yaw), float(wrist))

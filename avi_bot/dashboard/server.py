@@ -65,6 +65,7 @@ from avi_bot.dashboard import brain_host as brain_host_mod        # noqa: E402
 from avi_bot.dashboard import health as health_mod                # noqa: E402
 from avi_bot.voice import output as output_mod                    # noqa: E402
 from avi_bot.voice import tts as tts_mod                          # noqa: E402
+from avi_bot.perception import look_check as look_check_mod       # noqa: E402
 from avi_bot.perception import spatial as spatial_mod             # noqa: E402
 from avi_bot.perception import observations as observations_mod   # noqa: E402
 from avi_bot.perception import scan_policy as scan_policy_mod     # noqa: E402
@@ -2603,14 +2604,6 @@ def centre_on(arm, px, py, w, h, settle=0.6):
     return yaw, wrist
 
 
-# Around a remembered aim, when the thing is not where the map says:
-# things on a desk get nudged, and the map can be a day old. (base_yaw,
-# wrist) offsets, degrees. On the robot (2026-10-08) the mug turned up at
-# -15 yaw; the laptop, close and low, at none of the side stops.
-CONFIRM_STOPS = ((0.0, 0.0), (-15.0, 0.0), (15.0, 0.0), (0.0, -12.0),
-                 (0.0, 12.0))
-
-
 def arrival_s(arm, before, margin=0.5):
     """Seconds for the servos to get from `before` to the commanded pose,
     at the speed they actually manage (joints.toml achievable_deg_s)."""
@@ -2643,8 +2636,7 @@ def live_look(arm, latest, name):
     if got is None:
         return False
     kept, w, h, _ = got
-    hit = max((d for d in kept if d["label"] == want),
-              key=lambda d: d["conf"], default=None)
+    hit = look_check_mod.best(kept, want)
     if hit is None:
         return False
     if hasattr(arm, "hold"):
@@ -2655,12 +2647,11 @@ def live_look(arm, latest, name):
 
 def confirm_look(arm, latest, name):
     """After turning to where the map says `name` is: is it actually in
-    the picture? Centres it if so, and files where it really was in the
-    room map -- the map learns from being wrong. "look at the laptop"
-    turned to a day-old aim and the camera saw a mug, while the reply said
-    nothing (robot, 2026-10-08). Tries around the aim before giving up,
-    then comes back. True / False, or None when the detector has no word
-    for it."""
+    the picture? Searches around the aim (perception/look_check.py),
+    centres it if found, and teaches the map where it really was. "look at
+    the laptop" turned to a day-old aim and the camera saw a mug, while the
+    reply said nothing (robot, 2026-10-08). True / False, or None when the
+    detector has no word for it."""
     want = _detectable(name)
     if want is None:
         return None
@@ -2669,43 +2660,48 @@ def confirm_look(arm, latest, name):
         time.sleep(0.1)
     time.sleep(0.4)
     start = arm.snapshot()
-    ylo, yhi = arm.config.soft_limits("base_yaw")
-    wlo, whi = arm.config.soft_limits("wrist")
-    for dyaw, dwr in CONFIRM_STOPS:
+
+    def move(yaw, wrist):
         here = arm.snapshot()
-        yaw = max(ylo, min(yhi, start["base_yaw"] + dyaw))
         if abs(here["base_yaw"] - yaw) > 0.5:
             _yaw_to(arm, yaw, 0.8)
-        wrist = max(wlo, min(whi, start["wrist"] + dwr))
         if abs(here["wrist"] - wrist) > 0.5:
             arm.set("wrist", wrist)
             time.sleep(0.6)
+
+    def detect():
         got = steady_detections(arm, latest)
-        hit = None
-        if got is not None:
-            kept, w, h, _ = got
-            hit = max((d for d in kept if d["label"] == want),
-                      key=lambda d: d["conf"], default=None)
-        if hit is None:
-            continue
-        pose = arm.snapshot()
-        try:
-            arm.roommap.observe(want, hit["cx"], hit["cy"], pose["base_yaw"],
-                                pose["wrist"], conf=hit["conf"],
-                                px_size=max(hit["w"], hit["h"]),
-                                shoulder=pose["shoulder"],
-                                elbow=pose["elbow"])
-            arm.save_roommap()
-        except Exception as exc:          # the look still counts
-            arm.note(f"look check: not filed in the map ({exc!r})")
-        centre_on(arm, hit["cx"], hit["cy"], w, h)
-        arm.note(f"look check: {want} in view ({hit['conf']:.2f}, "
-                 f"yaw {dyaw:+.0f} wrist {dwr:+.0f}), centred")
-        return True
-    _yaw_to(arm, start["base_yaw"], 0.6)
-    arm.set("wrist", start["wrist"])
-    arm.note(f"look check: no {want} where the map says")
-    return False
+        return None if got is None else got[:3]
+
+    found = look_check_mod.search(
+        want, (start["base_yaw"], start["wrist"]), move, detect,
+        arm.config.soft_limits("base_yaw"), arm.config.soft_limits("wrist"))
+    if found is None:
+        move(start["base_yaw"], start["wrist"])
+        arm.note(f"look check: no {want} where the map says")
+        return False
+    hit, (dyaw, dwr) = found["hit"], found["offset"]
+    pose = arm.snapshot()
+    try:
+        kw = dict(conf=hit["conf"], px_size=max(hit["w"], hit["h"]),
+                  shoulder=pose["shoulder"], elbow=pose["elbow"])
+        if dyaw or dwr:
+            # Not at the aim: the map was wrong, and now it knows where.
+            arm.roommap.correct(want, hit["cx"], hit["cy"],
+                                pose["base_yaw"], pose["wrist"],
+                                was=(start["base_yaw"], start["wrist"]),
+                                **kw)
+        else:
+            arm.roommap.observe(want, hit["cx"], hit["cy"],
+                                pose["base_yaw"], pose["wrist"], **kw)
+        arm.save_roommap()
+    except Exception as exc:              # the look still counts
+        arm.note(f"look check: not filed in the map ({exc!r})")
+    centre_on(arm, hit["cx"], hit["cy"], found["w"], found["h"])
+    arm.note(f"look check: {want} in view ({hit['conf']:.2f}, "
+             f"yaw {dyaw:+.0f} wrist {dwr:+.0f}), centred"
+             + (", map corrected" if dyaw or dwr else ""))
+    return True
 
 
 # Mean frame level (0-255) below which the room is "dim": the night of

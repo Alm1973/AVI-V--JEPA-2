@@ -326,6 +326,53 @@ class Reachability(unittest.TestCase):
                                      self.WRIST_LIMITS))
 
 
+
+class ALookThatFoundItElsewhere(unittest.TestCase):
+    """The mug was 15 degrees off its place on every look; averaging moved
+    a weight-17 place under a degree each time (robot, 2026-10-08)."""
+
+    def setUp(self):
+        self.m, self.clock = fresh()
+        for _ in range(8):
+            sight(self.m, "mug", 104.5, 144.5)
+            self.clock.tick(3600)
+        self.place = self.m.where_is("mug")
+
+    def test_the_place_moves_to_where_it_was_seen(self):
+        yaw0, wrist0, w0 = self.place
+        # Seen dead centre from 15 degrees left of the old aim.
+        self.m.correct("mug", W / 2, H / 2, yaw0 - 15.0, wrist0,
+                       was=(yaw0, wrist0), conf=0.4)
+        yaw, wrist, w = self.m.where_is("mug")
+        self.assertAlmostEqual(yaw, yaw0 - 15.0, places=3)
+        self.assertAlmostEqual(wrist, wrist0, places=3)
+        self.assertGreaterEqual(w, w0 * 0.99, "same object, same belief")
+        self.assertEqual(len([p for p in self.m.places
+                              if p.label == "mug"]), 1)
+
+    def test_a_place_already_there_is_merged_not_duplicated(self):
+        yaw0, wrist0, _ = self.place
+        sight(self.m, "mug", yaw0 - 15.0, wrist0)       # a second, weak place
+        self.assertEqual(len([p for p in self.m.places
+                              if p.label == "mug"]), 2)
+        self.m.correct("mug", W / 2, H / 2, yaw0 - 15.0, wrist0,
+                       was=(yaw0, wrist0))
+        mugs = [p for p in self.m.places if p.label == "mug"]
+        self.assertEqual(len(mugs), 1)
+        self.assertAlmostEqual(mugs[0].yaw, yaw0 - 15.0, places=3)
+
+    def test_with_no_place_at_the_aim_it_is_an_ordinary_sighting(self):
+        p = self.m.correct("pen", W / 2, H / 2, 60.0, 130.0,
+                           was=(70.0, 130.0))
+        self.assertEqual((p.label, p.count), ("pen", 1))
+
+    def test_the_wrong_shape_is_refused(self):
+        self.m.shoulder, self.m.elbow = 78.4, 88.0
+        yaw0, wrist0, _ = self.place
+        with self.assertRaises(rm.Unreachable):
+            self.m.correct("mug", W / 2, H / 2, yaw0 - 15, wrist0,
+                           was=(yaw0, wrist0), shoulder=29.5, elbow=131.0)
+
 if __name__ == "__main__":
     unittest.main()
 
