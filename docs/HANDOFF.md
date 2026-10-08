@@ -1137,3 +1137,43 @@ assistant/ on the MSI.
   command in a minute failed. Tools now compacted and pruned (~1930), 429s
   with "try again in <=10 s" are waited out once. An OpenRouter key on the
   MSI (only on the Mac today) would add a second provider -- his call.
+
+## 2026-10-08 ~01:15-02:30: every chat command tested on the robot, through /ask
+
+Batteries of real commands through POST /ask (model -> tools -> camera
+verdict), at night (room level 14-39/255). Each failure was fixed, deployed
+and re-run until it passed.
+
+**Proven working:** move/turn/look left/right/up/down (8, 15 and 30 deg; 30 is
+judged in two 15-deg steps, both judges agree); look at me; look at the
+laptop / the mug (closed loop: the camera confirms, centres, files the
+correction in the room map); wave, nod, shake, dance (motion_sequence); stand
+up tall / normal position (go_to_pose); look around and describe; what can
+you see; where is / how far is my pen (place + metres + scan age); remember /
+recall / forget a fact; timers set/list/cancel, fired on time (62 s for 1
+min); reminders; focus start/status/stop; sleep/wake; praise; weather;
+time; what do you know about me; stop.
+
+**Fixed along the way:**
+- /health crashed with sqlite "bad parameter or other API misuse": shared
+  stores now go through `memory/locked.py` (one lock, rows read under it);
+  `remember()` raced past its 100-fact cap (145) under threads.
+- "how far is my pen" -> model invented 0.35 m: the prompt promised desk
+  positions and sent names. Context now carries metres + scan age; find
+  answers "Left of the laptop, 0.8 m from me, as of 31 h ago." in one
+  sentence (the 20-word cap had cut the distance off).
+- Timers/reminders were held while presence (seat view only) said away: a
+  1-min timer went out 8 min late. An /ask in the last 10 min = present.
+- "look at the laptop" ended on a mug, silently: map aims are 15+ deg off
+  (built with the old 0.35 parallax). Find now checks the live picture first,
+  waits for the servos to arrive (27 deg/s; the shoulder swings ~50), sweeps
+  yaw +-15 / wrist +-12, centres, and corrects the map -- or says "I can't
+  see the laptop from here."
+- The model's slips cost the action: sleep {"name": ...} and focus_stop
+  {"minutes": null} were refused whole; reply gesture "wave" was refused and
+  "good job avi" became a head shake; some commands came back empty. Stray
+  args are dropped (kept ones still checked), wave is a reply gesture, and an
+  all-refused or empty answer to a command falls back to the quick rules.
+- Dark room: look_around says "It's too dark to make out more."; the model is
+  told the room is dim. "Timer: 1 minute timer." -> "Your 1 minute timer is
+  done." A blind move verdict logs why (ORB inliers / JEPA edge or flat).
