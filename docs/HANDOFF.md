@@ -1189,7 +1189,19 @@ time; what do you know about me; stop.
   `perception/look_check.py` (tested with a fake camera); a find off the aim
   calls `RoomMap.correct()`, which MOVES the place (keeps its weight, merges
   a duplicate) instead of averaging it in at 1/18 per sighting.
-- The Mac's Tailscale logged out at ~08:50 Thursday and could not reach
+
   controlplane.tailscale.com (the network, not the MSI). Log in again from a
   network that allows it, then `./scripts/sync.sh && ./scripts/dashboard.sh
   restart`.
+- **After any deploy: `scripts/smoke.py`** -- health, camera-judged moves
+  right/left/no-move (no model requests), and two chat commands. Exit 0 =
+  all passed. `--no-move` when someone shouldn't have the arm moving.
+- **SSH refused since ~09:30 Thursday** (both Mac keys, host key unchanged):
+  re-add `~/.ssh/msi_ed25519.pub` on the MSI (administrators_authorized_keys
+  and the user's .ssh/authorized_keys), restart sshd. Until then nothing new
+  reaches the MSI; it runs the 08:46 code to 22:00.
+- **Groq has three models in the chain** (gpt-oss-20b, gpt-oss-120b,
+  qwen3.8-27b): limits are per model, 200K tokens/day each.
+- **Rundown reads dated facts** (`memory/dated.py`): "Tomorrow: Chemistry
+  test." **Mic button** on the ask box (browser speech recognition) needs
+  https: enable HTTPS certificates for the tailnet, then `scripts/https.sh on`.
