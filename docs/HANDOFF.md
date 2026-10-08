@@ -1189,10 +1189,6 @@ time; what do you know about me; stop.
   `perception/look_check.py` (tested with a fake camera); a find off the aim
   calls `RoomMap.correct()`, which MOVES the place (keeps its weight, merges
   a duplicate) instead of averaging it in at 1/18 per sighting.
-
-  controlplane.tailscale.com (the network, not the MSI). Log in again from a
-  network that allows it, then `./scripts/sync.sh && ./scripts/dashboard.sh
-  restart`.
 - **After any deploy: `scripts/smoke.py`** -- health, camera-judged moves
   right/left/no-move (no model requests), and two chat commands. Exit 0 =
   all passed. `--no-move` when someone shouldn't have the arm moving.
