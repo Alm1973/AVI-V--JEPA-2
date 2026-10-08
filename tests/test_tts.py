@@ -142,3 +142,21 @@ class Robotic(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Tuning(unittest.TestCase):
+    """Faster and higher, without Piper having a pitch control."""
+
+    def test_defaults_and_junk_are_the_voice_as_recorded(self):
+        self.assertEqual(tts.voice_tuning(None), (1.0, 1.0))
+        self.assertEqual(tts.voice_tuning({"speed": "fast"}), (1.0, 1.0))
+
+    def test_clamped_to_speech(self):
+        self.assertEqual(tts.voice_tuning({"speed": 9, "pitch": 0.1}),
+                         (tts.SPEED_RANGE[1], tts.PITCH_RANGE[0]))
+
+    def test_the_pitch_speed_up_is_paid_back(self):
+        """Overall speed = pitch / length_scale, whatever the pitch."""
+        for speed, pitch in ((1.15, 1.12), (1.0, 1.2), (0.9, 1.0)):
+            ls = tts.length_scale(speed, pitch)
+            self.assertAlmostEqual(pitch / ls, speed)

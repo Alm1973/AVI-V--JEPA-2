@@ -132,13 +132,40 @@ class Kokoro:
         return chunks, 24000
 
 
+SPEED_RANGE = (0.6, 1.8)
+PITCH_RANGE = (0.8, 1.4)
+
+
+def voice_tuning(t):
+    """(speed, pitch) from a settings dict, clamped to what still sounds
+    like speech. Missing or junk values are 1.0."""
+    t = t or {}
+
+    def get(key, lo_hi):
+        try:
+            v = float(t.get(key, 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+        lo, hi = lo_hi
+        return max(lo, min(hi, v))
+    return get("speed", SPEED_RANGE), get("pitch", PITCH_RANGE)
+
+
+def length_scale(speed, pitch):
+    """Piper's length_scale for an overall `speed` when the pitch shift
+    (a faster playback rate) already speeds it up by `pitch`."""
+    return pitch / speed
+
+
 class Piper:
     name = "piper"
 
-    def __init__(self, model=None):
+    def __init__(self, model=None, tuning=None):
         # A path, or a callable returning one: the dashboard passes a lookup
         # of its "voice" setting, so switching voices needs no restart.
         self.model = model
+        # () -> {"speed": x, "pitch": y}, both 1.0 = the voice as recorded.
+        self.tuning = tuning
         self._voice = None
         self._loaded = None
 
@@ -160,16 +187,25 @@ class Piper:
         if self._voice is None or path != self._loaded:
             self._voice = PiperVoice.load(path)
             self._loaded = path
+        speed, pitch = voice_tuning(self.tuning() if self.tuning else None)
+        kwargs = {}
+        if (speed, pitch) != (1.0, 1.0):
+            from piper import SynthesisConfig
+            kwargs["syn_config"] = SynthesisConfig(
+                length_scale=length_scale(speed, pitch))
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wav:
-            self._voice.synthesize_wav(text, wav)
+            self._voice.synthesize_wav(text, wav, **kwargs)
         buf.seek(0)
         with wave.open(buf, "rb") as wav:
             rate = wav.getframerate()
             raw = wav.readframes(wav.getnframes())
         samples = [int.from_bytes(raw[i:i + 2], "little", signed=True) / 32768.0
                    for i in range(0, len(raw) - 1, 2)]
-        return samples, rate
+        # Piper has no pitch control. Playing the same samples at a higher
+        # rate raises the pitch -- and speeds it up by the same factor, which
+        # length_scale above has already paid back.
+        return samples, int(round(rate * pitch))
 
 
 class Voice:

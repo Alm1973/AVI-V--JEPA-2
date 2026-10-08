@@ -603,6 +603,11 @@ class Arm:
             name = settings_mod.load(settings_mod.path()).get("voice")
             return voice_path(name)
 
+        def voice_tuning():
+            st = settings_mod.load(settings_mod.path())
+            return {"speed": st.get("voice_speed", 1.0),
+                    "pitch": st.get("voice_pitch", 1.0)}
+
         def recall(name):
             taught = load_taught() or {}
             if name in taught:
@@ -621,7 +626,8 @@ class Arm:
                                 situation=self.situation)
 
         speaker = output_mod.Speaker(
-            voice=tts_mod.Voice(backends=[tts_mod.Piper(model=voice_model),
+            voice=tts_mod.Voice(backends=[tts_mod.Piper(
+                model=voice_model, tuning=voice_tuning),
                                           tts_mod.Silent()]),
             enabled=lambda: bool(settings_mod.load(settings_mod.path()).get(
                 "speak", False)),
@@ -1642,6 +1648,14 @@ def make_handler(st):
                     ends_in_s=max(0.0, deadline - time.time())))
             elif self.path == "/settings":
                 path = settings_mod.path()
+                for key, name in (("voice_speed", "speed"),
+                                  ("voice_pitch", "pitch")):
+                    if key in body:
+                        speed, pitch = tts_mod.voice_tuning(
+                            {name: body[key]})
+                        val = speed if name == "speed" else pitch
+                        settings_mod.save(path, key, val)
+                        arm.note(f"voice {name}: {val}")
                 if "voice" in body:
                     chosen = voice_path(body["voice"])
                     settings_mod.save(path, "voice",
