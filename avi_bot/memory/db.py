@@ -188,6 +188,14 @@ class Store:
         self.db.commit()
         return n
 
+    def facts(self, limit=200):
+        """Every fact with when it was said, newest first. Read-only:
+        unlike recall(), looking does not count as using."""
+        return [{"text": r["text"], "created_at": r["created_at"]}
+                for r in self.db.execute(
+                    "SELECT text, created_at FROM facts"
+                    " ORDER BY created_at DESC LIMIT ?", (int(limit),))]
+
     def dead_weight(self, min_uses=3):
         """Facts retrieved repeatedly and never once cited.
 

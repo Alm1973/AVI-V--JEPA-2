@@ -658,8 +658,29 @@ class Avi:
                                       f"{e.summary} at {e.spoken_time()}"))
             except Exception:
                 pass                    # an unreachable calendar is silent
+        # Facts he told it that name today or tomorrow: "chemistry test on
+        # Friday" sat in memory while Thursday's rundown said nothing.
+        tomorrow_only = []
+        try:
+            from avi_bot.memory import dated
+            today = habits.day_of(now)
+            for d, words in dated.ahead(self.store.facts(), today):
+                start = datetime(d.year, d.month, d.day).timestamp()
+                later = d != today
+                items.append((max(start, now) + (86400 if later else 0),
+                              f"{words} tomorrow" if later else words))
+                if later:
+                    tomorrow_only.append(words)
+        except Exception:
+            pass                      # a misread fact never costs the rundown
         if not items:
             return None
+        if len(tomorrow_only) == len(items):
+            # Nothing today, something tomorrow: not "Today: ... tomorrow."
+            head = tomorrow_only[:self.RUNDOWN_ITEMS]
+            more = len(items) - len(head)
+            return ("Tomorrow: " + "; ".join(head)
+                    + (f"; and {more} more." if more else "."))
         items.sort(key=lambda i: i[0])
         head = [w for _, w in items[:self.RUNDOWN_ITEMS]]
         more = len(items) - len(head)
