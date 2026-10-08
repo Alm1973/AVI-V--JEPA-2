@@ -2558,6 +2558,11 @@ def _jepa_grid(arm, frame):
 def judged_move(arm, latest, commanded, do, settle=1.0):
     """Frame, move, frame -- then ORB and V-JEPA each say which way the
     camera went, and the verdict says whether that was `commanded`."""
+    # A gesture still playing (the wave before "look right") moves the
+    # picture under both frames and the judge goes blind: let it finish.
+    t_end = time.time() + 4.0
+    while arm.engine.busy() and time.time() < t_end:
+        time.sleep(0.1)
     before, _ = _frame(latest)
     do()
     time.sleep(settle)
