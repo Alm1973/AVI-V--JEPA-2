@@ -2597,6 +2597,15 @@ CONFIRM_STOPS = ((0.0, 0.0), (-15.0, 0.0), (15.0, 0.0), (0.0, -12.0),
                  (0.0, 12.0))
 
 
+def arrival_s(arm, before, margin=0.5):
+    """Seconds for the servos to get from `before` to the commanded pose,
+    at the speed they actually manage (joints.toml achievable_deg_s)."""
+    now = arm.snapshot()
+    far = max(abs(float(now[j]) - float(before.get(j, now[j])))
+              for j in poses.JOINTS)
+    return far / max(1.0, arm.config.achievable) + margin
+
+
 def _surveying(arm):
     scanning = getattr(arm, "survey_lock", None)
     return scanning is not None and scanning.locked()
@@ -2922,6 +2931,7 @@ def find_object(arm, name, look=True, latest=None):
     if look and aim and aim.get("confident"):
         if hasattr(arm, "hold"):
             arm.hold(LOOK_HOLD_S + 20.0)   # the seat loop waits for the check
+        pose0, t0 = arm.snapshot(), time.time()
         for joint in ("shoulder", "elbow", "base_yaw", "wrist"):
             if aim.get(joint) is None:
                 continue
@@ -2931,6 +2941,12 @@ def find_object(arm, name, look=True, latest=None):
                 arm.set(joint, aim[joint])
         moved = True
         if latest is not None:
+            # snapshot() is the COMMAND; the servos are still on their way.
+            # Map aims are at the map's shape, so the shoulder and elbow can
+            # swing ~50 degrees from the seat pose, and the check that ran
+            # mid-swing missed a laptop dead centre at the aim (robot,
+            # 2026-10-08).
+            time.sleep(max(0.0, t0 + arrival_s(arm, pose0) - time.time()))
             in_view = confirm_look(arm, latest, name)
             if in_view is False:
                 text = f"{text} Not there now."
