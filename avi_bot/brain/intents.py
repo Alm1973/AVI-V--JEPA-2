@@ -246,6 +246,13 @@ def _nudge(m):
                             "degrees": 8 if small else 15})
 
 
+@rule(r"^(?:can\s+(?:you|u)\s+)?look\s+around(?:\s+.*)?[.!?]?$")
+def _look_around(m):
+    n = re.search(r"\b([1-6])\b", m.group(0))
+    return Intent("look_around", {"count": int(n.group(1))} if n else {},
+                  reason="answer")
+
+
 @rule(r"^what\s+(?:do\s+you|can\s+you|are\s+you\s+looking\s+at|"
       r"is\s+in\s+front\s+of\s+you)(?:\s+see)?(?:\s+(?:right\s+)?now)?\??$")
 def _describe_view(m):

@@ -269,6 +269,27 @@ class FreeMotion(unittest.TestCase):
         r = self.run_call("describe_view")
         self.assertEqual(r.text, "I see you (centre), a mug (bottom left).")
 
+    def test_look_around_sweeps_and_names_what_it_saw_where(self):
+        views = {80.0: ["mug (centre, 0.8)"], 110.0: ["laptop (centre, 0.9)",
+                 "person (left, 0.9)"], 140.0: ["bottle (right, 0.6)"]}
+        self.arm.pose["base_yaw"] = 110.0
+        self.avi.situation = lambda: {"camera": views.get(
+            round(self.arm.pose["base_yaw"]), [])}
+        r = self.run_call("look_around", count=3)
+        self.assertEqual(r.text, "I see a mug (left), a laptop (ahead), "
+                                 "a bottle (right).")
+        self.assertAlmostEqual(self.arm.pose["base_yaw"], 110.0,
+                               msg="came back to where it started")
+
+    def test_an_answer_tool_is_never_muted(self):
+        """'look around and describe 3 things u see' got silence: the reply
+        was treated as an action, and actions do not speak."""
+        from avi_bot.brain import router as router_mod, speech
+        r = router_mod.Router(chain=None)
+        self.assertEqual(r._reason("look around and describe 3 things u see",
+                                   [("describe_view", {})]), speech.ANSWER)
+        self.assertTrue(speech.is_question("describe what you see"))
+
     def test_a_taught_pose_by_name(self):
         self.run_call("go_to_pose", name="TALL")
         self.assertEqual(self.arm.recalled, ["TALL"])

@@ -53,7 +53,13 @@ def is_question(utterance):
                "is ", "are ", "do ", "does ", "did ", "can ", "could ",
                "will ", "would ", "should ", "am ", "was ", "were ",
                "have ", "has ", "tell me", "how many", "how much")
-    return u.startswith(openers)
+    if u.startswith(openers):
+        return True
+    # Asked for information without a question's shape: "look around and
+    # describe 3 things you see" was answered with silence.
+    asks = ("describe", "tell me", "explain", "list ", "name the",
+            "how many", "what you see", "what's there", "whats there")
+    return any(a in u for a in asks)
 
 
 def truncate(text, max_words=MAX_WORDS):

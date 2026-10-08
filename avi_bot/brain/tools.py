@@ -110,6 +110,9 @@ TOOLS = [
                                     "maximum": 3.0}}}}},
           ["steps"]),
     _tool("describe_view", "Say what the camera sees right now."),
+    _tool("look_around", "Turn left, centre and right, then say what was "
+                         "seen and where.",
+          {"count": {"type": "integer", "minimum": 1, "maximum": 6}}),
     _tool("go_to_pose", "Move to a taught pose by name (listed in the "
                         "context).",
           {"name": {"type": "string", "maxLength": 40}}, ["name"]),

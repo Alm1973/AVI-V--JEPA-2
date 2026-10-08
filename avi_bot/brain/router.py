@@ -231,7 +231,8 @@ class Router:
         if names & {"get_schedule", "set_reminder"}:
             return speech.REMINDER
         if names & {"list_timers", "find_object", "get_time", "weather",
-                    "robot_status", "focus_status", "what_do_you_know"}:
+                    "robot_status", "focus_status", "what_do_you_know",
+                    "describe_view", "look_around"}:
             return speech.ANSWER
         if speech.is_question(utterance):
             return speech.ANSWER

@@ -145,6 +145,7 @@ class Avi:
             "motion_sequence": self._sequence,
             "go_to_pose": self._go_to_pose,
             "describe_view": self._describe_view,
+            "look_around": self._look_around,
         }
         handlers.update(memory_tools.make(self.store,
                                           observed=self.observed))
@@ -375,6 +376,44 @@ class Avi:
             names.append(f"{'you' if label == 'person' else 'a ' + label}"
                          f" ({where})")
         return "I see " + ", ".join(names[:4]) + ".", {"camera": seen}
+
+    # Base offsets for "look around": left, ahead, right of where it is.
+    LOOK_AROUND_DEG = (-30.0, 0.0, 30.0)
+
+    def _look_around(self, count=3):
+        """Sweep left-centre-right, collect what the camera recognises at
+        each stop, come back, and say up to `count` things with where."""
+        if self.arm is None:
+            return "I have no arm attached.", None
+        if self.situation is None:
+            return "I can't see right now.", None
+        count = max(1, min(6, int(count or 3)))
+        start = dict(self.arm.snapshot())
+        lo, hi = self.arm.config.soft_limits("base_yaw")
+        self._hold(90.0)
+        seen = {}
+        for off in self.LOOK_AROUND_DEG:
+            target = max(lo, min(hi, start["base_yaw"] + off))
+            self._safe(lambda: self._yaw_to(target))
+            self._sleep(0.8)
+            try:
+                cam = (self.situation() or {}).get("camera") or []
+            except Exception:
+                cam = []
+            side = "left" if off < 0 else "right" if off > 0 else "ahead"
+            for item in cam:
+                label = item.split(" (")[0]
+                seen.setdefault(label, side)
+        self._safe(lambda: self._yaw_to(start["base_yaw"]))
+        things = [(lb, w) for lb, w in seen.items() if lb != "person"]
+        if "person" in seen:
+            things.append(("person", seen["person"]))
+        if not things:
+            return "I looked around and didn't recognise anything.", {
+                "seen": {}}
+        words = [("you" if lb == "person" else f"a {lb}") + f" ({w})"
+                 for lb, w in things[:count]]
+        return "I see " + ", ".join(words) + ".", {"seen": seen}
 
     def _go_to_pose(self, name):
         if self.arm is None:
