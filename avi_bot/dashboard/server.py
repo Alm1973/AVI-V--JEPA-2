@@ -2500,20 +2500,38 @@ class LockedDetector:
         return getattr(self._inner, name)
 
 
-def camera_now(arm, latest, min_conf=0.40):
+def camera_now(arm, latest, frames=3, floor=0.25, sure=0.50, agree=2):
     """What the camera sees right now, as words: "person (centre, 0.92)".
     Positions are in the PICTURE: left of centre means turn left to face
-    it. Labels and places only -- the frame never leaves this function."""
-    frame, _ = _frame(latest)
-    if frame is None:
+    it. Labels and places only -- the frames never leave this function.
+
+    Consistency, not one hard cutoff: a label counts if it is seen in
+    `agree` of `frames` frames at `floor`, or once at `sure`. At night
+    (brightness 39/255, 2026-10-08) a mug scored 0.31-0.34 and he flickered
+    around 0.40, so a single-frame 0.40 cutoff answered "nothing I
+    recognise" with both in view.
+    """
+    looks = [f for f in _look(latest, frames)]
+    if not looks:
         return None
     if arm.detector is None:
         from detector import DeskDetector
         arm.detector = LockedDetector(DeskDetector())
-    h, w = frame.shape[:2]
+    h, w = looks[-1].shape[:2]
+    best, count = {}, {}
+    for frame in looks:
+        here = {}
+        for d in arm.detector.everything(frame, min_conf=floor):
+            if d["conf"] > here.get(d["label"], {}).get("conf", 0.0):
+                here[d["label"]] = d
+        for label, d in here.items():
+            count[label] = count.get(label, 0) + 1
+            if d["conf"] > best.get(label, {}).get("conf", 0.0):
+                best[label] = d
+    kept = [d for label, d in best.items()
+            if count[label] >= min(agree, len(looks)) or d["conf"] >= sure]
     out = []
-    for d in sorted(arm.detector.everything(frame, min_conf=min_conf),
-                    key=lambda d: -d["conf"])[:10]:
+    for d in sorted(kept, key=lambda d: -d["conf"])[:10]:
         x, y = d["cx"] / float(w), d["cy"] / float(h)
         side = "left" if x < 0.36 else "right" if x > 0.64 else "centre"
         tier = "top" if y < 0.33 else "bottom" if y > 0.67 else "middle"
