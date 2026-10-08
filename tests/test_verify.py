@@ -80,6 +80,15 @@ class JepaTokens(unittest.TestCase):
                 self.assertAlmostEqual(got["dx"], dx, delta=0.5)
                 self.assertAlmostEqual(got["dy"], dy, delta=0.5)
 
+    def test_one_axis_search_stays_on_its_axis(self):
+        c = smooth(grid()) * 5.0
+        p = positional(c)
+        got = vf.token_shift(c + p, slid(c, -4, 0) + p, axis="x")
+        self.assertAlmostEqual(got["dx"], -4, delta=0.5)
+        self.assertLessEqual(abs(got["dy"]), 1.0)
+        got = vf.token_shift(c + p, slid(c, 0, 5) + p, axis="y")
+        self.assertAlmostEqual(got["dy"], 5, delta=0.5)
+
     def test_an_unmoved_scene_is_still(self):
         g = smooth(grid()) + positional(grid())
         got = vf.token_shift(g, g + 0.02 * grid(seed=3))

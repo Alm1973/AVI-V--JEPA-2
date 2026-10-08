@@ -2557,7 +2557,8 @@ def judged_move(arm, latest, commanded, do, settle=1.0):
         try:
             ga, gb = _jepa_grid(arm, before), _jepa_grid(arm, after)
             if ga is not None and gb is not None:
-                sh = verify_mod.token_shift(ga, gb)
+                sh = verify_mod.token_shift(
+                    ga, gb, axis=verify_mod.AXIS.get(commanded))
                 # On the search edge the real shift may be beyond it:
                 # JEPA abstains rather than vote a wrong direction.
                 jepa = (sh["dx"], sh["dy"]) if sh["confident"] else None

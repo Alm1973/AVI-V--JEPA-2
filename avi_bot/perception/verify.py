@@ -71,14 +71,14 @@ def _refine(m, c, p):
 # (2026-10-08). +-9 still leaves 7/16 of the grid overlapping.
 MAX_SHIFT = 9
 # Two grids this alike at zero shift are the same view: nothing moved.
-# Robot, 2026-10-08: a no-move control scored 0.925 (sensor noise, light);
-# real 12- and 20-degree moves scored 0.68-0.72.
-STILL = 0.85
+# Robot, 2026-10-08: no-move controls scored 0.92; 6-degree tilts 0.81,
+# 12- and 20-degree moves 0.67-0.73.
+STILL = 0.88
 # The best shift must stand this far above the median shift's score.
 MIN_PROMINENCE = 0.15
 
 
-def token_shift(a, b, max_shift=MAX_SHIFT):
+def token_shift(a, b, max_shift=MAX_SHIFT, axis=None, band=1):
     """How the scene moved from token grid `a` to `b`, both (H, W, D).
 
     Returns {"dx", "dy"} in tokens (content in `a` at x appears in `b` at
@@ -100,6 +100,12 @@ def token_shift(a, b, max_shift=MAX_SHIFT):
     the score peaks at the true shift s0 -- and only there. (Matching the
     frame DIFFERENCE also cancels position but peaks at +s0 and -s0 alike,
     and on the robot it turned horizontal turns into diagonals.)
+
+    `axis` ("x" or "y") searches along one axis, +-`band` across it: a base
+    turn slides the picture sideways and a wrist tilt slides it vertically,
+    so the judge knows WHICH joint moved -- not which way or how far, which
+    is what it measures. Unconstrained, 20-degree pans came back with ghost
+    vertical components of 4-5 rows on the robot.
     """
     ua, ub = _unit(a), _unit(b)
     raw0 = float((ua * ub).sum(-1).mean())
@@ -110,6 +116,10 @@ def token_shift(a, b, max_shift=MAX_SHIFT):
     scores = {}
     for dy in range(-max_shift, max_shift + 1):
         for dx in range(-max_shift, max_shift + 1):
+            if axis == "x" and abs(dy) > band:
+                continue
+            if axis == "y" and abs(dx) > band:
+                continue
             ab = _score(ua, ub, dx, dy)
             if ab is None:
                 continue
@@ -122,10 +132,10 @@ def token_shift(a, b, max_shift=MAX_SHIFT):
     fy = by + _refine(scores.get((bx, by - 1)), best, scores.get((bx, by + 1)))
     edge = abs(bx) >= max_shift or abs(by) >= max_shift
 
-    def prof(axis):
+    def prof(along):
         out = []
         for k in range(-max_shift, max_shift + 1):
-            v = scores.get((k, 0) if axis == "x" else (0, k))
+            v = scores.get((k, 0) if along == "x" else (0, k))
             out.append(None if v is None else round(v, 3))
         return out
     return {"dx": round(fx, 2), "dy": round(fy, 2), "still": False,
@@ -133,6 +143,9 @@ def token_shift(a, b, max_shift=MAX_SHIFT):
             "confident": not edge and prominence >= MIN_PROMINENCE,
             "raw0": round(raw0, 4), "score": round(best, 4),
             "profile_x": prof("x"), "profile_y": prof("y")}
+
+
+AXIS = {"left": "x", "right": "x", "up": "y", "down": "y"}
 
 
 def judge(commanded, orb_px=None, jepa_tokens=None, token_px=(80.0, 45.0),
