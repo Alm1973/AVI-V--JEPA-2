@@ -171,6 +171,14 @@ class Host:
                "beep": reply.beep, "route": decision.route,
                "provider": decision.provider,
                "tools": [c[0] for c in decision.calls],
+               # What it DID, with the camera's verdict on each move -- so
+               # the page can show more than "(done)".
+               "did": [{"tool": c[0], "args": c[1], "ok": r.ok,
+                        "error": r.error,
+                        "verdict": _brief(r.data.get("verdict")
+                                          if isinstance(r.data, dict)
+                                          else None)}
+                       for c, r in zip(decision.calls, results)],
                "ok": all(r.ok for r in results)}
         err = getattr(decision, "error", None)
         if err:
@@ -372,6 +380,15 @@ class Host:
             except Exception as exc:
                 self.note(f"brain tick failed: {exc!r}")
             time.sleep(period)
+
+
+def _brief(verdict):
+    """A move verdict without the per-token detail, for the page."""
+    if not verdict:
+        return None
+    return {k: verdict.get(k) for k in ("commanded", "votes", "judged",
+                                        "agrees", "motion", "retried")
+            if k in verdict}
 
 
 class _NoBrain:

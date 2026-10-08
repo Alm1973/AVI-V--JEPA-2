@@ -248,6 +248,24 @@ class Avi:
         if callable(hold):
             self._safe(lambda: hold(seconds))
 
+    def _judged(self, direction, do):
+        """Run a move and let the picture judge it (perception/verify.py,
+        via the dashboard's arm). One retry when the camera did not move at
+        all -- a turn eaten by backlash or a servo that missed a frame --
+        then the honest sentence if it still disagrees."""
+        from avi_bot.perception import verify as verify_mod
+        judge = getattr(self.arm, "judged_move", None)
+        if direction is None or not callable(judge):
+            self._safe(do)
+            return None, None
+        verdict = self._safe(lambda: judge(direction, do))
+        if (verdict and verdict.get("judged") and not verdict.get("agrees")
+                and set(verdict["votes"].values()) == {"none"}):
+            verdict = self._safe(lambda: judge(direction, do)) or verdict
+            if verdict is not None:
+                verdict["retried"] = True
+        return verify_mod.sentence(verdict), verdict
+
     def _nudge(self, direction, degrees=10):
         if self.arm is None:
             return "I have no arm attached.", None
@@ -257,27 +275,43 @@ class Avi:
         if direction in ("left", "right"):
             # +base_yaw turns the camera right (perception/world.py).
             target = here["base_yaw"] + (d if direction == "right" else -d)
-            self._safe(lambda: self._yaw_to(target))
+
+            def do():
+                self._yaw_to(target)
         else:
             target = here["wrist"] + (d if direction == "up" else -d)
-            self._safe(lambda: self.arm.set("wrist", target))
-        return None, {"direction": direction, "degrees": d}
+
+            def do():
+                self.arm.set("wrist", target)
+        said, verdict = self._judged(direction, do)
+        return said, {"direction": direction, "degrees": d,
+                      "verdict": verdict}
 
     def _move_joints(self, **joints):
         if self.arm is None:
             return "I have no arm attached.", None
+        from avi_bot.perception import verify as verify_mod
         self._hold(60.0)
-        moved = {}
-        for j in tools.JOINT_NAMES:
-            if joints.get(j) is None:
-                continue
-            deg = float(joints[j])
-            if j == "base_yaw":
-                self._safe(lambda: self._yaw_to(deg))
-            else:
-                self._safe(lambda: self.arm.set(j, deg))
-            moved[j] = round(deg, 1)
-        return None, {"moved": moved}
+        before = dict(self.arm.snapshot())
+        moved = {j: round(float(joints[j]), 1) for j in tools.JOINT_NAMES
+                 if joints.get(j) is not None}
+
+        def do():
+            for j, deg in moved.items():
+                if j == "base_yaw":
+                    self._safe(lambda: self._yaw_to(deg))
+                else:
+                    self._safe(lambda: self.arm.set(j, deg))
+        # Judged by its larger change; clamped targets are what the arm
+        # will actually do, so judge against those.
+        lo_hi = getattr(getattr(self.arm, "config", None), "soft_limits",
+                        None)
+        expect = dict(before)
+        for j, deg in moved.items():
+            lo, hi = lo_hi(j) if callable(lo_hi) else (-1e9, 1e9)
+            expect[j] = max(lo, min(hi, deg))
+        said, verdict = self._judged(verify_mod.dominant(before, expect), do)
+        return said, {"moved": moved, "verdict": verdict}
 
     MAX_STEPS = 10
 
@@ -375,9 +409,15 @@ class Avi:
         # guessing at it.
         said = next((r.text for r in results if r.ok and r.text), None)
         if said:
+            # A move the picture says did not happen is an error to own up
+            # to, not an action to stay quiet about (perception/verify.py).
+            missed = any(isinstance(r.data, dict)
+                         and (r.data.get("verdict") or {}).get("judged")
+                         and not r.data["verdict"].get("agrees")
+                         for r in results if r.ok)
             decision.reply = self.policy.apply(
                 decision.reply.model_copy(update={"say": said}),
-                decision.reason)
+                speech.ERROR if missed else decision.reason)
 
         # The mood's task events (BUILD_SPEC 5.2) had no caller: doing what
         # he asked lifts valence, failing lowers it. Praise and scold are

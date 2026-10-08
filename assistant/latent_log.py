@@ -121,6 +121,28 @@ class Encoder:
         return vec, (time.perf_counter() - t0) * 1000.0
 
 
+    def tokens(self, frames):
+        """The spatial token grid, (16, 16, dim), averaged over time.
+
+        __call__'s mean keeps WHAT is in view and throws away WHERE; judging
+        which way the camera moved needs where (avi_bot/perception/
+        verify.py). Same model, same frames; tokens come out time-major
+        (Conv3d patches, flattened t, h, w), two frames per tubelet.
+        """
+        torch = self._torch
+        inputs = self.proc(frames, return_tensors="pt")
+        inputs = {k: (v.to(self.device).half() if v.dtype.is_floating_point
+                      else v.to(self.device)) for k, v in inputs.items()}
+        with torch.inference_mode():
+            out = self.model(**inputs)
+        h = out.last_hidden_state.float()[0]           # (tokens, dim)
+        t = max(1, len(frames) // 2)
+        g = int(round((h.shape[0] / t) ** 0.5))
+        if t * g * g != h.shape[0]:
+            raise ValueError(f"{h.shape[0]} tokens is not {t} x g x g")
+        return h.reshape(t, g, g, -1).mean(0).cpu().numpy()
+
+
 def grab_clip(cap, n, size):
     """n frames as RGB squares, plus the brightness of the last one.
 

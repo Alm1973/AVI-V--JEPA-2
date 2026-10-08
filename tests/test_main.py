@@ -237,6 +237,32 @@ class FreeMotion(unittest.TestCase):
         self.run_call("move_joints", wrist=5)
         self.assertEqual(self.arm.pose["wrist"], 20.0)
 
+    def test_a_move_the_picture_disagrees_with_is_said(self):
+        verdicts = []
+
+        def judged_move(direction, do):
+            do()
+            v = {"commanded": direction, "votes": {"orb": "none"},
+                 "judged": True, "agrees": False, "motion": {}}
+            verdicts.append(v)
+            return v
+        self.arm.judged_move = judged_move
+        r = self.run_call("nudge", direction="left", degrees=10)
+        self.assertEqual(r.text, "I tried to look left, but the camera "
+                                 "didn't move.")
+        self.assertEqual(len(verdicts), 2, "one retry when nothing moved")
+        self.assertTrue(r.data["verdict"]["retried"])
+
+    def test_a_move_the_picture_confirms_is_silent(self):
+        def judged_move(direction, do):
+            do()
+            return {"commanded": direction, "votes": {"orb": direction},
+                    "judged": True, "agrees": True, "motion": {}}
+        self.arm.judged_move = judged_move
+        r = self.run_call("nudge", direction="right", degrees=10)
+        self.assertIsNone(r.text)
+        self.assertTrue(r.data["verdict"]["agrees"])
+
     def test_a_taught_pose_by_name(self):
         self.run_call("go_to_pose", name="TALL")
         self.assertEqual(self.arm.recalled, ["TALL"])

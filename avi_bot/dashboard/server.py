@@ -56,6 +56,7 @@ from avi_bot.perception import parallax                           # noqa: E402
 from avi_bot.perception import depth as depth_mod                 # noqa: E402
 from avi_bot.perception import desk_changes as desk_mod           # noqa: E402
 from avi_bot.perception import habits as habits_mod               # noqa: E402
+from avi_bot.perception import verify as verify_mod               # noqa: E402
 from avi_bot.perception import dome as dome_mod                   # noqa: E402
 from avi_bot.perception import horizon as horizon_mod             # noqa: E402
 from avi_bot.perception import world as world_mod                 # noqa: E402
@@ -154,6 +155,11 @@ class Arm:
         # it for SEAT_RETURN_AFTER_S, a find for its look. 0 = return to the
         # seat view at the first idle check after start (seat_loop).
         self.hold_until = 0.0
+        # V-JEPA is shared by the latent loop and the move judge.
+        self.encoder_lock = threading.Lock()
+        # The stream, for judging moves from the picture (set by main()).
+        self.latest = None
+        self.last_verdict = None
         self.last_behaviour = None
         self.detector = None
         self.last_person = None
@@ -324,6 +330,15 @@ class Arm:
 
     def hold(self, seconds):
         self.hold_until = max(self.hold_until, time.time() + float(seconds))
+
+    def judged_move(self, commanded, do, settle=1.0):
+        """Run `do` (a move) and judge from the picture whether the camera
+        went `commanded` (perception/verify.py). Returns the verdict, or
+        None when there is no stream to judge with."""
+        if self.latest is None or commanded not in verify_mod.DIRECTIONS:
+            do()
+            return None
+        return judged_move(self, self.latest, commanded, do, settle=settle)
 
     def seat_loop(self, deadline, period=20.0):
         """Back to the seat view whenever nothing else wants the arm
@@ -828,7 +843,8 @@ class Arm:
                 if len(frames) < latent_log.CLIP_FRAMES or gray is None:
                     time.sleep(1.0)
                     continue
-                vec, ms = self.latent_encoder(frames)
+                with self.encoder_lock:
+                    vec, ms = self.latent_encoder(frames)
                 now = time.time()
                 lt = datetime.fromtimestamp(now)
                 self.latent_db.execute(
@@ -1152,7 +1168,12 @@ PAGE = b"""<!doctype html>
  .ask{display:flex;gap:6px;margin:0 0 6px}
  .ask input{flex:1;min-width:0;font:inherit;padding:7px 10px;border-radius:7px;
             border:1px solid #3a3a42;background:#18181b;color:#e7e7ea}
- #said{min-height:20px;font-size:14px;color:#a7f3d0;margin:0 0 4px}
+ #said{min-height:20px;font-size:14px;color:#a7f3d0;margin:0 0 4px;
+        max-height:260px;overflow-y:auto}
+ #said .you{color:#94a3b8;margin-top:6px}
+ #said .avi{color:#a7f3d0}
+ #said .did{color:#cbd5e1;font-size:12px;padding-left:10px}
+ #said .bad{color:#fca5a5}
 </style></head>
 <body>
  <h1>AVI <span id="sub"></span></h1>
@@ -1175,7 +1196,7 @@ PAGE = b"""<!doctype html>
     <div class="sec" style="border-top:0;margin-top:0;padding-top:0">ask avi</div>
     <form class="ask" onsubmit="ask(); return false;">
       <input id="askin" autocomplete="off"
-             placeholder="where's my pen? / set a timer for 10 minutes">
+             placeholder="talk to avi: look left / wave hi / where's my pen?">
       <button class="pri" type="submit">ask</button>
     </form>
     <div id="said"></div>
@@ -1209,21 +1230,64 @@ async function api(path, body){
 }
 function msg(s){ document.getElementById("msg").textContent = s || ""; }
 
+// The conversation, newest last: what he said, what AVI said, and what it
+// DID -- each move with the camera's verdict (perception/verify.py).
+const CHAT = [];
+function esc(t){
+  return String(t).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;",
+    ">": "&gt;", '"': "&quot;"})[c]);
+}
+function didLine(d){
+  const a = d.args || {};
+  let s = d.tool.replace(/_/g, " ");
+  if (a.direction) s += " " + a.direction + (a.degrees ? " " + a.degrees + "\\u00b0" : "");
+  else if (a.target) s += " " + a.target;
+  else if (a.name) s += " " + a.name;
+  else if (a.steps) s += " (" + a.steps.length + " steps)";
+  if (!d.ok) return {bad: true, text: s + " \\u2717 " + (d.error || "failed")};
+  const v = d.verdict;
+  if (v && v.judged) {
+    const who = Object.keys(v.votes).join(" + ");
+    if (v.agrees) return {bad: false,
+      text: s + " \\u2713 camera saw it (" + who + ")"};
+    return {bad: true, text: s + " \\u2717 camera saw " +
+      Object.values(v.votes).join(" / ") + " (" + who + ")" +
+      (v.retried ? ", retried" : "")};
+  }
+  return {bad: false, text: s};
+}
+function paintChat(){
+  const out = document.getElementById("said");
+  out.innerHTML = CHAT.slice(-8).map(e =>
+    `<div class="you">you: ${esc(e.you)}</div>` +
+    (e.avi ? `<div class="avi">avi: ${esc(e.avi)}</div>` : "") +
+    e.did.map(d => `<div class="did${d.bad ? " bad" : ""}">\\u2192 ` +
+                   `${esc(d.text)}</div>`).join("") +
+    (e.err ? `<div class="did bad">(${esc(e.err)})</div>` : "")
+  ).join("");
+  out.scrollTop = out.scrollHeight;
+}
 async function ask(){
   const box = document.getElementById("askin");
-  const out = document.getElementById("said");
   const text = box.value.trim();
   if (!text) return;
-  out.textContent = "...";
+  box.value = "";
+  const entry = {you: text, avi: "\\u2026", did: [], err: ""};
+  CHAT.push(entry);
+  paintChat();
   try {
     const r = await api("/ask", {text: text});
-    if (r.error && !r.say) out.textContent = "(" + r.error + ")";
-    else out.textContent = r.say ||
-      (r.gesture ? "(" + r.gesture + ")" : "(done)");
-    box.value = "";
+    entry.avi = r.say || "";
+    entry.did = (r.did || []).map(didLine);
+    if (r.error && !r.say) entry.err = r.error;
+    if (!entry.avi && !entry.did.length && !entry.err)
+      entry.avi = r.gesture ? "(" + r.gesture + ")" : "(nothing to do)";
   } catch (e) {
-    out.textContent = "(no answer from the robot)";
+    entry.avi = "";
+    entry.err = "no answer from the robot";
   }
+  paintChat();
+  box.focus();
 }
 
 function row(j){
@@ -1882,6 +1946,26 @@ def make_handler(st):
                 arm.paused.set() if want else arm.paused.clear()
                 arm.note("paused" if want else "resumed")
                 self._json({"ok": True, "paused": want})
+            elif self.path == "/verify_move":
+                # The test he asked for: move, then let the picture say
+                # which way the camera actually went.
+                direction = (body.get("direction") or "").strip().lower()
+                if direction not in verify_mod.DIRECTIONS:
+                    return self._json({"error": "direction must be one of "
+                                       + ", ".join(verify_mod.DIRECTIONS)},
+                                      400)
+                deg = max(2.0, min(30.0, float(body.get("degrees", 12))))
+                if arm.survey_lock.locked():
+                    return self._json({"error": "the arm is surveying"}, 409)
+                arm.hold(60.0)
+                pose0 = arm.snapshot()
+                v = judged_move(arm, latest, direction,
+                                lambda: nudge_arm(arm, direction, deg))
+                v["pose_before"] = {j: round(pose0[j], 1)
+                                    for j in poses.JOINTS}
+                v["pose_after"] = {j: round(arm.snapshot()[j], 1)
+                                   for j in poses.JOINTS}
+                self._json(v)
             elif self.path == "/selftest":
                 arm.hold(60.0)            # not the seat loop's mid-test
                 self._json({"ok": True, "lines": run_selftest(arm, latest)})
@@ -2434,6 +2518,72 @@ def camera_now(arm, latest, min_conf=0.40):
         where = side if tier == "middle" else f"{tier} {side}"
         out.append(f"{d['label']} ({where}, {d['conf']:.2f})")
     return out
+
+
+def _jepa_grid(arm, frame):
+    """V-JEPA 2's token grid for one frame (a still clip of it), or None
+    when the encoder is not loaded -- the latent loop owns loading it."""
+    enc = getattr(arm, "latent_encoder", None)
+    if enc is None or not hasattr(enc, "tokens"):
+        return None
+    import cv2
+    import latent_log
+    rgb = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
+                     (latent_log.CLIP_SIZE, latent_log.CLIP_SIZE),
+                     interpolation=cv2.INTER_AREA)
+    with arm.encoder_lock:
+        return enc.tokens([rgb] * latent_log.CLIP_FRAMES)
+
+
+def judged_move(arm, latest, commanded, do, settle=1.0):
+    """Frame, move, frame -- then ORB and V-JEPA each say which way the
+    camera went, and the verdict says whether that was `commanded`."""
+    before, _ = _frame(latest)
+    do()
+    time.sleep(settle)
+    after, _ = _frame(latest)
+    orb = jepa = None
+    token_px = (80.0, 45.0)
+    detail = {}
+    if before is not None and after is not None:
+        try:
+            reg = horizon_mod.register(before, after)
+            orb = (reg["dx_px"], reg["dy_px"])
+            detail["orb_inliers"] = reg["inliers"]
+        except horizon_mod.NotMeasurable as exc:
+            detail["orb"] = f"unmeasurable: {exc}"
+        try:
+            ga, gb = _jepa_grid(arm, before), _jepa_grid(arm, after)
+            if ga is not None and gb is not None:
+                sh = verify_mod.token_shift(ga, gb)
+                jepa = (sh["dx"], sh["dy"])
+                h, w = before.shape[:2]
+                token_px = (w / float(ga.shape[1]), h / float(ga.shape[0]))
+                detail["jepa"] = sh
+            else:
+                detail["jepa"] = "encoder not loaded (latents off?)"
+        except Exception as exc:
+            detail["jepa"] = f"failed: {exc!r}"[:120]
+    v = verify_mod.judge(commanded, orb_px=orb, jepa_tokens=jepa,
+                         token_px=token_px)
+    v["detail"] = detail
+    arm.last_verdict = v
+    arm.note(f"judged {commanded}: votes {v['votes']} "
+             f"{'OK' if v['agrees'] else 'MISMATCH' if v['judged'] else 'blind'}"
+             f" {v['motion']}")
+    return v
+
+
+def nudge_arm(arm, direction, degrees, settle=0.6):
+    """The move "look a bit left/right/up/down" makes. Base turns end going
+    up (backlash); +base_yaw turns right, +wrist tilts up."""
+    here = arm.snapshot()
+    d = float(degrees)
+    if direction in ("left", "right"):
+        _yaw_to(arm, here["base_yaw"] + (d if direction == "right" else -d),
+                settle)
+    else:
+        arm.set("wrist", here["wrist"] + (d if direction == "up" else -d))
 
 
 def look_at_person(arm, latest):
@@ -3602,6 +3752,7 @@ def main():
                      daemon=True).start()
     threading.Thread(target=arm.scan_loop, args=(latest, deadline),
                      daemon=True).start()
+    arm.latest = latest
     brain = arm.make_brain_host(latest)
     threading.Thread(target=brain.loop, args=(deadline,),
                      daemon=True).start()
