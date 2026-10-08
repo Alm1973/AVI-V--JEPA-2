@@ -476,3 +476,11 @@ class TheQuickRulesHint(unittest.TestCase):
         self.assertIn("Quick-rule reading of his words: look_around(count=3)",
                       seen[0])
         self.assertIn("Now: x.", seen[0])
+
+
+class NeverPaid(unittest.TestCase):
+    def test_every_openrouter_model_is_a_free_slug(self):
+        """OpenRouter bills any slug without ':free' to the account."""
+        for name, url, model, per_day, per_min in providers.CHAIN:
+            if name == "openrouter":
+                self.assertTrue(model.endswith(":free"), model)

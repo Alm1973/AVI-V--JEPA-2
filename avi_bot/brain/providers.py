@@ -34,8 +34,11 @@ from datetime import date
 CHAIN = [
     ("groq", "https://api.groq.com/openai/v1", "openai/gpt-oss-20b",
      1000, 30),
+    # llama-3.3-70b-instruct:free was withdrawn (404 "unavailable for
+    # free", 2026-10-08). Nemotron 3 Super is free, takes tools, and made
+    # the right nudge call in 2.4 s from the MSI. Never a paid slug here.
     ("openrouter", "https://openrouter.ai/api/v1",
-     "meta-llama/llama-3.3-70b-instruct:free", 50, 20),
+     "nvidia/nemotron-3-super-120b-a12b:free", 50, 20),
     ("github", "https://models.github.ai/inference", "openai/gpt-4o-mini",
      150, 15),
     ("local", None, "Qwen2.5-VL-3B-Instruct", None, None),
