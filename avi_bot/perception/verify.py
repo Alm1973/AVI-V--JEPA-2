@@ -65,12 +65,21 @@ def _refine(m, c, p):
                                                      -0.5, 0.5))
 
 
-def token_shift(a, b, max_shift=6):
+# The camera's 16:9 frame is squashed into V-JEPA's square 16x16 grid, so a
+# token row is 45 px of a 720-px frame and a 12-degree tilt moves ~6.7 rows.
+# A +-6 search could not see it: "up" came back as "none" on the robot
+# (2026-10-08). +-9 still leaves 7/16 of the grid overlapping.
+MAX_SHIFT = 9
+MIN_GAIN = 0.02
+
+
+def token_shift(a, b, max_shift=MAX_SHIFT):
     """How the scene moved from token grid `a` to `b`, both (H, W, D).
 
     Returns {"dx", "dy"} in tokens (content in `a` at x appears in `b` at
-    x + dx), "score" at that shift and "score0" with no shift. A best shift
-    that is not clearly better than no shift is reported as 0.
+    x + dx), "score" at that shift, "score0" with no shift, and "edge":
+    True when the best shift sits on the search boundary -- the real shift
+    may be beyond it, so the caller should not trust it.
     """
     a, b = _unit(a), _unit(b)
     scores = {}
@@ -83,8 +92,15 @@ def token_shift(a, b, max_shift=6):
     s0 = scores.get((0, 0), best)
     fx = bx + _refine(scores.get((bx - 1, by)), best, scores.get((bx + 1, by)))
     fy = by + _refine(scores.get((bx, by - 1)), best, scores.get((bx, by + 1)))
+    edge = abs(bx) >= max_shift or abs(by) >= max_shift
+    moved = (bx, by) != (0, 0)
     return {"dx": round(fx, 2), "dy": round(fy, 2),
-            "score": round(best, 4), "score0": round(s0, 4)}
+            "score": round(best, 4), "score0": round(s0, 4), "edge": edge,
+            # Trust a shift only if it is inside the search and clearly
+            # beats "nothing moved". On the robot a real 12-degree turn
+            # gained ~0.10; the edge-clipped 'down' gained 0.006.
+            "confident": not edge and (not moved
+                                       or best - s0 >= MIN_GAIN)}
 
 
 def judge(commanded, orb_px=None, jepa_tokens=None, token_px=(80.0, 45.0),

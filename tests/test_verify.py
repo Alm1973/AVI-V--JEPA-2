@@ -14,6 +14,17 @@ def grid(seed=0, h=16, w=16, d=32):
     return np.random.default_rng(seed).normal(size=(h, w, d))
 
 
+def smooth(g, k=5):
+    """Neighbouring tokens alike, as in a real image's features."""
+    out = np.array(g, dtype=float)
+    for axis in (0, 1):
+        acc = np.zeros_like(out)
+        for o in range(-(k // 2), k // 2 + 1):
+            acc += np.roll(out, o, axis=axis)
+        out = acc / k
+    return out
+
+
 def slid(g, dx, dy):
     """The same scene with its content moved dx right, dy down (tokens);
     new content (fresh noise) comes in at the uncovered edges."""
@@ -48,6 +59,25 @@ class JepaTokens(unittest.TestCase):
                 got = vf.token_shift(g, slid(g, dx, dy))
                 self.assertAlmostEqual(got["dx"], dx, delta=0.5)
                 self.assertAlmostEqual(got["dy"], dy, delta=0.5)
+
+    def test_a_tilt_bigger_than_six_rows_is_found(self):
+        """The robot's 12-degree 'up' was 6.7 rows: outside the old +-6."""
+        g = grid()
+        got = vf.token_shift(g, slid(g, 0, 7))
+        self.assertAlmostEqual(got["dy"], 7, delta=0.5)
+        self.assertFalse(got["edge"])
+
+    def test_beyond_the_search_is_flagged_not_trusted(self):
+        """Real features are smooth, so the match climbs toward a shift the
+        search cannot reach and peaks on its edge."""
+        g = smooth(grid())
+        got = vf.token_shift(g, slid(g, 0, 7), max_shift=4)
+        self.assertTrue(got["edge"])
+        self.assertFalse(got["confident"])
+
+    def test_a_real_shift_is_confident(self):
+        g = smooth(grid())
+        self.assertTrue(vf.token_shift(g, slid(g, -3, 0))["confident"])
 
     def test_no_motion_is_zero(self):
         g = grid()
