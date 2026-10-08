@@ -78,16 +78,30 @@ def _next_date(said, month, day):
     return None
 
 
+# Words left dangling once the day is cut out ("test is on Friday" ->
+# "test is on"), and the who-has-what lead-in the model stores facts with
+# ("Shaurya has a chemistry test on Friday").
+_TAIL = re.compile(r"\s*\b(on|this|is|at|the|coming|for)\s*$", re.I)
+_LEAD = re.compile(r"^(?:(?:shaurya|he|i)(?:\s+(?:has got|have got|has|"
+                   r"have|had|got)|'s got|'ve got)|there(?:'s| is))"
+                   r"\s+(?:an?\s+)?", re.I)
+
+
 def what(text):
     """The fact without its day words, for "Tomorrow: chemistry test."""
     t = _WEEKDAY.sub("", text or "")
     t = _TOMORROW.sub("", t)
     t = _MONTH_DAY.sub("", t)
     t = _DAY_MONTH.sub("", t)
-    t = re.sub(r"\b(on|this|is|at)\s*$", "", t.strip(), flags=re.I)
-    t = re.sub(r"\s+(on|this)\s*(?=[,.]|$)", "", t, flags=re.I)
     t = " ".join(t.split()).strip(" ,.;:-")
-    return t
+    while True:
+        cut = _TAIL.sub("", t)
+        if cut == t:
+            break
+        t = cut.strip(" ,.;:-")
+    t = _LEAD.sub("", t).strip(" ,.;:-")
+    t = re.sub(r"\s+(on|this)\s*(?=[,.])", "", t, flags=re.I)
+    return t[:1].upper() + t[1:] if t else t
 
 
 def ahead(facts, today):

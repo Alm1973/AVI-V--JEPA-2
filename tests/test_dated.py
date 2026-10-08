@@ -49,16 +49,23 @@ class ReadingTheDay(unittest.TestCase):
                 self.assertIsNone(dated.day_named(text, MON))
 
     def test_the_words_without_the_day(self):
-        self.assertEqual(dated.what("Chemistry test on Friday."),
-                         "Chemistry test")
-        self.assertEqual(dated.what("math quiz tomorrow"), "math quiz")
+        for text, words in (
+                ("Chemistry test on Friday.", "Chemistry test"),
+                ("math quiz tomorrow", "Math quiz"),
+                ("chemistry test is on Friday", "Chemistry test"),
+                ("Shaurya has a chemistry test on Friday", "Chemistry test"),
+                ("I have an essay due tomorrow", "Essay due"),
+                ("he's got soccer practice on Mondays", "Soccer practice"),
+                ("dentist at 3pm on Friday", "Dentist at 3pm")):
+            with self.subTest(text):
+                self.assertEqual(dated.what(text), words)
 
     def test_ahead_keeps_today_and_tomorrow_only(self):
         facts = [{"text": "chemistry test on Friday", "created_at": MON},
                  {"text": "dentist on Oct 12th", "created_at": MON},
                  {"text": "he likes tea", "created_at": MON}]
         self.assertEqual(dated.ahead(facts, date(2026, 10, 8)),
-                         [(date(2026, 10, 9), "chemistry test")])
+                         [(date(2026, 10, 9), "Chemistry test")])
 
 
 class Clock:
