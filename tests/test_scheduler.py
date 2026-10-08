@@ -241,6 +241,18 @@ class CalendarWarnings(unittest.TestCase):
         self.assertGreaterEqual(seen, 3)
 
 
+
+class TimerWords(unittest.TestCase):
+    def test_a_plain_timer(self):
+        self.assertEqual(sched_mod.timer_words("1 minute timer"),
+                         "Your 1 minute timer is done.")
+
+    def test_his_label_stays_his(self):
+        self.assertEqual(sched_mod.timer_words("pasta"), "Timer done: pasta.")
+
+    def test_no_label(self):
+        self.assertEqual(sched_mod.timer_words(""), "Timer done.")
+
 if __name__ == "__main__":
     unittest.main()
 

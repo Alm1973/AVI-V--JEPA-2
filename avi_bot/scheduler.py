@@ -52,6 +52,18 @@ class Announcement:
                 f"{' STALE' if self.stale else ''}>")
 
 
+def timer_words(text):
+    """"Your 1 minute timer is done." -- not "Timer: 1 minute timer.", as
+    it was heard on the robot. A label he gave stays his: "Timer done:
+    pasta.\""""
+    text = (text or "").strip().rstrip(".")
+    if not text:
+        return "Timer done."
+    if text.endswith(" timer"):
+        return f"Your {text} is done."
+    return f"Timer done: {text}."
+
+
 class Scheduler:
     def __init__(self, timers=None, store=None, calendar=None, modes=None,
                  clock=time.time, stale_after_s=STALE_AFTER_S):
@@ -89,7 +101,7 @@ class Scheduler:
         if self.timers is not None:
             for row in self.timers.due(now):
                 out.append(Announcement(
-                    TIMER, f"Timer: {row['text']}.", beep="alert",
+                    TIMER, timer_words(row["text"]), beep="alert",
                     due_at=row["due_ts"], ref=row["id"]))
         if self.store is not None:
             for row in self.store.due_reminders(now):

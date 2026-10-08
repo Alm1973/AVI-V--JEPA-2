@@ -389,7 +389,7 @@ class Ticking(unittest.TestCase):
         clock.tick(301)
         announcement = avi.tick()
         self.assertIsNotNone(announcement)
-        self.assertIn("Timer", announcement.text)
+        self.assertEqual(announcement.text, "Your 5 minute timer is done.")
 
     def test_tick_is_silent_in_quiet_mode(self):
         clock = Clock()
