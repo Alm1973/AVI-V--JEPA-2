@@ -209,3 +209,20 @@ class HowTall(unittest.TestCase):
         px, py = VIEW.plane_pixel(foot, 60, 135, 0.35)
         self.assertAlmostEqual(
             VIEW.height_over(px, py, foot, 60, 135, 0.35), 0.0, places=6)
+
+
+class Recentre(unittest.TestCase):
+    """'look at me' turns by the difference between two rays."""
+
+    def test_the_centre_needs_no_move(self):
+        y, w = VIEW.recentre(VIEW.width / 2, VIEW.height / 2, 100.0, 150.0)
+        self.assertAlmostEqual(y, 100.0)
+        self.assertAlmostEqual(w, 150.0)
+
+    def test_a_pixel_brought_to_the_centre_is_at_the_centre(self):
+        for px, py in ((900, 200), (300, 600), (1200, 360)):
+            y, w = VIEW.recentre(px, py, 90.0, 158.0)
+            target = VIEW.direction(px, py, 90.0, 158.0)
+            got = VIEW.pixel(target, y, w)
+            self.assertAlmostEqual(got[0], VIEW.width / 2, delta=8)
+            self.assertAlmostEqual(got[1], VIEW.height / 2, delta=8)

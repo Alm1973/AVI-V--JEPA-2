@@ -153,6 +153,22 @@ class View:
         v = np.array([xy[0], xy[1], -1.0]) - cam
         return self.pixel(v / np.linalg.norm(v), yaw, wrist)
 
+    def recentre(self, px, py, yaw, wrist):
+        """(base_yaw, wrist) that bring pixel (px, py) to the frame centre.
+
+        RELATIVE: the change in direction between the centre ray and this
+        pixel's ray, turned into joint deltas. The calibration was measured
+        at one shoulder/elbow shape; the difference between two rays at the
+        same pose is far less sensitive to that than an absolute aim, so
+        "look at me" from the seat pose still lands on him.
+        """
+        az0, el0 = self.direction(self.width / 2.0, self.height / 2.0,
+                                  yaw, wrist)
+        az1, el1 = self.direction(px, py, yaw, wrist)
+        daz = (az1 - az0 + 180.0) % 360.0 - 180.0
+        return (float(yaw) + daz / self.yaw_gain,
+                float(wrist) + (el1 - el0) / self.wrist_gain)
+
     def aim(self, azimuth, elevation):
         """(base_yaw, wrist) that puts a world direction at frame centre.
         Exact: on this shape the optical axis IS (azimuth, pitch)."""

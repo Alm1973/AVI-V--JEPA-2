@@ -63,11 +63,14 @@ def body_move(gesture, beep, have_speaker=False):
 class BrainArm:
     """The dashboard Arm, as avi_bot.main.Avi expects to drive it."""
 
-    def __init__(self, arm, recall, find, seat_view="ATTENTIVE"):
+    def __init__(self, arm, recall, find, seat_view="ATTENTIVE",
+                 look_at_person=None):
         self._arm = arm
         self._recall = recall          # recall(name) -> moves to a taught pose
         self._find = find              # find(name, look) -> dict with "say"
         self._seat = seat_view
+        # () -> centre him in the picture; None = just the seat pose.
+        self._look_at_person = look_at_person
 
     def __getattr__(self, name):
         # config, set, snapshot, play, roommap, desk... pass straight through.
@@ -81,6 +84,8 @@ class BrainArm:
 
     def look_at(self, target):
         if (target or "").strip().lower() in PEOPLE:
+            if self._look_at_person is not None:
+                return self._look_at_person()
             return self._recall(self._seat)
         return self._find(target, True)
 

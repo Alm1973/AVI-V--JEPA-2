@@ -331,3 +331,23 @@ class FocusSeesThePhone(unittest.TestCase):
         self.assertEqual(self.h.focus_tick(), "done")
         self.assertFalse(self.h.focus_active())
         self.assertTrue(self.h.tick().startswith("Focus done. 25 minutes"))
+
+
+class LookAtMe(unittest.TestCase):
+    def test_him_in_the_picture_beats_the_seat_pose(self):
+        """From the seat pose, recalling the seat pose moved nothing."""
+        seen = []
+        body = bh.BrainArm(FakeArm(), lambda n: seen.append(("recall", n)),
+                           lambda n, look: None,
+                           look_at_person=lambda: seen.append("centred"))
+        body.look_at("me")
+        self.assertEqual(seen, ["centred"])
+
+    def test_the_local_rules_catch_it(self):
+        from avi_bot.brain import intents
+        for u in ("look at me", "Look at me!", "turn to me",
+                  "hey avi look at me"):
+            with self.subTest(u):
+                got = intents.match(u)
+                self.assertEqual((got.tool, got.args),
+                                 ("look_at", {"target": "me"}))

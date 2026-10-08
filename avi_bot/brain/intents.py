@@ -233,6 +233,14 @@ def _forget(m):
     return Intent("forget", {"text": m.group("fact").strip()})
 
 
+@rule(r"^(?:look|turn)\s+(?:at|to|towards?)\s+(?:me|here|over\s+here)"
+      r"[.!]?$")
+@rule(r"^(?:hey\s+)?(?:avi,?\s+)?look\s+at\s+me(?:\s+avi)?[.!]?$")
+def _look_at_me(m):
+    # Went to the cloud, which could answer without calling the tool.
+    return Intent("look_at", {"target": "me"})
+
+
 @rule(r"^what\s+timers?\s+(?:do\s+i\s+have|are\s+(?:on|set))\??$")
 def _which_timers(m):
     return Intent("list_timers", {}, reason="answer")

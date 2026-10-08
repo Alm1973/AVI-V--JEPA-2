@@ -652,7 +652,8 @@ class Arm:
                 self, recall,
                 lambda n, look: find_object(self, n, look=look,
                                             latest=latest),
-                seat_view=self.SEAT_VIEW)
+                seat_view=self.SEAT_VIEW,
+                look_at_person=lambda: look_at_person(self, latest))
             return main_mod.Avi(db_path=self.store_path(self.BRAIN_PROFILES),
                                 arm=body, mood=self.mood,
                                 observed=self.observed_notes,
@@ -2370,6 +2371,55 @@ def desk_scan(arm, latest, min_conf=0.30, el_step=10.0, az_step=16.0,
 # and a find used to leave the arm staring at a pen until something else
 # moved it.
 LOOK_HOLD_S = 15.0
+
+
+def look_at_person(arm, latest):
+    """Find him in the picture and centre him. "look at me" used to recall
+    the seat pose -- and from the seat pose (where the arm usually is) that
+    moved nothing, so the reply said done and the robot sat still.
+
+    Falls back to the seat view if nobody is in frame. Ends with a perk_up
+    either way, so there is always something to see. Holds the look like a
+    find does, then the seat loop takes it home.
+    """
+    frame, _ = _frame(latest)
+    target = None
+    if frame is not None:
+        if arm.detector is None:
+            from detector import DeskDetector
+            arm.detector = DeskDetector()
+        people = [d for d in arm.detector.everything(
+                      frame, min_conf=arm.PERSON_MIN_CONF)
+                  if d["label"] == "person"]
+        if people:
+            p = max(people, key=lambda d: d["w"] * d["h"])
+            # Faces sit in the top part of a person box; aim there, not at
+            # the belly the box centre would give.
+            target = (p["cx"], p["cy"] - p["h"] * 0.25)
+    view = getattr(arm.roommap, "view", None)
+    if target is not None and view is not None:
+        h, w = frame.shape[:2]
+        sx, sy = view.width / float(w), view.height / float(h)
+        here = arm.snapshot()
+        yaw, wrist = view.recentre(target[0] * sx, target[1] * sy,
+                                   here["base_yaw"], here["wrist"])
+        arm.hold(LOOK_HOLD_S + 5.0)
+        lo, hi = arm.config.soft_limits("base_yaw")
+        yaw = max(lo, min(hi, yaw))
+        lo, hi = arm.config.soft_limits("wrist")
+        wrist = max(lo, min(hi, wrist))
+        _yaw_to(arm, yaw, 0.6)
+        arm.set("wrist", wrist)
+        time.sleep(0.6)
+        how = f"centred on him (yaw {yaw:.0f}, wrist {wrist:.0f})"
+    else:
+        seat = (load_taught() or {}).get(arm.SEAT_VIEW)
+        if seat:
+            arm.set_pose({j: seat[j] for j in poses.JOINTS})
+        how = "nobody in frame; back to the seat view"
+    arm.note(f"look at me: {how}")
+    arm._gesture_unless_busy("perk_up", " (look at me)")
+    return {"looked": target is not None, "how": how}
 
 
 def _back_to_seat_later(arm, hold=LOOK_HOLD_S):
