@@ -2681,6 +2681,19 @@ def _quietly(arm, fn, what):
         arm.note(f"{what} failed: {exc!r}")
 
 
+class QuietServer(ThreadingHTTPServer):
+    """A viewer closing the camera stream mid-frame is not an error. Each
+    one printed a full traceback (WinError 10053/10054: 16 in a day), and
+    the log's real failures were hard to find among them."""
+
+    GONE = (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], self.GONE):
+            return
+        super().handle_error(request, client_address)
+
+
 def _surveying(arm):
     scanning = getattr(arm, "survey_lock", None)
     return scanning is not None and scanning.locked()
@@ -4095,7 +4108,7 @@ def main():
                                              "detector preload"),
                      daemon=True).start()
 
-    srv = ThreadingHTTPServer((host, args.port), make_handler({
+    srv = QuietServer((host, args.port), make_handler({
         "arm": arm, "latest": latest, "deadline": deadline, "brain": brain,
         "fps": args.fps, "stop": stop_event}))
     srv.daemon_threads = True
