@@ -1201,3 +1201,19 @@ time; what do you know about me; stop.
 - **Rundown reads dated facts** (`memory/dated.py`): "Tomorrow: Chemistry
   test." **Mic button** on the ask box (browser speech recognition) needs
   https: enable HTTPS certificates for the tailnet, then `scripts/https.sh on`.
+
+### 2026-10-08 evening: deployed; looks proven to teach the map
+
+- SSH fixed by re-adding the Mac key on the MSI; everything above deployed,
+  `scripts/smoke.py` 7/7 (both judges right/left, no-move control "none",
+  two chat commands), voice health `ok, piper`.
+- First map-correction attempt was WRONG: it filed the search's own
+  sighting, and a frame from mid-swing (backlash undershoot) moved the mug
+  from 104.6 to 113.1 while the truth was ~98. Now a look waits for a still
+  picture (`look_check.wait_still`, threshold 1.0 measured with
+  `assistant/still_probe.py`: still 0.33, moving 5.9, settle 0.5-1.8) and
+  the map learns only from a re-check after centring. Proven: mug aim 113.0
+  -> found at -15, corrected to 99.1; next look found it AT the aim
+  ("map reinforced"). Laptop: found at its aim twice.
+- Helpers: `scripts/ask.py "look left" ...` (chat from the Mac, shows the
+  camera verdicts; every line costs a model request).
