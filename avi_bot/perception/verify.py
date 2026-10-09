@@ -74,6 +74,12 @@ MAX_SHIFT = 9
 # Robot, 2026-10-08: no-move controls scored 0.92; 6-degree tilts 0.81,
 # 12- and 20-degree moves 0.67-0.73.
 STILL = 0.88
+# Below STILL but at least this alike, and no shift stands out: still too.
+# In the dark (room 6-9/255, 2026-10-09) sensor noise pulls a still view to
+# 0.887-0.90, right on STILL, and the controls that fell just under came
+# back blind instead of "didn't move". Moves stay far below: 8 degrees at
+# night 0.70-0.72, 6-degree tilts by day 0.81.
+STILL_WEAK = 0.85
 # The best shift must stand this far above the median shift's score.
 # Robot, 2026-10-08, one-axis search: every real 6-20 degree move scored
 # 0.08-0.17; no-move controls are caught earlier, by STILL.
@@ -140,9 +146,15 @@ def token_shift(a, b, max_shift=MAX_SHIFT, axis=None, band=1):
             v = scores.get((k, 0) if along == "x" else (0, k))
             out.append(None if v is None else round(v, 3))
         return out
+    confident = not edge and prominence >= MIN_PROMINENCE
+    if not confident and raw0 >= STILL_WEAK:
+        return {"dx": 0.0, "dy": 0.0, "still": True, "edge": False,
+                "confident": True, "prominence": round(prominence, 4),
+                "raw0": round(raw0, 4), "profile_x": prof("x"),
+                "profile_y": prof("y")}
     return {"dx": round(fx, 2), "dy": round(fy, 2), "still": False,
             "edge": edge, "prominence": round(prominence, 4),
-            "confident": not edge and prominence >= MIN_PROMINENCE,
+            "confident": confident,
             "raw0": round(raw0, 4), "score": round(best, 4),
             "profile_x": prof("x"), "profile_y": prof("y")}
 

@@ -94,6 +94,22 @@ class JepaTokens(unittest.TestCase):
         got = vf.token_shift(g, g + 0.02 * grid(seed=3))
         self.assertTrue(got["still"])
 
+    def test_a_noisy_still_view_in_the_dark_is_still(self):
+        """Night controls scored just under STILL and came back blind."""
+        rng = np.random.default_rng(11)
+        g = smooth(grid()) * 5.0 + positional(grid())
+        noisy = g + rng.normal(scale=0.8, size=g.shape)   # raw0 ~0.86
+        got = vf.token_shift(g, noisy)
+        self.assertLess(got["raw0"], vf.STILL)
+        self.assertGreaterEqual(got["raw0"], vf.STILL_WEAK)
+        self.assertTrue(got["still"])
+
+    def test_a_clear_shift_beats_the_weak_still(self):
+        c = smooth(grid()) * 5.0
+        p = positional(c)
+        got = vf.token_shift(c + p, slid(c, -3, 0) + p)
+        self.assertFalse(got["still"])
+
     def test_finds_the_shift(self):
         g = grid()
         for dx, dy in ((-3, 0), (2, 0), (0, 2), (-1, -2)):

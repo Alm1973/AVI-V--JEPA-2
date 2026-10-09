@@ -48,8 +48,14 @@ def main(argv):
                 ok = v.get("judged") and v.get("agrees")
                 what = f"{direction} {deg} deg"
             else:                    # the control: nothing moved
-                ok = set(v.get("votes", {}).values()) <= {"none"}
+                votes = set(v.get("votes", {}).values())
+                ok = votes <= {"none"}
                 what = "no-move control"
+                if ok and not votes:
+                    # Not wrong, but blind: nobody said "still" either.
+                    print(f"WARN  camera judge, {what}  no judge could see")
+                    time.sleep(1.0)
+                    continue
             check(f"camera judge, {what}", bool(ok),
                   json.dumps(v.get("votes")))
             time.sleep(1.0)
