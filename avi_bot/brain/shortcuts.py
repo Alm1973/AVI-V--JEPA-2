@@ -144,6 +144,12 @@ class Shortcuts:
         self.last = None
         return k if cur.rowcount else None
 
+    def forget(self, k):
+        cur = self.db.execute("DELETE FROM shortcuts WHERE key = ?",
+                              (key(k),))
+        self.db.commit()
+        return cur.rowcount
+
     def known(self, limit=20):
         return [dict(r) for r in self.db.execute(
             "SELECT key, calls, seen, proven, uses FROM shortcuts"

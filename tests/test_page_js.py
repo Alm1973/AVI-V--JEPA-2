@@ -269,3 +269,42 @@ class BodyDrawing(unittest.TestCase):
         self.assertNotIn("NaN", svg)
         self.assertRegex(svg, r"camera down \d+\u00b0, lens \d+ cm")
         self.assertIn("(link lengths estimated)", svg)
+
+
+
+class LearnedPanel(unittest.TestCase):
+    """The page's 'what avi learned by itself' (learnedHtml), in node."""
+
+    def test_it_lists_shortcuts_decoys_and_the_check(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed")
+        import json
+        html = dict(served_pages())["server.py"]
+        js = html.split("<script>")[1].split("</script>", 1)[0]
+        m = re.search(r"function esc\(t\)\{.*?\n\}\n", js, re.S)
+        f = re.search(r"function learnedHtml\(r\)\{.*?\n\}\n", js, re.S)
+        self.assertIsNotNone(f, "learnedHtml not found")
+        data = {"shortcuts": [{"key": "swim like a dolphin", "calls":
+                               '[["perform", {"name": "dolphin"}]]',
+                               "seen": 2, "proven": 0, "uses": 3}],
+                "decoys": [{"hits": 1197}],
+                "selfcheck": {"day": "2026-10-09", "joints": {
+                    "elbow": {"ok": False}, "wrist": {"ok": True}}}}
+        prog = m.group(0) + f.group(0) + "\nconsole.log(JSON.stringify([" \
+            "learnedHtml(" + json.dumps(data) + "), learnedHtml({})]));"
+        tmp = ROOT / ".page_learned_check.js"
+        tmp.write_text(prog)
+        try:
+            r = subprocess.run([node, str(tmp)], capture_output=True,
+                               text=True)
+        finally:
+            tmp.unlink(missing_ok=True)
+        self.assertEqual(r.returncode, 0, r.stderr[:600])
+        full, empty = json.loads(r.stdout)
+        self.assertIn("swim like a dolphin", full)
+        self.assertIn("perform dolphin", full)
+        self.assertIn("used 3", full)
+        self.assertIn("seen 1197", full)
+        self.assertIn("not moving: elbow", full)
+        self.assertEqual(empty, "nothing yet")

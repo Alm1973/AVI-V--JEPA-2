@@ -178,6 +178,25 @@ class Host:
         except Exception:
             return []
 
+    def shortcuts(self):
+        """Words AVI learned to answer without the model."""
+        brain = self.brain
+        short = getattr(getattr(brain, "router", None), "shortcuts", None)
+        if short is None:
+            return []
+        try:
+            return short.known(limit=20)
+        except Exception:
+            return []
+
+    def forget_shortcut(self, key):
+        brain = self.brain
+        short = getattr(getattr(brain, "router", None), "shortcuts", None)
+        if short is None:
+            return 0
+        with self._turn:
+            return short.forget(key)
+
     def forget_move(self, name):
         brain = self.brain
         if brain is None:

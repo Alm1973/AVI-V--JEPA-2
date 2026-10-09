@@ -1486,6 +1486,8 @@ PAGE = b"""<!doctype html>
     <div id="poses"></div>
     <div class="sec">dances avi made up</div>
     <div id="moves" class="dim" style="font-size:13px">none yet: ask it to dance like something</div>
+    <div class="sec">what avi learned by itself</div>
+    <div id="learned" class="dim" style="font-size:13px"></div>
     <div class="sec">body <span style="text-transform:none;letter-spacing:0">3D model, live</span></div>
     <div id="body3d"></div>
     <div class="sec">avi <span id="health" style="text-transform:none;letter-spacing:0"></span></div>
@@ -1563,11 +1565,43 @@ function movesHtml(list){
       'onclick="forgetMove(this.dataset.n)">\\u00d7</button></div>';
   }).join("");
 }
+// Shortcuts (words it answers without the model), the "people" it learned
+// are not him, and today's self-check: AVI's learning, made visible.
+function learnedHtml(r){
+  const out = [];
+  for (const k of (r.shortcuts || [])) {
+    let did = "";
+    try { did = JSON.parse(k.calls).map(c => c[0].replace(/_/g, " ") +
+      (c[1].name ? " " + c[1].name : "")).join(", "); } catch (e) {}
+    const n = esc(k.key);
+    out.push('<div class="g"><span>\\u201c' + n + '\\u201d \\u2192 ' +
+      esc(did) + (k.proven || k.seen >= 2 ? " \\u2713" : " (seen once)") +
+      (k.uses ? ", used " + k.uses + "\\u00d7" : "") + '</span>' +
+      '<button data-k="' + n + '" title="forget it" ' +
+      'onclick="forgetShortcut(this.dataset.k)">\\u00d7</button></div>');
+  }
+  for (const d of (r.decoys || []))
+    out.push("<div>ignores a still \\u2018person\\u2019 in the seat view " +
+      "(a poster), seen " + d.hits + "\\u00d7</div>");
+  const sc = r.selfcheck;
+  if (sc && sc.joints) {
+    const bad = Object.entries(sc.joints).filter(e => e[1].ok === false)
+      .map(e => e[0]);
+    out.push("<div>self-check " + esc(sc.day) + ": " + (bad.length ?
+      "not moving: " + esc(bad.join(", ")) : "every joint moved") + "</div>");
+  }
+  return out.join("") || "nothing yet";
+}
 async function loadMoves(){
   try {
-    const r = await api("/moves", {});
+    const r = await api("/learned", {});
     document.getElementById("moves").innerHTML = movesHtml(r.moves);
+    document.getElementById("learned").innerHTML = learnedHtml(r);
   } catch (e) {}
+}
+async function forgetShortcut(k){
+  await api("/forget_shortcut", {key: k});
+  loadMoves();
 }
 async function playMove(name){
   const r = await api("/perform", {name: name});
@@ -2241,6 +2275,18 @@ def make_handler(st):
                     self._json({"error": "no brain in this process"}, 503)
                 else:
                     self._json(brain.ask(body.get("text", "")))
+            elif self.path in ("/learned", "/forget_shortcut"):
+                # What AVI learned by itself, for the page: shortcuts, the
+                # decoys presence ignores, today's self-check.
+                if self.path == "/forget_shortcut":
+                    return self._json({"forgot": brain.forget_shortcut(
+                        str(body.get("key") or "")[:120])
+                        if brain is not None else 0})
+                self._json({
+                    "shortcuts": brain.shortcuts() if brain else [],
+                    "moves": brain.moves() if brain else [],
+                    "decoys": arm.presence.decoys(),
+                    "selfcheck": arm.last_selfcheck()})
             elif self.path in ("/perform", "/moves", "/forget_move"):
                 # The dances AVI made up (motion/choreo.py): list, play one
                 # by name with no model in the loop, or forget one.
