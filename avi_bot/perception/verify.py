@@ -162,6 +162,12 @@ def token_shift(a, b, max_shift=MAX_SHIFT, axis=None, band=1):
 AXIS = {"left": "x", "right": "x", "up": "y", "down": "y"}
 
 
+def similarity(a, b):
+    """How alike two token grids are at zero shift (token_shift's raw0):
+    STILL and above is the same view."""
+    return float((_unit(a) * _unit(b)).sum(-1).mean())
+
+
 def judge(commanded, orb_px=None, jepa_tokens=None, token_px=(80.0, 45.0),
           min_px=MIN_PX):
     """The verdict on one move.
@@ -189,9 +195,20 @@ def judge(commanded, orb_px=None, jepa_tokens=None, token_px=(80.0, 45.0),
             "agrees": bool(seen) and all(v == commanded for v in seen)}
 
 
-def dominant(before, after):
+def dominant(before, after, body=None):
     """The direction a joint change should move the camera, for judging
-    move_joints: the larger of the base turn and the wrist tilt."""
+    move_joints: the larger of the base turn and the tilt. With the body
+    model (motion/body.py), from its prediction -- which counts shoulder
+    and elbow too once they are proven on the robot."""
+    if body is None:
+        try:
+            from avi_bot.motion import body as body_mod
+            body = body_mod.load()
+        except Exception:
+            body = None
+    if body is not None and all(j in before and j in after for j in (
+            "base_yaw", "shoulder", "elbow", "wrist")):
+        return body.direction(before, after)
     dyaw = float(after.get("base_yaw", 0.0)) - float(before.get("base_yaw",
                                                                  0.0))
     dwr = float(after.get("wrist", 0.0)) - float(before.get("wrist", 0.0))

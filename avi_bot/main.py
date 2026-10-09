@@ -135,6 +135,7 @@ class Avi:
             raise
         self.logging_enabled = True
         self.turns = []
+        self.last_performance = None
 
     # --- wiring ----------------------------------------------------------
     def _wire(self):
@@ -150,14 +151,15 @@ class Avi:
             "find_object": self._find,
             "open_app": lambda name: self.apps.open(name),
             "robot_status": None,        # filled below, needs the budget
-            "praise": lambda: self._mood_event("praise"),
-            "scold": lambda: self._mood_event("scold"),
+            "praise": lambda: self._feedback("praise"),
+            "scold": lambda: self._feedback("scold"),
             "stop": self._stop,
             "look_at": self._look_at,
             "play_emotion": self._play,
             "nudge": self._nudge,
             "move_joints": self._move_joints,
             "motion_sequence": self._sequence,
+            "perform": self._perform,
             "go_to_pose": self._go_to_pose,
             "describe_view": self._describe_view,
             "look_around": self._look_around,
@@ -258,6 +260,21 @@ class Avi:
             except Exception:
                 pass
         return None, {"event": name}
+
+    # Praise or a scold this soon after a performance is about the dance.
+    FEEDBACK_WINDOW_S = 120.0
+
+    def _feedback(self, name):
+        """Praise/scold: the mood event, and -- right after a performance
+        -- the dance's score, which is what decides whether it is kept
+        (memory/db.py learned_moves)."""
+        said, info = self._mood_event(name)
+        move, ts = self.store.last_move()
+        if move and ts is not None and \
+                self.clock() - ts <= self.FEEDBACK_WINDOW_S:
+            self.store.rate_move(move, 1 if name == "praise" else -1)
+            info = dict(info, dance=move)
+        return said, info
 
     def _stop(self):
         self._safe(lambda: self.arm.cancel())
@@ -434,6 +451,89 @@ class Avi:
             run()
         return None, {"steps": len(steps), "seconds": round(sum(holds), 1)}
 
+    def _perform(self, name, idea=None, moves=None):
+        """Dance or act something out (motion/choreo.py).
+
+        Composed by the model when it sent moves; otherwise the one kept
+        under this name; otherwise made up here from what the name evokes.
+        Whatever is played is kept, and the dashboard judges it from the
+        picture -- did the view move, did it come back -- which feeds the
+        next performance (bigger if nothing visibly moved).
+        """
+        if self.arm is None:
+            return "I have no arm attached.", None
+        from avi_bot.motion import body as body_mod, choreo
+        known = self.store.get_move(name)
+        made = None
+        if moves:
+            moves, _ = choreo.clean(moves)
+            made = "composed" if moves else None
+        if made:
+            self.store.save_move(name, moves, idea=idea, source=made)
+            scale = 1.0
+        elif known and known["score"] >= 0:
+            moves, idea, scale = known["moves"], known["idea"], known["scale"]
+            made = "remembered"
+        else:
+            # Never made, or he disliked the last one: a new one.
+            moves, idea = choreo.improvise(
+                name, variant=(known or {}).get("performed", 0))
+            made = "improvised"
+            self.store.save_move(name, moves, idea=idea, source=made)
+            scale = 1.0
+        config = getattr(self.arm, "config", None) or poses_mod.load()
+        here = dict(self.arm.snapshot())
+        body = body_mod.load()
+        stage = None
+        if body is not None and not body.safe(here):
+            # Folded (REST) or a shape the body model does not describe:
+            # dance from where it looks at him instead.
+            stage = poses_mod.get_pose(poses_mod.OBSERVE_POSE)
+        try:
+            move, info = choreo.compose(moves, stage or here, config=config,
+                                        body=body, scale=scale,
+                                        name=f"perform {name}"[:40])
+        except ValueError as exc:
+            return f"I can't do that one: {exc}.", {"missed": True}
+        self._hold(info["seconds"] + 40.0)
+
+        def run():
+            if stage is not None:
+                self._safe(lambda: self.arm.set_pose(stage))
+                self._sleep(max(backlash_mod.travel_s(
+                    float(here[j]), float(stage[j])) for j in stage))
+            perform = getattr(self.arm, "perform", None)
+            got = (self._safe(lambda: perform(move, name))
+                   if callable(perform) else
+                   self._safe(lambda: self.arm.play_move(move)))
+            seen = got.get("moved") if isinstance(got, dict) else None
+            self.store.performed_move(name, seen=seen)
+            self.last_performance = {"name": name, "check": got}
+
+        if self.background:
+            import threading
+            threading.Thread(target=run, daemon=True).start()
+        else:
+            run()
+        return None, {"performing": name, "made": made, "idea": idea,
+                      "moves": [m["move"] for m in info["moves"]],
+                      "seconds": info["seconds"], "notes": info["notes"]}
+
+    def _moves_words(self):
+        """'dolphin (he liked it), robot (he disliked it: make a new one)'
+        for the model; None when AVI has made none up."""
+        try:
+            known = self.store.moves_known()
+        except Exception:
+            return None
+        out = []
+        for m in known:
+            how = (" (he liked it)" if m["score"] > 0 else
+                   " (he disliked it: make a new one)" if m["score"] < 0
+                   else "")
+            out.append(m["name"] + how)
+        return ", ".join(out) or None
+
     def _describe_view(self):
         """What the camera sees now, from the same labels the model gets --
         so the answer exists even when the model is out of reach."""
@@ -578,6 +678,7 @@ class Avi:
             camera=sit.get("camera"), pose=sit.get("pose"),
             desk=sit.get("desk"), light=sit.get("light"),
             modes=self._modes_words(), noticed=noticed,
+            moves=self._moves_words(),
             mood=(self.mood.emotion() if self.mood else None),
             turns=self.turns[-6:])
         decision = self.router.handle(utterance, context=ctx)

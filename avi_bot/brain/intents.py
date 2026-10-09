@@ -265,6 +265,21 @@ def _wave(m):
     return Intent("play_emotion", {"name": "wave"})
 
 
+# "do an interpretive dance like a dolphin": offline, AVI makes one up
+# (motion/choreo.py improvise); with the cloud, the model composes it.
+@rule(r"^(?:can\s+(?:you|u)\s+|please\s+)?(?:do|show\s+me|perform)\s+"
+      r"(?P<name>(?:(?:a|an|the|your|me\s+a|some)\s+)?[a-z' ]{0,40}?"
+      r"\bdance(?:\s+(?:like|as)\s+(?:a|an|the)\s+[a-z ]{1,25}?)?)"
+      r"(?:\s+(?:for\s+me|again|please|now))*[.!?]?$")
+@rule(r"^(?:can\s+(?:you|u)\s+)?(?P<name>dance(?:\s+(?:like|as)\s+"
+      r"(?:a|an|the)\s+[a-z ]{1,25}?)?)(?:\s+(?:for\s+me|again|please|"
+      r"now))*[.!?]?$")
+@rule(r"^(?:can\s+(?:you|u)\s+)?(?:act|move|pretend\s+to\s+be)\s+"
+      r"(?:like\s+)?(?P<name>(?:a|an|the)\s+[a-z ]{1,25}?)[.!?]?$")
+def _perform(m):
+    return Intent("perform", {"name": " ".join(m.group("name").split())})
+
+
 @rule(r"^(?:can\s+(?:you|u)\s+)?(?P<g>nod|shake\s+your\s+head)[.!?]?$")
 def _nod_shake(m):
     return Intent("play_emotion",

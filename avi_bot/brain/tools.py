@@ -24,6 +24,11 @@ ARM_GESTURES = ("nod", "shake", "perk_up", "droop", "celebrate", "ahem",
                 "yawn_wake", "thinking", "embarrassed", "curious_lean",
                 "excited_wiggle", "startled", "doze", "wave")
 JOINT_NAMES = ("base_yaw", "shoulder", "elbow", "wrist")
+# motion/choreo.py PRIMITIVES, mirrored like ARM_GESTURES (test_brain
+# checks the two agree).
+PERFORM_MOVES = ("sway", "bob", "nod", "shake", "wave", "leap", "spin",
+                 "wiggle", "circle", "lean_in", "rise", "duck", "look_left",
+                 "look_right", "look_up", "look_down", "pause")
 
 
 def _tool(name, description, properties=None, required=None, **extra):
@@ -112,6 +117,26 @@ TOOLS = [
                          "hold_s": {"type": "number", "minimum": 0.1,
                                     "maximum": 3.0}}}}},
           ["steps"]),
+    # GenEM's two steps (docs/RESEARCH-motion.md): picture how the thing
+    # moves, then write it in the arm's own primitives. Kept by name, so a
+    # second "dance like a dolphin" is the same dance unless he disliked it.
+    _tool("perform", "Dance or act out anything with no gesture ('dance "
+          "like a dolphin', 'act like a robot'). For a NEW one, picture how "
+          "it moves (idea) and ALWAYS compose 4-10 moves: wave rolls down "
+          "the arm like swimming, leap arcs up then dives, rise stretches "
+          "tall, duck shrinks, spin is a big turn, circle traces a loop. "
+          "Name only, no moves, just repeats one the context lists.",
+          {"name": {"type": "string", "maxLength": 60},
+           "idea": {"type": "string", "maxLength": 160},
+           "moves": {"type": "array", "maxItems": 12, "items": {
+               "type": "object", "properties": {
+                   "move": {"type": "string", "enum": list(PERFORM_MOVES)},
+                   "size": {"type": "integer", "minimum": 1, "maximum": 3},
+                   "times": {"type": "integer", "minimum": 1, "maximum": 6},
+                   "speed": {"type": "string",
+                             "enum": ["slow", "normal", "fast"]}},
+               "required": ["move"]}}},
+          ["name"]),
     _tool("describe_view", "Say what the camera sees right now."),
     _tool("look_around", "Turn left, centre and right, then say what was "
                          "seen and where.",
@@ -237,6 +262,11 @@ def validate_call(name, args, lenient=False):
         elif kind == "boolean":
             if not isinstance(value, bool):
                 return None, f"{name}.{key}: {value!r} is not true/false"
+        elif kind == "array":
+            if not isinstance(value, list):
+                return None, f"{name}.{key}: {value!r} is not a list"
+            if "maxItems" in rule and len(value) > rule["maxItems"]:
+                return None, f"{name}.{key}: more than {rule['maxItems']}"
         elif kind == "string":
             if not isinstance(value, str):
                 return None, f"{name}.{key}: {value!r} is not a string"

@@ -44,7 +44,7 @@ def _clip(text, limit):
 def build(now=None, activity=None, objects=None, mood=None, events=None,
           facts=None, turns=None, personality=None, max_chars=MAX_CHARS,
           camera=None, pose=None, noticed=None, desk=None, light=None,
-          modes=None):
+          modes=None, moves=None):
     """Assemble the context block. Returns a string.
 
     Sections are added in order of how much they change the answer, so that
@@ -94,6 +94,11 @@ def build(now=None, activity=None, objects=None, mood=None, events=None,
 
     if mood:
         parts.append(f"Your mood: {_clip(mood, 40)}.")
+
+    if moves:
+        # Performances it made up (motion/choreo.py), so "do the dolphin
+        # dance again" replays one and a disliked one gets made anew.
+        parts.append("Dances you made up: " + _clip(moves, 200) + ".")
 
     if events:
         lines = []

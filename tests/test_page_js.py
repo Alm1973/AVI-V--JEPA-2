@@ -233,3 +233,39 @@ console.log(JSON.stringify({chat: CHAT, painted}));
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class BodyDrawing(unittest.TestCase):
+    """The page's 3D view of the arm (bodySvg), run in node on what /state
+    sends for a taught pose."""
+
+    def test_it_draws_the_arm_and_says_where_it_looks(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed")
+        import json
+        import sys
+        sys.path.insert(0, str(ROOT))
+        from avi_bot.motion import body, poses
+        state = body.state(poses.get_pose("ATTENTIVE"))
+        html = dict(served_pages())["server.py"]
+        js = html.split("<script>")[1].split("</script>", 1)[0]
+        m = re.search(r"function bodySvg\(b\)\{.*?\n\}\n", js, re.S)
+        self.assertIsNotNone(m, "bodySvg not found in the page")
+        prog = m.group(0) + "\nconsole.log(JSON.stringify([bodySvg(" + \
+            json.dumps(state) + "), bodySvg(null)]));"
+        tmp = ROOT / ".page_body_check.js"
+        tmp.write_text(prog)
+        try:
+            r = subprocess.run([node, str(tmp)], capture_output=True,
+                               text=True)
+        finally:
+            tmp.unlink(missing_ok=True)
+        self.assertEqual(r.returncode, 0, r.stderr[:600])
+        svg, none = json.loads(r.stdout)
+        self.assertEqual(none, "")
+        self.assertIn("<svg", svg)
+        self.assertEqual(svg.count("<circle"), 4)
+        self.assertNotIn("NaN", svg)
+        self.assertIn("camera down 24", svg)
+        self.assertIn("(link lengths estimated)", svg)

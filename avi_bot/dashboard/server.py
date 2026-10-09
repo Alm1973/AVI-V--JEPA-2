@@ -66,6 +66,7 @@ from avi_bot.dashboard import health as health_mod                # noqa: E402
 from avi_bot.voice import output as output_mod                    # noqa: E402
 from avi_bot.voice import tts as tts_mod                          # noqa: E402
 from avi_bot.perception import look_check as look_check_mod       # noqa: E402
+from avi_bot.motion import body as body_mod                      # noqa: E402
 from avi_bot.perception import spatial as spatial_mod             # noqa: E402
 from avi_bot.perception import observations as observations_mod   # noqa: E402
 from avi_bot.perception import scan_policy as scan_policy_mod     # noqa: E402
@@ -163,6 +164,7 @@ class Arm:
         # The stream, for judging moves from the picture (set by main()).
         self.latest = None
         self.last_verdict = None
+        self.last_performance = None
         self.last_behaviour = None
         self.detector = None
         self._detector_lock = threading.Lock()
@@ -271,6 +273,99 @@ class Arm:
         self.engine.style = engine.Style(**mood_mod.style_for(emotion))
         self.note(f"gesture {name}{why} [{emotion}]")
         return move
+
+    # A performance (motion/choreo.py) judged from the picture. Mean abs
+    # difference of 64x36 grey thumbnails from the view before it started
+    # (look_check.thumb; still 0.33, the frame of a 15-degree turn 5.86):
+    # above PERFORM_MOVED at some point = it visibly moved; at most
+    # PERFORM_BACK at the end = it came back to where it started.
+    PERFORM_MOVED = 3.0
+    PERFORM_BACK = 2.0
+
+    def play_move(self, move, label=None):
+        self.engine.push(move)
+        self.note(f"perform {label or move.name} ({move.duration:.1f} s)")
+        return move
+
+    def perform(self, move, label=None):
+        """Play `move` and say from the picture whether it happened: did
+        the view change while it played, and is it back where it started.
+        Thumbnails vote, and V-JEPA votes when its encoder is loaded -- in
+        the dark only JEPA can see, as for single moves."""
+        import numpy as np
+        t_end = time.time() + 4.0
+        while self.engine.busy() and time.time() < t_end:
+            time.sleep(0.1)
+        latest = self.latest
+        before, seq = _frame(latest) if latest is not None else (None, -1)
+        self.play_move(move, label)
+        if before is None:
+            return {"moved": None, "back": None, "why": "no camera"}
+        level = float(before.mean())
+        dark = level < look_check_mod.DARK_LEVEL
+        t0 = look_check_mod.thumb(before)
+        ga = None
+        try:
+            ga = _jepa_grid(self, before)
+        except Exception:
+            ga = None
+        diffs, sims = [], []
+        start = time.time()
+        marks = [start + move.duration * f for f in (0.25, 0.5, 0.75)]
+        while time.time() < start + move.duration + 0.3:
+            f, seq = _frame(latest, after=seq)
+            if f is None:
+                break
+            diffs.append(float(np.abs(look_check_mod.thumb(f) - t0).mean()))
+            if ga is not None and marks and time.time() >= marks[0]:
+                marks.pop(0)
+                try:
+                    gb = _jepa_grid(self, f)
+                    if gb is not None:
+                        sims.append(verify_mod.similarity(ga, gb))
+                except Exception:
+                    pass
+        t_end = time.time() + 5.0
+        while self.engine.busy() and time.time() < t_end:
+            time.sleep(0.1)
+        time.sleep(0.8)
+        after, _ = _frame(latest)
+        votes_moved, votes_back = {}, {}
+        final = None
+        if not dark and diffs:
+            votes_moved["thumbs"] = max(diffs) >= self.PERFORM_MOVED
+        if after is not None:
+            final = float(np.abs(look_check_mod.thumb(after) - t0).mean())
+            if not dark:
+                votes_back["thumbs"] = final <= self.PERFORM_BACK
+            if ga is not None:
+                try:
+                    gb = _jepa_grid(self, after)
+                    if gb is not None:
+                        votes_back["jepa"] = (verify_mod.similarity(ga, gb)
+                                              >= verify_mod.STILL_WEAK)
+                except Exception:
+                    pass
+        if sims:
+            votes_moved["jepa"] = min(sims) < verify_mod.STILL_WEAK
+
+        def combined(votes):
+            if not votes:
+                return None
+            return any(votes.values())
+
+        out = {"moved": combined(votes_moved),
+               "back": (all(votes_back.values()) if votes_back else None),
+               "votes": {"moved": votes_moved, "back": votes_back},
+               "max_diff": round(max(diffs), 2) if diffs else None,
+               "final_diff": None if final is None else round(final, 2),
+               "jepa_min": round(min(sims), 3) if sims else None,
+               "light": round(level, 1), "dark": dark}
+        self.note(f"performed {label or move.name}: moved {out['moved']}, "
+                  f"back {out['back']} (diff max {out['max_diff']}, end "
+                  f"{out['final_diff']}, jepa min {out['jepa_min']})")
+        self.last_performance = out
+        return out
 
     def mood_event(self, name, target=None):
         self.mood.event(name, target=target)
@@ -1253,6 +1348,8 @@ PAGE = b"""<!doctype html>
     <div class="g" id="gestures"></div>
     <div class="sec">poses</div>
     <div id="poses"></div>
+    <div class="sec">body <span style="text-transform:none;letter-spacing:0">3D model, live</span></div>
+    <div id="body3d"></div>
     <div class="sec">avi <span id="health" style="text-transform:none;letter-spacing:0"></span></div>
     <div class="g">
       <button id="spk" onclick="toggleSpeak()">speak: off</button>
@@ -1315,6 +1412,43 @@ function didLine(d){
       (v.retried ? ", retried" : "")};
   }
   return {bad: false, text: s};
+}
+// AVI's body (motion/body.py) drawn from where the joints are now: the desk,
+// the arm, and the way the camera looks. Seen from front-left and above.
+function bodySvg(b){
+  if (!b || !b.points) return "";
+  const W = 300, H = 210, K = 330, ca = Math.cos(0.7), sa = Math.sin(0.7),
+        ce = Math.cos(0.42), se = Math.sin(0.42);
+  const P = p => {
+    const xr = p[0] * ca + p[1] * sa, yr = -p[0] * sa + p[1] * ca;
+    return [(W * 0.42 - yr * K).toFixed(1),
+            (H * 0.86 - (p[2] * ce - xr * se) * K).toFixed(1)];
+  };
+  const desk = [[-0.15, -0.35, 0], [0.55, -0.35, 0], [0.55, 0.35, 0],
+                [-0.15, 0.35, 0]].map(P).map(q => q.join(",")).join(" ");
+  const names = ["base", "shoulder", "elbow", "wrist", "lens"];
+  const pts = names.map(n => P(b.points[n]));
+  const lens = b.points.lens, lk = b.look || [1, 0, 0];
+  const tip = P([lens[0] + 0.14 * lk[0], lens[1] + 0.14 * lk[1],
+                 lens[2] + 0.14 * lk[2]]);
+  let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" ' +
+    'role="img" aria-label="3D model of the arm">' +
+    '<polygon points="' + desk + '" fill="rgba(127,127,127,.12)" ' +
+    'stroke="rgba(127,127,127,.4)"/>' +
+    '<polyline points="' + pts.map(q => q.join(",")).join(" ") +
+    '" fill="none" stroke="currentColor" stroke-width="5" ' +
+    'stroke-linecap="round" stroke-linejoin="round"/>' +
+    '<line x1="' + pts[4][0] + '" y1="' + pts[4][1] + '" x2="' + tip[0] +
+    '" y2="' + tip[1] + '" stroke="#e8a33d" stroke-width="2" ' +
+    'stroke-dasharray="4 3"/>';
+  for (const q of pts.slice(1))
+    svg += '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="4" ' +
+      'fill="#e8a33d"/>';
+  return svg + "</svg>" + '<div class="dim" style="font-size:12px">' +
+    "camera " + (b.elevation >= 0 ? "up " : "down ") +
+    Math.abs(b.elevation).toFixed(0) + "\\u00b0, lens " +
+    (100 * lens[2]).toFixed(0) + " cm above the desk" +
+    (b.measured ? "" : " (link lengths estimated)") + "</div>";
 }
 // Announcements join the conversation once each, keyed by when they were
 // made; the ones already there when the page opened are not replayed.
@@ -1613,6 +1747,7 @@ setInterval(async () => {
   paintCommon(s);
   tick(s.ends_in);
   heardFrom(s.announced || []);
+  if (s.body) document.getElementById("body3d").innerHTML = bodySvg(s.body);
 }, 700);
 let SET = {};
 function paintSettings(){
@@ -1700,6 +1835,8 @@ def make_handler(st):
                 "reopens": getattr(arm.backend, "reopens", 0),
                 "build": BUILD, "started": STARTED,
                 "ends_in": max(0.0, deadline - time.time()),
+                "body": body_mod.state(sent),
+                "last_performance": arm.last_performance,
                 "joints": [{"name": j, "deg": sent[j],
                             "count": round(cfg.deg_to_count(j, sent[j])),
                             "lo": cfg.soft_limits(j)[0],
@@ -2072,6 +2209,41 @@ def make_handler(st):
                 arm.paused.set() if want else arm.paused.clear()
                 arm.note("paused" if want else "resumed")
                 self._json({"ok": True, "paused": want})
+            elif self.path == "/verify_move" and body.get("joint"):
+                # One joint by a few degrees, judged against what the body
+                # model (motion/body.py) says the camera should do. Shoulder
+                # and elbow had no expected direction before it, so they
+                # were never judged; this is the experiment that says
+                # whether the model's prediction can be trusted.
+                joint = str(body.get("joint"))
+                if joint not in poses.JOINTS:
+                    return self._json({"error": "joint must be one of "
+                                       + ", ".join(poses.JOINTS)}, 400)
+                model = body_mod.load()
+                if model is None:
+                    return self._json({"error": "no body model"}, 400)
+                deg = max(-20.0, min(20.0, float(body.get("degrees", 6))))
+                if arm.survey_lock.locked():
+                    return self._json({"error": "the arm is surveying"}, 409)
+                arm.hold(60.0)
+                pose0 = arm.snapshot()
+                lo, hi = arm.config.soft_limits(joint)
+                to = dict(pose0, **{joint: max(lo, min(hi, pose0[joint]
+                                                       + deg))})
+                want = model.direction(pose0, to, reach=True)
+                turn = model.view_change(pose0, to)
+                if want is None:
+                    return self._json({"error": "the model expects no "
+                                       "visible turn", "turn": turn}, 400)
+                v = judged_move(arm, latest, want,
+                                lambda: arm.set(joint, to[joint]))
+                v["predicted"] = want
+                v["predicted_turn_deg"] = [round(t, 1) for t in turn]
+                v["pose_before"] = {j: round(pose0[j], 1)
+                                    for j in poses.JOINTS}
+                v["pose_after"] = {j: round(arm.snapshot()[j], 1)
+                                   for j in poses.JOINTS}
+                self._json(v)
             elif self.path == "/verify_move":
                 # The test he asked for: move, then let the picture say
                 # which way the camera actually went.

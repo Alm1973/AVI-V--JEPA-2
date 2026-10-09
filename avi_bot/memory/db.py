@@ -68,6 +68,22 @@ CREATE TABLE IF NOT EXISTS mood_log (
   valence REAL, arousal REAL, social REAL,
   emotion TEXT
 );
+-- Performances AVI made up itself ("dance like a dolphin"), kept so the
+-- same request gets the same dance, and changed by how it went: scaled up
+-- when the camera saw nothing move, dropped when he disliked it.
+CREATE TABLE IF NOT EXISTS learned_moves (
+  key        TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  idea       TEXT,
+  moves      TEXT NOT NULL,
+  source     TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  performed  INTEGER NOT NULL DEFAULT 0,
+  last_ts    REAL,
+  score      INTEGER NOT NULL DEFAULT 0,
+  scale      REAL NOT NULL DEFAULT 1.0,
+  seen       INTEGER
+);
 CREATE TABLE IF NOT EXISTS provider_usage (
   day      TEXT NOT NULL,
   provider TEXT NOT NULL,
@@ -293,6 +309,102 @@ class Store:
             return None
         yes = sum(1 for r in rows if r["response"] in ("yes", "accepted"))
         return yes / len(rows)
+
+    # --- performances AVI composed -----------------------------------------
+    # Words that say "a performance" rather than which one: "do an
+    # interpretive dance like a dolphin" and "dolphin dance" are one dance.
+    _MOVE_FILLER = {"a", "an", "the", "like", "do", "your", "my", "of", "me",
+                    "dance", "dancing", "interpretive", "interpretative",
+                    "interprative", "move", "moves", "impression", "some",
+                    "routine", "little", "please", "avi", "can", "you",
+                    "again", "show", "perform", "that", "this"}
+    MAX_MOVES_KEPT = 50
+
+    @classmethod
+    def move_key(cls, name):
+        words = "".join(c if c.isalnum() else " "
+                        for c in (name or "").lower()).split()
+        kept = [w for w in words if w not in cls._MOVE_FILLER]
+        return " ".join(kept) or "dance"
+
+    def save_move(self, name, moves, idea=None, source="composed"):
+        """Keep a performance under its name. A new one for a known name
+        replaces it and starts its record over: it is a different dance."""
+        import json
+        key = self.move_key(name)
+        with self.db.lock:
+            self.db.execute(
+                "INSERT INTO learned_moves (key, name, idea, moves, source,"
+                " created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE"
+                " SET name=excluded.name, idea=excluded.idea,"
+                " moves=excluded.moves, source=excluded.source,"
+                " created_at=excluded.created_at, score=0, scale=1.0,"
+                " seen=NULL",
+                (key, " ".join((name or key).split())[:60], idea,
+                 json.dumps(moves), source, self.clock()))
+            n = self.db.execute(
+                "SELECT COUNT(*) FROM learned_moves").fetchone()[0]
+            if n > self.MAX_MOVES_KEPT:
+                self.db.execute(
+                    "DELETE FROM learned_moves WHERE key IN (SELECT key FROM"
+                    " learned_moves ORDER BY score ASC, COALESCE(last_ts,"
+                    " created_at) ASC LIMIT ?", (n - self.MAX_MOVES_KEPT,))
+            self.db.commit()
+        return key
+
+    def get_move(self, name):
+        import json
+        r = self.db.execute("SELECT * FROM learned_moves WHERE key=?",
+                            (self.move_key(name),)).fetchone()
+        if r is None:
+            return None
+        out = dict(r)
+        out["moves"] = json.loads(out["moves"])
+        return out
+
+    def drop_move(self, name):
+        cur = self.db.execute("DELETE FROM learned_moves WHERE key=?",
+                              (self.move_key(name),))
+        self.db.commit()
+        return cur.rowcount
+
+    def moves_known(self, limit=8):
+        """[{name, score, performed}], best liked first."""
+        return [dict(r) for r in self.db.execute(
+            "SELECT name, score, performed FROM learned_moves"
+            " ORDER BY score DESC, performed DESC, created_at DESC LIMIT ?",
+            (int(limit),))]
+
+    # The camera seeing nothing happen costs the dance this much size next
+    # time, up to MAX_SCALE: on this arm, small moves vanish into backlash.
+    GROW = 1.4
+    MAX_SCALE = 2.0
+
+    def performed_move(self, name, seen=None):
+        """Count a performance. seen=False (the camera saw no motion)
+        makes the next one bigger; None (could not check) changes nothing."""
+        key = self.move_key(name)
+        self.db.execute(
+            "UPDATE learned_moves SET performed = performed + 1, last_ts = ?,"
+            " seen = ?, scale = CASE WHEN ? = 0 THEN MIN(?, scale * ?)"
+            " ELSE scale END WHERE key = ?",
+            (self.clock(), None if seen is None else int(bool(seen)),
+             None if seen is None else int(bool(seen)), self.MAX_SCALE,
+             self.GROW, key))
+        self.db.commit()
+
+    def last_move(self):
+        r = self.db.execute(
+            "SELECT name, last_ts FROM learned_moves WHERE last_ts IS NOT"
+            " NULL ORDER BY last_ts DESC LIMIT 1").fetchone()
+        return (r["name"], r["last_ts"]) if r else (None, None)
+
+    def rate_move(self, name, delta):
+        cur = self.db.execute(
+            "UPDATE learned_moves SET score = score + ? WHERE key = ?",
+            (int(delta), self.move_key(name)))
+        self.db.commit()
+        return cur.rowcount
 
     # --- provider usage --------------------------------------------------
     def note_provider(self, provider, failed=False, day=None):
