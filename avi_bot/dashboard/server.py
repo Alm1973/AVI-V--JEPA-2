@@ -477,6 +477,16 @@ class Arm:
     def seat_loop(self, deadline, period=20.0):
         """Back to the seat view whenever nothing else wants the arm
         (presence.seat_return_due says why it matters)."""
+        # A restart puts the arm at the seat pose without a run-up, and the
+        # view lands up to ~3 degrees off the one the poster decoy was
+        # learned in (2026-10-09 09:00). Arrive properly once, first.
+        try:
+            seat = (load_taught() or {}).get(self.SEAT_VIEW)
+            if seat and self.view_ok_for_presence():
+                time.sleep(3.0)
+                arrive(self, {j: seat[j] for j in poses.JOINTS})
+        except Exception as exc:
+            self.note(f"seat loop start: {exc!r}")
         while not self.stop.is_set() and time.time() < deadline:
             time.sleep(period)
             try:

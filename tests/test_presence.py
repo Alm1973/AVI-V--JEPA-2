@@ -229,13 +229,18 @@ class APictureOfAPerson(unittest.TestCase):
         the poster slides across the picture but keeps its size."""
         p = pm.Presence()
         self.addCleanup(p.close)
-        poster = (0.40, 0.53, 0.13, 0.40)
+        poster = (0.4734, 0.5625, 0.1273, 0.40)
         for i in range(15):
             p.sample(True, conf=0.89, at=1000 + 20 * i, box=poster)
         p.learn_decoy()
         real, fake = p.screen([(0.55, 0.535, 0.131, 0.402)])
         self.assertEqual((real, len(fake)), ([], 1))
         self.assertIsNone(p.learn_decoy())
+        # Measured 09:00 and 09:02: 0.07 lower after the pitch slack.
+        for box in ((0.4555, 0.4889, 0.1266, 0.4028),
+                    (0.4477, 0.5028, 0.1242, 0.3944)):
+            self.assertEqual(p.screen([box])[0], [], box)
+        self.assertEqual(p.decoys()[0]["moved"], 0)
 
     def test_a_decoy_that_moves_was_a_person(self):
         p = pm.Presence()

@@ -204,15 +204,18 @@ class Presence:
     # A detection on a decoy that has moved this far (a fraction of the
     # frame, centre or size) is someone alive there, not the picture.
     DECOY_MOVED = 0.02
-    # Three such and the "decoy" was a person sitting very still: dropped.
+    # Three such in a row and the "decoy" was a person sitting very still:
+    # dropped. A sighting of the decoy as itself resets the count.
     DECOY_FORGET_AFTER = 3
 
     # How far sideways a decoy may appear and still be the decoy: base_yaw
     # backlash (~13 degrees, ~0.15 of the frame) plus margin.
     DECOY_SLIDE = 0.25
-    # ...and up or down: the pitch joints' slack, ~1.5 degrees (0.05 of the
-    # frame's height) before every joint arrived from one side.
-    DECOY_SLIDE_Y = 0.05
+    # ...and up or down: three pitch joints with ~1-1.5 degrees of slack
+    # each. Measured: the poster at cy 0.489 and 0.503 against its learned
+    # 0.5625 (2026-10-09 09:00, 09:02) -- and each near miss counted toward
+    # forgetting it. ~0.04 of the frame per degree; 0.15 is ~4 degrees.
+    DECOY_SLIDE_Y = 0.15
 
     def _same_shape(self, box, d):
         return (abs(box[0] - d[0]) <= self.DECOY_SLIDE
@@ -256,8 +259,11 @@ class Presence:
                 # does not change its size or height in the picture.
                 d = same[0]
                 fake.append(box)
+                # Seen as itself again: earlier "moves" were near misses,
+                # not a person (forgetting needs them in a row).
                 self.db.execute("UPDATE decoys SET hits = hits + 1,"
-                                " seen_at = ? WHERE id = ?", (at, d["id"]))
+                                " seen_at = ?, moved = 0 WHERE id = ?",
+                                (at, d["id"]))
                 continue
             d = max(known, key=lambda k: iou(box, k["box"]), default=None)
             if d is None or iou(box, d["box"]) < self.DECOY_IOU:
