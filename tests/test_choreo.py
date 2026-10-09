@@ -356,6 +356,16 @@ class Correcting(unittest.TestCase):
                                                             "slower")],
                          ["slow", "normal"])
 
+    def test_faster_is_actually_faster(self):
+        """On a speed-capped arm a quicker beat alone was 4% faster."""
+        mv = [{"move": "wave", "size": 2, "speed": "fast", "times": 3},
+              {"move": "leap", "size": 1, "speed": "normal", "times": 2},
+              {"move": "rise", "size": 2, "speed": "fast", "times": 2}]
+        before, _ = choreo.compose(mv, SEAT, config=CFG)
+        after, _ = choreo.compose(choreo.adjust(mv, "faster"), SEAT,
+                                  config=CFG)
+        self.assertLess(after.duration, 0.85 * before.duration)
+
     def test_heard(self):
         for text, how in (("do it faster", "faster"), ("bigger", "bigger"),
                           ("again but slower", "slower"),

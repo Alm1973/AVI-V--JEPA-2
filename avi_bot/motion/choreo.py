@@ -347,6 +347,12 @@ def adjust(moves, how):
         elif how in ("faster", "slower"):
             k = _TEMPOS.index(m["speed"]) + (1 if how == "faster" else -1)
             m["speed"] = _TEMPOS[max(0, min(2, k))]
+            if how == "faster":
+                # The arm already runs at its 27 deg/s ceiling for most of
+                # a dance, so a quicker beat alone took the dolphin from
+                # 23.1 s to 22.2 s on the robot. Smaller swings are what
+                # actually let it go faster (17.4 s).
+                m["size"] = max(1, m["size"] - 1)
         out.append(m)
     return out
 
