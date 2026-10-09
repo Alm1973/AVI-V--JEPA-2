@@ -1349,6 +1349,8 @@ PAGE = b"""<!doctype html>
     <div class="g" id="gestures"></div>
     <div class="sec">poses</div>
     <div id="poses"></div>
+    <div class="sec">dances avi made up</div>
+    <div id="moves" class="dim" style="font-size:13px">none yet: ask it to dance like something</div>
     <div class="sec">body <span style="text-transform:none;letter-spacing:0">3D model, live</span></div>
     <div id="body3d"></div>
     <div class="sec">avi <span id="health" style="text-transform:none;letter-spacing:0"></span></div>
@@ -1413,6 +1415,34 @@ function didLine(d){
       (v.retried ? ", retried" : "")};
   }
   return {bad: false, text: s};
+}
+// The dances AVI made up: play one again (no model needed) or forget it.
+function movesHtml(list){
+  if (!list || !list.length) return "none yet: ask it to dance like something";
+  return list.map(m => {
+    const n = esc(m.name);
+    const how = m.score > 0 ? " \\u2665" : m.score < 0 ? " \\u2717" : "";
+    return '<div class="g"><button data-n="' + n + '" ' +
+      'onclick="playMove(this.dataset.n)">' + n + how + '</button>' +
+      '<button data-n="' + n + '" title="forget it" ' +
+      'onclick="forgetMove(this.dataset.n)">\\u00d7</button></div>';
+  }).join("");
+}
+async function loadMoves(){
+  try {
+    const r = await api("/moves", {});
+    document.getElementById("moves").innerHTML = movesHtml(r.moves);
+  } catch (e) {}
+}
+async function playMove(name){
+  const r = await api("/perform", {name: name});
+  msg(r.ok ? "dancing: " + name + " (" + ((r.data || {}).seconds || "?") +
+      " s)" : "could not: " + (r.error || "?"));
+  setTimeout(loadMoves, 2000);
+}
+async function forgetMove(name){
+  await api("/forget_move", {name: name});
+  loadMoves();
 }
 // AVI's body (motion/body.py) drawn from where the joints are now: the desk,
 // the arm, and the way the camera looks. Seen from front-left and above.
@@ -1535,6 +1565,7 @@ async function ask(){
       "these words mean from earlier turns";
     if (!entry.avi && !entry.did.length && !entry.err)
       entry.avi = r.gesture ? "(" + r.gesture + ")" : "(nothing to do)";
+    if ((r.tools || []).includes("perform")) setTimeout(loadMoves, 1500);
   } catch (e) {
     entry.avi = "";
     entry.err = "no answer from the robot";
@@ -1685,6 +1716,7 @@ function paintCommon(s){
     (s.events || []).join("\\n") || "nothing yet";
 }
 async function refresh(){
+  loadMoves();
   const s = await api("/state");
   J = s.joints;
   const taught = s.taught;
@@ -2073,6 +2105,23 @@ def make_handler(st):
                     self._json({"error": "no brain in this process"}, 503)
                 else:
                     self._json(brain.ask(body.get("text", "")))
+            elif self.path in ("/perform", "/moves", "/forget_move"):
+                # The dances AVI made up (motion/choreo.py): list, play one
+                # by name with no model in the loop, or forget one.
+                if brain is None:
+                    return self._json({"error": "no brain in this process"},
+                                      503)
+                name = str(body.get("name") or "")[:60]
+                if self.path == "/moves":
+                    return self._json({"moves": brain.moves()})
+                if not name:
+                    return self._json({"error": "name a dance"}, 400)
+                if self.path == "/forget_move":
+                    return self._json({"forgot": brain.forget_move(name)})
+                args = {"name": name}
+                if isinstance(body.get("moves"), list):
+                    args["moves"] = body["moves"][:12]
+                self._json(brain.run_tool("perform", args))
             elif self.path == "/desk_layout":
                 ts, objects = arm.desk.last()
                 placed = [o for o in (objects or []) if "x" in o]

@@ -154,6 +154,37 @@ class Host:
                     self.note(f"brain failed to start: {self.error}")
             return self._brain
 
+    def run_tool(self, name, args):
+        """One skill straight from a button, no model: the dances panel's
+        play, and remote tests that must not spend the free budget."""
+        brain = self.brain
+        if brain is None:
+            return {"error": f"brain unavailable: {self.error}"}
+        try:
+            with self._turn:
+                r = brain.skills.run(name, dict(args or {}))
+        except Exception as exc:
+            return {"error": repr(exc)}
+        return {"ok": r.ok, "error": r.error, "say": r.text,
+                "data": r.data if isinstance(r.data, dict) else None}
+
+    def moves(self):
+        """The dances AVI made up, best liked first."""
+        brain = self.brain
+        if brain is None:
+            return []
+        try:
+            return brain.store.moves_known(limit=20)
+        except Exception:
+            return []
+
+    def forget_move(self, name):
+        brain = self.brain
+        if brain is None:
+            return 0
+        with self._turn:
+            return brain.store.drop_move(name)
+
     # Tools that play their own motion over seconds.
     OWN_MOTION = ("perform", "motion_sequence")
 

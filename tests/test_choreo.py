@@ -291,3 +291,16 @@ class TheHost(unittest.TestCase):
         self.host.ask("dance like a dolphin")
         self.assertEqual(self.host.tick(), "I tried to dance, but my "
                          "camera saw nothing move. I'll go bigger next time.")
+
+
+class TheDancesPanel(TheHost):
+    """POST /perform, /moves and /forget_move go through these."""
+
+    def test_play_list_and_forget(self):
+        r = self.host.run_tool("perform", {"name": "dolphin dance"})
+        self.assertTrue(r["ok"], r)
+        self.assertGreater(r["data"]["seconds"], 3)
+        self.assertEqual([m["name"] for m in self.host.moves()],
+                         ["dolphin dance"])
+        self.assertEqual(self.host.forget_move("the dolphin dance"), 1)
+        self.assertEqual(self.host.moves(), [])
