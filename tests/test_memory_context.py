@@ -42,6 +42,19 @@ class Facts(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertEqual(self.store.count_facts(), 1)
 
+    def test_the_same_fact_in_other_words_is_not_new(self):
+        a, _ = self.store.remember("Math test on Monday.")
+        b, _ = self.store.remember("math test Monday")
+        c, _ = self.store.remember("Shaurya has a math test on Monday")
+        self.assertEqual(a, b)
+        self.assertEqual(a, c)
+        self.assertEqual(self.store.count_facts(), 1)
+
+    def test_a_different_day_is_a_different_fact(self):
+        self.store.remember("math test on Monday")
+        self.store.remember("math test on Tuesday")
+        self.assertEqual(self.store.count_facts(), 2)
+
     def test_too_long_is_refused_not_truncated(self):
         """A silently cut fact is a changed fact, which is worse than none."""
         with self.assertRaises(ValueError):

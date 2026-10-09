@@ -78,6 +78,17 @@ CREATE TABLE IF NOT EXISTS provider_usage (
 """
 
 
+_FILLER = {"a", "an", "the", "on", "is", "his", "he", "has", "at", "for",
+           "this", "shaurya", "shaurya's", "my", "i", "have"}
+
+
+def _same(text):
+    """A fact's identity: lower case, punctuation and filler words gone."""
+    words = "".join(c if c.isalnum() or c in " '" else " "
+                    for c in text.lower()).split()
+    return " ".join(w for w in words if w not in _FILLER)
+
+
 class Store:
     def __init__(self, path=":memory:", clock=time.time):
         # Hosted in the dashboard, each HTTP request runs on its own thread
@@ -106,6 +117,14 @@ class Store:
                                        (text,)).fetchone()
             if existing:
                 return existing["id"], None
+            # The same fact in other words is not a new fact: once AVI
+            # remembers what he mentions in passing, "Math test on Monday."
+            # and "math test Monday" both arrive. A full scan is fine at
+            # MAX_FACTS rows.
+            key = _same(text)
+            for row in self.db.execute("SELECT id, text FROM facts"):
+                if _same(row["text"]) == key:
+                    return row["id"], None
             dropped = None
             if self.count_facts() >= MAX_FACTS:
                 # Oldest UNUSED, not oldest: something he brings up
