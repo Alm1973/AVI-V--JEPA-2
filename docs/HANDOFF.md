@@ -1243,3 +1243,11 @@ Research and the decisions behind it are in `docs/RESEARCH-motion.md`: GenEM, V-
 - **`POST /babble` (perception/selfmodel.py).** This is motor babbling: small single-joint moves, out and back, each measured by ORB and V-JEPA. It scores three predictors (the old rule, the 3D model, and the learned slopes) leave-one-out. Rows are appended to `avi-remote/babble.jsonl`.
 - **Shortcuts (brain/shortcuts.py).** Words the model answered with the same actions twice, or that he praised, become instant, free and usable offline (route "learned"). A scold drops one. Pointing words ("do that again") are never learned, and neither are tools that carry his own content.
 - **NOT YET RUN ON THE ROBOT** (it was dark, 01:40). To run it in daylight: `scripts/motion_check.py all`. Then set `[body] reach_judged = true` in `config/joints.toml` if the model's shoulder and elbow directions match the picture.
+
+### 2026-10-09 morning: on the robot
+
+- **Dances work on the real arm.** Moved: yes, by both judges. Came back: yes, to under 1°. The first runs ended 13° off because of base backlash. Pitch joints have about 1–1.5° of slack too (babble out/back pairs). Every joint now arrives from one side (`backlash.ARRIVE`, `arrive()` in server.py). The groq-composed dolphin dance is stored and replays with no model call.
+- **Self-model.** `/babble`: the 3D model got shoulder/elbow directions right 15/16 by ORB and 12/13 by V-JEPA, where the old rule predicted none. `reach_judged = true`. `/verify_move` with a joint: 4/4.
+- **The "person" at his seat is a POSTER on his wall** (Shaurya confirmed).
+  - Presence learns a box that stays perfectly still for 5 minutes as a decoy (box 0.40,0.53,0.13,0.40, learned 07:51) and ignores it afterwards.
+  - It made a false "arrived" at sunrise, a rundown and a break offer. After a restart it made a second "arrived" and a second rundown (fixed: break offers were read as the last presence event). It also "arrived" from frames taken mid-dance (fixed: samples come only from the seat view, held still).

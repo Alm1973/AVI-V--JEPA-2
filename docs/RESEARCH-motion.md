@@ -36,10 +36,19 @@ Both pieces are now in AVI:
 
   The result decides whether shoulder and elbow joints are judged (`body.reach_judged`).
 
-## Status
+## Status (robot results, 2026-10-09 morning, daylight, nobody in the room)
 
-- [x] `perform` with offline improvisation (the dolphin leaps and swims), kept per name, judged from the picture (did it move, did it come back), scaled up when nothing visibly moved, rated by praise or scolding.
-- [x] The cloud model composes its own dance. Dry run on 2026-10-09: wave ×2, leap ×3, rise, duck ×2, spin, circle; 29.6 s.
-- [x] 3D body model, live drawing, and shoulder/elbow prediction behind `reach_judged`.
-- [ ] Robot runs in daylight: a dance at size 1 and then normal size; `/babble` 16 moves; `/verify_move` with a joint. The results go into `docs/HANDOFF.md` and `[body]` in `config/joints.toml`.
+- [x] **Dances on the real arm.** With `scripts/motion_check.py dance` plus the stored dolphin dance:
+  - Every dance was seen moving by both the thumbnails and V-JEPA. JEPA similarity fell to 0.60–0.78, and the "still" threshold is 0.85.
+  - The first runs ended **13° off** where they started. This was the base's 18° of backlash. After every joint was made to arrive from a fixed side, the dances end 2–24 px (<1°) off. ORB and V-JEPA both say each one came back.
+- [x] **The AI composes the dance.** "do an interpretive dance like a dolphin" through `/ask` went to Groq, which composed wave ×3, leap ×2, a slow spin and rise ×2. The arm played it, the dance was saved, and replaying it from memory needed no AI call.
+- [x] **Self-learning (`/babble`), 32 small moves at the seat view.** It also showed every pitch joint has ~1–1.5° of slack (handled in `backlash.ARRIVE`).
+
+  | joint | old rule | 3D model | learned |
+  |---|---|---|---|
+  | shoulder direction (ORB / JEPA) | 0/8 / 0/7 | **7/8 / 6/7** | 7/8 / 6/7 |
+  | elbow direction | 0/8 / 0/6 | **8/8 / 6/6** | 8/8 / 6/6 |
+  | pixel error (all joints) | 17–95 px | 17–45 px | **9–23 px** |
+
+  **Answer:** the 3D model gives the camera checks control over the two joints they could not check before. What AVI learned for itself is the most accurate. `reach_judged = true`; elbow gain 0.79 measured. Live `/verify_move` on shoulder ±6° and elbow ±6°: ORB and V-JEPA agreed with the model 4/4.
 - [ ] Measuring the three links with a ruler would make the 3D positions real. They are: desk to shoulder axle, shoulder axle to elbow axle, and wrist axle to lens.
