@@ -163,6 +163,7 @@ class Arm:
         self.last_verdict = None
         self.last_behaviour = None
         self.detector = None
+        self._detector_lock = threading.Lock()
         self.last_person = None
         # Confidence alone cannot separate Shaurya (0.75-0.89) from the arm's
         # own hardware in shot (0.56-0.72): at 0.70 the tracker locked onto
@@ -399,9 +400,7 @@ class Arm:
                 frame, _ = _frame(latest)
                 if frame is None:
                     continue
-                if self.detector is None:
-                    from detector import DeskDetector
-                    self.detector = LockedDetector(DeskDetector())
+                self.get_detector()
                 h = frame.shape[0]
                 seen = self.detector.everything(
                     frame, min_conf=min(self.PERSON_MIN_CONF,
@@ -517,8 +516,7 @@ class Arm:
             try:
                 if self.detector is None:
                     self.note("loading YOLO-World for person tracking ...")
-                    from detector import DeskDetector
-                    self.detector = LockedDetector(DeskDetector())
+                    self.get_detector()
                     self.note("tracking: looking for you")
                 jpeg, _ = latest.get_after(-1, timeout=1.5)
                 if not jpeg:
@@ -615,6 +613,17 @@ class Arm:
         placed = [o for o in (objects or []) if "x" in o]
         return observations_mod.notes(self.presence.summary(),
                                       spatial_mod.layout(placed))
+
+    def get_detector(self):
+        """YOLO-World, loaded once. Nine places loaded it lazily with an
+        unlocked check, so two threads could build it twice on a 6 GB GPU,
+        and whatever touched the camera first after a start waited ~7 s
+        for it (a look: "live 7.3s", 2026-10-09). main() preloads it."""
+        with self._detector_lock:
+            if self.detector is None:
+                from detector import DeskDetector
+                self.detector = LockedDetector(DeskDetector())
+            return self.detector
 
     def situation(self, latest=None):
         """Right now, as text the cloud brain may be told: whether he is at
@@ -2122,9 +2131,7 @@ def detect_debug(arm, latest, min_conf=0.05):
     tell them apart and neither can staring at the counter. This answers it
     without a frame leaving the MSI, because the camera faces Shaurya's room.
     """
-    if arm.detector is None:
-        from detector import DeskDetector
-        arm.detector = LockedDetector(DeskDetector())
+    arm.get_detector()
     frame, _ = _frame(latest)
     if frame is None:
         return {"error": "no picture"}
@@ -2250,9 +2257,7 @@ def _run_survey(arm, latest, levels=None, min_conf=0.30, settle=1.8,
     The taught poses are anchored first, so the result can be described in
     Shaurya's own terms rather than in commanded degrees.
     """
-    if arm.detector is None:
-        from detector import DeskDetector
-        arm.detector = LockedDetector(DeskDetector())
+    arm.get_detector()
     taught = load_taught()
     for name, joints in (taught or {}).items():
         if "base_yaw" in joints and "wrist" in joints:
@@ -2605,9 +2610,7 @@ def steady_detections(arm, latest, frames=3, floor=0.25, sure=0.50,
     looks = [f for f in _look(latest, frames)]
     if not looks:
         return None
-    if arm.detector is None:
-        from detector import DeskDetector
-        arm.detector = LockedDetector(DeskDetector())
+    arm.get_detector()
     h, w = looks[-1].shape[:2]
     best, count = {}, {}
     for frame in looks:
@@ -2665,6 +2668,16 @@ def _settle(latest, timeout=2.5):
         f, seq["s"] = _frame(latest, after=seq["s"])
         return f
     return look_check_mod.wait_still(next_frame, timeout=timeout)
+
+
+def _quietly(arm, fn, what):
+    """Run fn in a background thread's body; a failure is noted, not
+    raised (the first real use will try again and say why)."""
+    try:
+        fn()
+        arm.note(f"{what}: done")
+    except Exception as exc:
+        arm.note(f"{what} failed: {exc!r}")
 
 
 def _surveying(arm):
@@ -2898,9 +2911,7 @@ def look_at_person(arm, latest):
     frame, _ = _frame(latest)
     target = None
     if frame is not None:
-        if arm.detector is None:
-            from detector import DeskDetector
-            arm.detector = LockedDetector(DeskDetector())
+        arm.get_detector()
         people = [d for d in arm.detector.everything(
                       frame, min_conf=arm.PERSON_MIN_CONF)
                   if d["label"] == "person"]
@@ -2981,11 +2992,14 @@ def find_object(arm, name, look=True, latest=None):
     this process has no sightings database, so a thing the map does not know
     is reported as unknown rather than guessed.
     """
+    took = {}                          # phase -> seconds, for the log
+    t_phase = time.time()
     if look and latest is not None and not _surveying(arm):
         # In the picture right now beats any memory of it: "look at the
         # mug" with the mug in view started a two-minute desk scan, because
         # the map had no mug (robot, 2026-10-08).
         here = live_look(arm, latest, name)
+        took["live"] = time.time() - t_phase
         if here:
             _back_to_seat_later(arm)
             log(f"find {name!r}: in view now, centred")
@@ -3036,7 +3050,10 @@ def find_object(arm, name, look=True, latest=None):
             # mid-swing missed a laptop dead centre at the aim (robot,
             # 2026-10-08).
             time.sleep(max(0.0, t0 + arrival_s(arm, pose0) - time.time()))
+            took["travel"] = time.time() - t0
+            t_check = time.time()
             in_view = confirm_look(arm, latest, name)
+            took["check"] = time.time() - t_check
             if in_view == "dark":
                 dark, in_view = True, None
                 text = f"{text} Too dark to check it's there."
@@ -3054,7 +3071,9 @@ def find_object(arm, name, look=True, latest=None):
             text = f"I can't recognise a {name} yet."
         elif _search(arm, latest, name):
             text = f"{text} I'll look."
-    log(f"find {name!r}: {text} moved={moved}")
+    log(f"find {name!r}: {text} moved={moved}"
+        + (" (" + ", ".join(f"{k} {v:.1f}s" for k, v in took.items()) + ")"
+           if took else ""))
     return {"say": text, "aim": aim, "moved": moved, "in_view": in_view,
             "dark": dark,
             "known": [p.label for p, _ in arm.roommap.known()]}
@@ -3368,9 +3387,7 @@ def build_dome(arm, latest, step=5.0, settle=0.8, min_conf=0.40,
     elbow have never been exercised by a probe before, and they swing the
     whole arm rather than just the camera.
     """
-    if arm.detector is None:
-        from detector import DeskDetector
-        arm.detector = LockedDetector(DeskDetector())
+    arm.get_detector()
     prefer = prefer or poses.OBSERVE_POSE
     taught = load_taught() or {}
     if dome_mod.POLE not in taught:
@@ -3569,9 +3586,7 @@ def probe_depth(arm, latest, swing=40.0, steps=9, settle=1.6,
     which is why it is reported even when ranges cannot be.
     """
     import numpy as np
-    if arm.detector is None:
-        from detector import DeskDetector
-        arm.detector = LockedDetector(DeskDetector())
+    arm.get_detector()
     start = arm.snapshot()
     lo, hi = arm.config.soft_limits("base_yaw")
     here = start["base_yaw"]
@@ -3825,9 +3840,7 @@ def probe_parallax(arm, latest, swing=15.0, settle=1.8, min_conf=0.35,
     pan, or did not move -- have to separate by more than detection jitter
     before a match between them means anything.
     """
-    if arm.detector is None:
-        from detector import DeskDetector
-        arm.detector = LockedDetector(DeskDetector())
+    arm.get_detector()
     need = parallax.MIN_SEPARATION_PX / arm.rejector.px_per_deg(1280)
     if swing < need:
         return {"error": f"swing {swing} deg is too small to tell the two "
@@ -3879,9 +3892,7 @@ def probe_axis(arm, latest, joint="wrist", axis="cy", step=6.0, n=5,
     A fit is reported only if it is actually linear. A slope from two noisy
     points is how a guess gets written down as a measurement.
     """
-    if arm.detector is None:
-        from detector import DeskDetector
-        arm.detector = LockedDetector(DeskDetector())
+    arm.get_detector()
     start = arm.snapshot()
     lo, hi = arm.config.soft_limits(joint)
     here = start[joint]
@@ -4077,6 +4088,10 @@ def main():
     arm.latest = latest
     brain = arm.make_brain_host(latest)
     threading.Thread(target=brain.loop, args=(deadline,),
+                     daemon=True).start()
+    # The detector now, not on the first look or ask that needs it.
+    threading.Thread(target=lambda: _quietly(arm, arm.get_detector,
+                                             "detector preload"),
                      daemon=True).start()
 
     srv = ThreadingHTTPServer((host, args.port), make_handler({
