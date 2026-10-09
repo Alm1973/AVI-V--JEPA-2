@@ -1217,3 +1217,29 @@ time; what do you know about me; stop.
   ("map reinforced"). Laptop: found at its aim twice.
 - Helpers: `scripts/ask.py "look left" ...` (chat from the Mac, shows the
   camera verdicts; every line costs a model request).
+
+## 2026-10-09 ~01:15-02:00: AVI makes up its own moves; a 3D model of its body
+
+Research and the decisions behind it are in `docs/RESEARCH-motion.md`: GenEM, V-JEPA 2-AC, Lipson's self-models and ELEGNT.
+
+- **`perform` (motion/choreo.py).**
+  - The model pictures how something moves and composes it from 17 primitives. The `wave` primitive rolls down the whole arm, and `leap` arcs up and then dives.
+  - Each dance is fitted before it plays:
+    - Joints near a limit are shifted rather than flattened.
+    - The 3D model keeps it off the desk.
+    - It is timed to 27°/s and ends where it started.
+  - Offline, AVI improvises a dance from what the name evokes.
+  - Dances are kept by name in `learned_moves` (the memory DB).
+  - The dashboard judges each dance from the picture, with thumbnails plus V-JEPA: did the view move, and did it come back?
+  - When nothing visibly moved, the next performance is 1.4x bigger and AVI says so.
+  - Praise or a scold within 2 minutes rates the dance. A disliked dance is made anew.
+  - The dashboard has a "dances avi made up" panel to play or forget them, and `POST /perform` plays one with no model.
+  - A Groq dry run with a fake arm composed wave ×2, leap ×3, rise, duck ×2, spin and circle (29.6 s).
+- **`motion/body.py`: forward kinematics of the arm.**
+  - It is fitted to the ruler measurement at TALL: 25.0 cm out and 34.4 cm up. The link lengths are still priors.
+  - It is drawn live on the dashboard.
+  - It is wrong at REST, which is folded: it puts the wrist under the desk. The choreographer treats "unsafe at the start" as outside the model's range, and dances from ATTENTIVE instead.
+  - Judging of shoulder and elbow moves is behind `[body] reach_judged`, which is off until the robot proves the model's sign.
+- **`POST /babble` (perception/selfmodel.py).** This is motor babbling: small single-joint moves, out and back, each measured by ORB and V-JEPA. It scores three predictors (the old rule, the 3D model, and the learned slopes) leave-one-out. Rows are appended to `avi-remote/babble.jsonl`.
+- **Shortcuts (brain/shortcuts.py).** Words the model answered with the same actions twice, or that he praised, become instant, free and usable offline (route "learned"). A scold drops one. Pointing words ("do that again") are never learned, and neither are tools that carry his own content.
+- **NOT YET RUN ON THE ROBOT** (it was dark, 01:40). To run it in daylight: `scripts/motion_check.py all`. Then set `[body] reach_judged = true` in `config/joints.toml` if the model's shoulder and elbow directions match the picture.

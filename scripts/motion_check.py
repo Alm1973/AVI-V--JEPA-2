@@ -88,6 +88,10 @@ def main(argv):
         dance("motion check dolphin", [
             {"move": "leap"}, {"move": "wave"}, {"move": "leap"},
             {"move": "sway", "times": 2}])
+        # Test dances are not his: keep them out of the panel and the
+        # model's context.
+        for name in ("motion check small", "motion check dolphin"):
+            post("/forget_move", {"name": name})
     if what in ("babble", "all"):
         babble(n, deg)
 
