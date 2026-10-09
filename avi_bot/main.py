@@ -27,6 +27,7 @@ from . import env as env_mod                                   # noqa: F401
 from . import numbers, scheduler as sched_mod                   # noqa: F401
 from .brain import context as context_mod
 from .brain import providers, router as router_mod, speech, tools
+from .brain import shortcuts as shortcuts_mod
 from .memory import db as memdb
 from .motion import poses as poses_mod
 from .skills import (apps as apps_mod, calendar as cal_mod,
@@ -99,7 +100,9 @@ class Avi:
         self.router = router_mod.Router(chain=self.chain, policy=self.policy,
                                         clock=clock, local_pick=local_pick,
                                         cloud_first=cloud_first,
-                                        wire_tools=tools.wire_tools(unusable))
+                                        wire_tools=tools.wire_tools(unusable),
+                                        shortcuts=shortcuts_mod.Shortcuts(
+                                            self.store))
         # Motion sequences run on their own thread so the reply is not held
         # up by a wave; tests turn this off to step through them.
         self.background = True
@@ -272,6 +275,11 @@ class Avi:
         -- the dance's score, which is what decides whether it is kept
         (memory/db.py learned_moves)."""
         said, info = self._mood_event(name)
+        # Before this turn's own words reach the shortcuts: "good job" is
+        # about the turn before it.
+        learned = self.router.shortcuts.feedback(name == "praise")
+        if learned:
+            info = dict(info, shortcut=learned)
         move, ts = self.store.last_move()
         if move and ts is not None and \
                 self.clock() - ts <= self.FEEDBACK_WINDOW_S:

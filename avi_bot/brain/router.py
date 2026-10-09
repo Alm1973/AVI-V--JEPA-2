@@ -23,6 +23,7 @@ import time
 from . import intents, providers, schema, speech, tools
 
 LOCAL = "local_rules"
+LEARNED = "learned"
 CLOUD = "cloud"
 FALLBACK = "local_model"
 CONFUSED = "confused"
@@ -156,8 +157,12 @@ class Router:
     INSTANT = ("stop",)
 
     def __init__(self, chain=None, policy=None, clock=time.time,
-                 local_pick=None, cloud_first=False, wire_tools=None):
+                 local_pick=None, cloud_first=False, wire_tools=None,
+                 shortcuts=None):
         self.chain = chain or providers.Chain()
+        # brain/shortcuts.py: words the model has answered the same way
+        # before. Proven ones skip the round trip; the rest are a fallback.
+        self.shortcuts = shortcuts
         # The tools offered to the model; the brain leaves out the ones this
         # machine cannot do (no lamp, no calendar), which also saves tokens.
         self.wire_tools = wire_tools or tools.WIRE_TOOLS
@@ -232,6 +237,37 @@ class Router:
                         reason=self._reason(utterance, calls),
                         tried=list(self.chain.tried))
 
+    # --- learned shortcuts ---------------------------------------------
+    def _shortcut(self, utterance):
+        if self.shortcuts is None:
+            return None
+        try:
+            return self.shortcuts.lookup(utterance)
+        except Exception:
+            return None
+
+    def _learned(self, utterance, calls):
+        ok = []
+        for name, args in calls:
+            args, err = tools.validate_call(name, args)
+            if err is not None:
+                return None         # the tools changed under it: re-learn
+            ok.append((name, args))
+        try:
+            self.shortcuts.used(utterance)
+        except Exception:
+            pass
+        return Decision(LEARNED, calls=ok, reply=schema.Reply(),
+                        reason=self._reason(utterance, ok))
+
+    def _observe(self, utterance, decision):
+        if self.shortcuts is None or decision is None:
+            return
+        try:
+            self.shortcuts.observe(utterance, decision.calls)
+        except Exception:
+            pass
+
     # --- route 3 --------------------------------------------------------
     def _fallback(self, utterance):
         if self.local_pick is None:
@@ -275,7 +311,10 @@ class Router:
             local = self._local(utterance)
             instant = bool(local is not None and local.calls
                            and local.calls[0][0] in self.INSTANT)
-            if self.cloud_first and not instant:
+            short = self._shortcut(utterance)
+            if short is not None and short[1] and not instant:
+                decision = self._learned(utterance, short[0])
+            elif self.cloud_first and not instant:
                 hinted = context
                 if local is not None and local.calls:
                     # The quick rules' reading, as a hint the model may
@@ -311,10 +350,17 @@ class Router:
                         ("refused", r) for r in self.last_rejected or []]
                     ) or [("cloud", "reply was not valid JSON twice")]
                     decision = fallback_local or local
+                else:
+                    self._observe(utterance, decision)
             else:
                 decision = local
                 if decision is None:
                     decision = self._try_cloud(utterance, context)
+                    self._observe(utterance, decision)
+            if decision is None and short is not None:
+                # Seen once and not yet proven, but better than nothing
+                # when the model is out of reach.
+                decision = self._learned(utterance, short[0])
             if decision is None:
                 decision = self._fallback(utterance)
         except Exception as exc:                 # never take the robot down

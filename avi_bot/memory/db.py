@@ -84,6 +84,16 @@ CREATE TABLE IF NOT EXISTS learned_moves (
   scale      REAL NOT NULL DEFAULT 1.0,
   seen       INTEGER
 );
+-- His words and the actions they came to mean (brain/shortcuts.py).
+CREATE TABLE IF NOT EXISTS shortcuts (
+  key        TEXT PRIMARY KEY,
+  calls      TEXT NOT NULL,
+  seen       INTEGER NOT NULL DEFAULT 1,
+  proven     INTEGER NOT NULL DEFAULT 0,
+  uses       INTEGER NOT NULL DEFAULT 0,
+  created_at REAL NOT NULL,
+  last_ts    REAL
+);
 CREATE TABLE IF NOT EXISTS provider_usage (
   day      TEXT NOT NULL,
   provider TEXT NOT NULL,

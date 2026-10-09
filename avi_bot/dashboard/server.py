@@ -1531,6 +1531,8 @@ async function ask(){
     if (r.error && !r.say) entry.err = r.error;
     if (r.fallback) entry.note = "answered by the quick rules: the AI " +
       "model was unavailable, out of free requests, or did nothing";
+    if (r.route === "learned") entry.note = "instant: AVI learned what " +
+      "these words mean from earlier turns";
     if (!entry.avi && !entry.did.length && !entry.err)
       entry.avi = r.gesture ? "(" + r.gesture + ")" : "(nothing to do)";
   } catch (e) {
