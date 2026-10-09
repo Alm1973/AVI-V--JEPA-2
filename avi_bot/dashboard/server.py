@@ -67,6 +67,7 @@ from avi_bot.voice import output as output_mod                    # noqa: E402
 from avi_bot.voice import tts as tts_mod                          # noqa: E402
 from avi_bot.perception import look_check as look_check_mod       # noqa: E402
 from avi_bot.motion import body as body_mod                      # noqa: E402
+from avi_bot.perception import selfmodel as selfmodel_mod          # noqa: E402
 from avi_bot.perception import spatial as spatial_mod             # noqa: E402
 from avi_bot.perception import observations as observations_mod   # noqa: E402
 from avi_bot.perception import scan_policy as scan_policy_mod     # noqa: E402
@@ -2209,6 +2210,15 @@ def make_handler(st):
                 arm.paused.set() if want else arm.paused.clear()
                 arm.note("paused" if want else "resumed")
                 self._json({"ok": True, "paused": want})
+            elif self.path == "/babble":
+                # The self-model experiment (perception/selfmodel.py).
+                if arm.survey_lock.locked():
+                    return self._json({"error": "the arm is surveying"}, 409)
+                n = max(2, min(40, int(body.get("n", 16))))
+                deg = max(3.0, min(12.0, float(body.get("max_deg", 8))))
+                with arm.survey_lock:
+                    out = babble(arm, latest, n, deg, body.get("seed"))
+                self._json(out)
             elif self.path == "/verify_move" and body.get("joint"):
                 # One joint by a few degrees, judged against what the body
                 # model (motion/body.py) says the camera should do. Shoulder
@@ -3119,6 +3129,92 @@ def blind_why(detail, before=None, after=None):
     else:
         why.append(str(j)[:60])
     return "; ".join(why)
+
+
+def babble(arm, latest, n=16, max_deg=8.0, seed=None):
+    """Motor babbling (perception/selfmodel.py): small single-joint moves
+    from where the arm is, out and back, each measured by ORB and V-JEPA.
+    Returns {"rows", "compare"}; rows also go to avi-remote/babble.jsonl.
+    Calibration, not learning about him, so one file for both profiles."""
+    import numpy as np
+    model = body_mod.load()
+    start = arm.snapshot()
+    seed = int(time.time()) if seed is None else int(seed)
+    trials = selfmodel_mod.plan(start, n, max_deg, arm.config.soft_limits,
+                                body=model, seed=seed)
+    arm.hold(len(trials) * 15.0 + 60.0)
+    arm.note(f"babbling: {len(trials)} small moves from here, to learn what "
+             "each joint does to the picture")
+    rows = []
+
+    def go(joint, deg):
+        before = arm.snapshot()
+        if joint == "base_yaw":
+            _yaw_to(arm, deg, 0.6)
+        else:
+            arm.set(joint, deg)
+        time.sleep(arrival_s(arm, before))
+
+    def measure(joint, delta, pose_before, before, after):
+        row = {"joint": joint, "delta": round(delta, 2),
+               "pose": {j: round(float(pose_before[j]), 2)
+                        for j in poses.JOINTS},
+               "light": round(float(before.mean()), 1),
+               "orb": None, "jepa": None}
+        try:
+            reg = horizon_mod.register(before, after)
+            row["orb"] = {"dx": round(reg["dx_px"], 1),
+                          "dy": round(reg["dy_px"], 1),
+                          "roll": round(reg["roll_deg"], 2),
+                          "scale": round(reg["scale"], 4),
+                          "inliers": reg["inliers"]}
+        except horizon_mod.NotMeasurable:
+            pass
+        try:
+            ga, gb = _jepa_grid(arm, before), _jepa_grid(arm, after)
+            if ga is not None and gb is not None:
+                sh = verify_mod.token_shift(ga, gb)
+                h, w = before.shape[:2]
+                tx, ty = w / float(ga.shape[1]), h / float(ga.shape[0])
+                if sh["confident"]:
+                    row["jepa"] = {"dx": round(sh["dx"] * tx, 1),
+                                   "dy": round(sh["dy"] * ty, 1),
+                                   "raw0": sh["raw0"]}
+        except Exception:
+            pass
+        return row
+
+    try:
+        for joint, delta in trials:
+            if arm.stop.is_set():
+                break
+            for to in (start[joint] + delta, start[joint]):
+                pose_before = arm.snapshot()
+                _settle(latest)
+                before, _ = _frame(latest)
+                go(joint, to)
+                _settle(latest)
+                after, _ = _frame(latest)
+                if before is None or after is None:
+                    continue
+                rows.append(measure(joint, to - pose_before[joint],
+                                    pose_before, before, after))
+    finally:
+        arm.set_pose(start)
+    try:
+        d = os.path.join(os.environ.get("USERPROFILE", "."), "avi-remote")
+        with open(os.path.join(d, "babble.jsonl"), "a") as f:
+            for r in rows:
+                f.write(json.dumps(dict(r, ts=round(time.time(), 1),
+                                        seed=seed)) + "\n")
+    except Exception as exc:
+        arm.note(f"babble: could not save rows: {exc!r}")
+    out = {"rows": rows, "seed": seed,
+           "compare": {k: selfmodel_mod.compare(rows, model, which=k)
+                       for k in ("orb", "jepa")}}
+    arm.note("babbling done: " + "; ".join(
+        f"{j}: {v}" for j, v in out["compare"]["orb"]["verdict"].items()))
+    return out
 
 
 def nudge_arm(arm, direction, degrees, settle=0.6):
