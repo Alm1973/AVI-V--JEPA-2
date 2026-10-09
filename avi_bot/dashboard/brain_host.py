@@ -428,6 +428,17 @@ class Host:
         owed = getattr(brain, "owed", None)
         while isinstance(owed, list) and owed:
             self.announce(owed.pop(0), kind="perform")
+        # The evening heads-up came only with an arrival: at the desk from
+        # 15:19 on, he would never hear it. Once a day (Avi.heads_up keeps
+        # count), when the evening starts while he is here.
+        if hasattr(brain, "heads_up") and self.present():
+            try:
+                text = brain.heads_up()
+            except Exception as exc:
+                text = None
+                self.note(f"heads_up failed: {exc!r}")
+            if text:
+                self.announce(text, kind="heads_up")
         sched = getattr(brain, "scheduler", None)
         muted = bool(sched is not None and hasattr(sched, "muted")
                      and sched.muted())

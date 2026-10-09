@@ -826,7 +826,7 @@ class Avi:
             pass                      # a misread fact never costs the rundown
         if datetime.fromtimestamp(now).hour >= self.EVENING_HOUR:
             # An evening rundown already says what is on tomorrow.
-            self._heads_up_day = day
+            self.store.set_flag("heads_up_day", day)
         if not items:
             return None
         if len(tomorrow_only) == len(items):
@@ -842,11 +842,11 @@ class Avi:
                 + (f"; and {more} more." if more else "."))
 
     def heads_up(self, now=None):
-        """The night before: "Tomorrow: Math test." -- once, at his first
-        sit-down from EVENING_HOUR, when the morning rundown was hours ago
-        and tonight is when he would study for it. Facts that name tomorrow
-        and reminders due tomorrow. None outside the evening, after it was
-        said, or with nothing on.
+        """The night before: "Tomorrow: Math test." -- once, from
+        EVENING_HOUR, at his first sit-down or (dashboard/brain_host.py)
+        at 17:00 if he is already at the desk; tonight is when he would
+        study for it. Facts that name tomorrow and reminders due tomorrow.
+        None outside the evening, after it was said, or with nothing on.
         """
         from avi_bot.memory import dated
         from avi_bot.perception import habits
@@ -854,9 +854,11 @@ class Avi:
         if datetime.fromtimestamp(now).hour < self.EVENING_HOUR:
             return None
         day = habits.day_of(now)
-        if getattr(self, "_heads_up_day", None) == day:
+        # In the store, not on self: the dashboard restarts, and the
+        # evening tick asks every few seconds while he is at the desk.
+        if self.store.get_flag("heads_up_day") == str(day):
             return None
-        self._heads_up_day = day
+        self.store.set_flag("heads_up_day", day)
         start = habits.day_start_ts(now) + 86400.0
         items = []
         for r in self.store.reminders("pending"):

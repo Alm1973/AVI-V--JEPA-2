@@ -144,6 +144,27 @@ class TheNightBefore(unittest.TestCase):
         self.assertEqual(a.rundown(), "Tomorrow: Chemistry test.")
         self.assertIsNone(a.heads_up())
 
+    def test_said_once_across_a_restart(self):
+        import os, tempfile
+        path = os.path.join(tempfile.mkdtemp(), "m.db")
+        clock = Clock(MON)
+        a = main_mod.Avi(db_path=path, send=offline, env={}, clock=clock)
+        a.store.remember("Chemistry test on Friday.")
+        clock.t = datetime(2026, 10, 8, 19, 0).timestamp()
+        self.assertEqual(a.heads_up(), "Tomorrow: Chemistry test.")
+        a.close()
+        b = main_mod.Avi(db_path=path, send=offline, env={}, clock=clock)
+        self.addCleanup(b.close)
+        self.assertIsNone(b.heads_up(), "said again after a restart")
+
+    def test_already_at_the_desk_when_the_evening_starts(self):
+        from avi_bot.dashboard import brain_host as bh
+        a = self.avi(datetime(2026, 10, 8, 17, 1).timestamp())
+        h = bh.Host(lambda: a, present=lambda: True, note=lambda m: None)
+        h.brain
+        self.assertEqual(h.tick(), "Tomorrow: Chemistry test.")
+        self.assertIsNone(h.tick(), "once")
+
     def test_reminders_due_tomorrow_too(self):
         now = datetime(2026, 10, 8, 19, 0).timestamp()
         a = self.avi(now)

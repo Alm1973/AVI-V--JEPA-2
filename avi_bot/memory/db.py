@@ -94,6 +94,11 @@ CREATE TABLE IF NOT EXISTS shortcuts (
   created_at REAL NOT NULL,
   last_ts    REAL
 );
+-- Small things that must survive a restart ("the heads-up was given today").
+CREATE TABLE IF NOT EXISTS flags (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
 CREATE TABLE IF NOT EXISTS provider_usage (
   day      TEXT NOT NULL,
   provider TEXT NOT NULL,
@@ -319,6 +324,18 @@ class Store:
             return None
         yes = sum(1 for r in rows if r["response"] in ("yes", "accepted"))
         return yes / len(rows)
+
+    # --- flags ----------------------------------------------------------
+    def get_flag(self, key):
+        r = self.db.execute("SELECT value FROM flags WHERE key=?",
+                            (key,)).fetchone()
+        return r[0] if r else None
+
+    def set_flag(self, key, value):
+        self.db.execute("INSERT INTO flags (key, value) VALUES (?,?) ON "
+                        "CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (key, None if value is None else str(value)))
+        self.db.commit()
 
     # --- performances AVI composed -----------------------------------------
     # Words that say "a performance" rather than which one: "do an
