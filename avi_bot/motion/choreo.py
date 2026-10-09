@@ -328,6 +328,29 @@ def compose(moves, start, config=None, body=None, scale=1.0, rate=None,
                   "dropped": [d for d in dropped if d]}
 
 
+# --- "do it bigger" ------------------------------------------------------
+# GenEM's feedback step: a correction edits the behaviour rather than
+# starting over. Each word moves every primitive one notch.
+ADJUST = ("bigger", "smaller", "faster", "slower")
+_TEMPOS = ("slow", "normal", "fast")
+
+
+def adjust(moves, how):
+    """The same dance one notch bigger/smaller/faster/slower."""
+    moves, _ = clean(moves)
+    out = []
+    for m in moves:
+        m = dict(m)
+        if how in ("bigger", "smaller"):
+            m["size"] = max(1, min(3, m["size"] + (1 if how == "bigger"
+                                                   else -1)))
+        elif how in ("faster", "slower"):
+            k = _TEMPOS.index(m["speed"]) + (1 if how == "faster" else -1)
+            m["speed"] = _TEMPOS[max(0, min(2, k))]
+        out.append(m)
+    return out
+
+
 # --- with no language model --------------------------------------------
 # What a name evokes, in primitives. Checked in order; the first theme whose
 # word appears wins. Anything else gets a dance seeded from its own name, so

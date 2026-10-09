@@ -280,6 +280,15 @@ def _perform(m):
     return Intent("perform", {"name": " ".join(m.group("name").split())})
 
 
+# "do it faster" right after a dance: the same dance, one notch changed.
+@rule(r"^(?:(?:now\s+)?(?:do\s+(?:it|that)|again|dance)\s+(?:but\s+)?|"
+      r"make\s+it\s+|(?:a\s+(?:bit|little)\s+))?"
+      r"(?P<how>bigger|smaller|faster|slower)(?:\s+(?:this\s+time|"
+      r"please))?[.!]?$")
+def _adjust(m):
+    return Intent("perform", {"name": "last", "adjust": m.group("how")})
+
+
 @rule(r"^(?:can\s+(?:you|u)\s+)?(?P<g>nod|shake\s+your\s+head)[.!?]?$")
 def _nod_shake(m):
     return Intent("play_emotion",

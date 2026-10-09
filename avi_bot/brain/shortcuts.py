@@ -61,7 +61,7 @@ def _canonical(calls):
     for name, args in calls:
         args = dict(args or {})
         if name == "perform":
-            args = {"name": args.get("name")}
+            args = {k: args[k] for k in ("name", "adjust") if args.get(k)}
         out.append([name, args])
     return out
 

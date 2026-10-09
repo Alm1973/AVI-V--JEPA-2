@@ -333,3 +333,54 @@ class TheDancesPanel(TheHost):
                          ["dolphin dance"])
         self.assertEqual(self.host.forget_move("the dolphin dance"), 1)
         self.assertEqual(self.host.moves(), [])
+
+
+
+class Correcting(unittest.TestCase):
+    """GenEM's feedback step: "do it faster" edits the dance just done."""
+
+    def setUp(self):
+        self.arm = PerformingArm()
+        self.avi = build(clock=Clock(), arm=self.arm)
+        self.addCleanup(self.avi.close)
+        self.avi._sleep = lambda s: None
+        self.avi.background = False
+
+    def test_one_notch(self):
+        moves = [{"move": "sway", "size": 2, "speed": "normal"},
+                 {"move": "bob", "size": 3, "speed": "fast"}]
+        self.assertEqual([(m["size"], m["speed"]) for m in
+                          choreo.adjust(moves, "bigger")],
+                         [(3, "normal"), (3, "fast")])
+        self.assertEqual([m["speed"] for m in choreo.adjust(moves,
+                                                            "slower")],
+                         ["slow", "normal"])
+
+    def test_heard(self):
+        for text, how in (("do it faster", "faster"), ("bigger", "bigger"),
+                          ("again but slower", "slower"),
+                          ("make it smaller", "smaller")):
+            got = intents.match(text)
+            self.assertEqual((got.tool, got.args),
+                             ("perform", {"name": "last", "adjust": how}),
+                             text)
+
+    def test_do_it_faster_after_a_dance(self):
+        self.avi.skills.run("perform", {"name": "dolphin", "moves": [
+            {"move": "leap", "speed": "normal"}]})
+        self.avi.handle("do it faster")
+        kept = self.avi.store.get_move("dolphin")
+        self.assertEqual(kept["moves"][0]["speed"], "fast")
+        self.assertEqual(kept["source"], "adjusted")
+        self.assertEqual(len(self.arm.played), 2)
+
+    def test_nothing_danced_yet(self):
+        r = self.avi.skills.run("perform", {"name": "last",
+                                            "adjust": "bigger"})
+        self.assertEqual(r.text, "I haven't danced yet.")
+
+    def test_praise_gets_a_wiggle_a_scold_a_look_away(self):
+        d, _ = self.avi.handle("good job avi")
+        self.assertEqual(d.reply.gesture, "fidget")
+        d, _ = self.avi.handle("bad robot")
+        self.assertEqual(d.reply.gesture, "embarrassed")

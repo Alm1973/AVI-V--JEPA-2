@@ -125,8 +125,11 @@ TOOLS = [
           "it moves (idea) and ALWAYS compose 4-10 moves: wave rolls down "
           "the arm like swimming, leap arcs up then dives, rise stretches "
           "tall, duck shrinks, spin is a big turn, circle traces a loop. "
-          "Name only, no moves, just repeats one the context lists.",
+          "Name only, no moves, just repeats one the context lists. "
+          "adjust changes the one just danced (name 'last').",
           {"name": {"type": "string", "maxLength": 60},
+           "adjust": {"type": "string", "enum": ["bigger", "smaller",
+                                                 "faster", "slower"]},
            "idea": {"type": "string", "maxLength": 160},
            "moves": {"type": "array", "maxItems": 12, "items": {
                "type": "object", "properties": {

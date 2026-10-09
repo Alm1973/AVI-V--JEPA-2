@@ -462,7 +462,11 @@ class Avi:
             run()
         return None, {"steps": len(steps), "seconds": round(sum(holds), 1)}
 
-    def _perform(self, name, idea=None, moves=None):
+    # Names that mean "the dance just done": the adjust rule sends "last",
+    # and the model says "it" or "that".
+    LAST_DANCE = ("last", "it", "that", "again", "the last one", "this")
+
+    def _perform(self, name, idea=None, moves=None, adjust=None):
         """Dance or act something out (motion/choreo.py).
 
         Composed by the model when it sent moves; otherwise the one kept
@@ -474,14 +478,22 @@ class Avi:
         if self.arm is None:
             return "I have no arm attached.", None
         from avi_bot.motion import body as body_mod, choreo
+        if (name or "").strip().lower() in self.LAST_DANCE:
+            name, _ = self.store.last_move()
+            if not name:
+                return "I haven't danced yet.", {"missed": True}
         known = self.store.get_move(name)
-        made = None
+        scale = 1.0
         if moves:
             moves, _ = choreo.clean(moves)
-            made = "composed" if moves else None
-        if made:
+        if adjust in choreo.ADJUST and known and not moves:
+            # A correction edits the dance (GenEM) and is kept as it.
+            moves, idea = choreo.adjust(known["moves"], adjust), known["idea"]
+            made = f"made {adjust}"
+            self.store.save_move(name, moves, idea=idea, source="adjusted")
+        elif moves:
+            made = "composed"
             self.store.save_move(name, moves, idea=idea, source=made)
-            scale = 1.0
         elif known and known["score"] >= 0:
             moves, idea, scale = known["moves"], known["idea"], known["scale"]
             made = "remembered"
@@ -491,7 +503,6 @@ class Avi:
                 name, variant=(known or {}).get("performed", 0))
             made = "improvised"
             self.store.save_move(name, moves, idea=idea, source=made)
-            scale = 1.0
         config = getattr(self.arm, "config", None) or poses_mod.load()
         here = dict(self.arm.snapshot())
         body = body_mod.load()
@@ -725,6 +736,12 @@ class Avi:
         # The mood's task events (BUILD_SPEC 5.2) had no caller: doing what
         # he asked lifts valence, failing lowers it. Praise and scold are
         # mood events themselves, and counting them twice would double them.
+        # The body answers feedback: a happy wiggle for praise, a look away
+        # for a scold -- unless the reply already moves.
+        fed = {c[0] for c in decision.calls} & {"praise", "scold"}
+        if fed and decision.reply.gesture is None:
+            decision.reply = decision.reply.model_copy(update={
+                "gesture": "fidget" if "praise" in fed else "embarrassed"})
         acted = [(c[0], r) for c, r in zip(decision.calls, results)
                  if c[0] not in ("praise", "scold")]
         if acted:
