@@ -377,6 +377,13 @@ class FreeMotion(unittest.TestCase):
         self.assertEqual(decision.reply.say,
                          "Haven't seen it today. I'll look.")
 
+    def test_a_look_in_the_dark_says_so_not_gone(self):
+        self.arm.look_at = lambda t: {"moved": True, "in_view": None,
+                                      "dark": True}
+        decision, _ = self.avi.handle("look at the mug")
+        self.assertEqual(decision.reply.say,
+                         "It's too dark for me to see the mug.")
+
     def test_a_look_that_lands_is_silent(self):
         self.arm.look_at = lambda t: {"moved": True, "in_view": True}
         self.assertIsNone(self.run_call("look_at", target="laptop").text)

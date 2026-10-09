@@ -2728,11 +2728,20 @@ def confirm_look(arm, latest, name):
         got = steady_detections(arm, latest)
         return None if got is None else got[:3]
 
+    frame, _ = _frame(latest)
+    dark = frame is not None and float(frame.mean()) < \
+        look_check_mod.DARK_LEVEL
     found = look_check_mod.search(
         want, (start["base_yaw"], start["wrist"]), move, detect,
-        arm.config.soft_limits("base_yaw"), arm.config.soft_limits("wrist"))
+        arm.config.soft_limits("base_yaw"), arm.config.soft_limits("wrist"),
+        stops=look_check_mod.STOPS[:1] if dark else look_check_mod.STOPS)
     if found is None:
         move(start["base_yaw"], start["wrist"])
+        if dark:
+            # At 9/255 nothing at all was detected: a miss in the dark is
+            # not evidence the thing has gone (robot, 2026-10-09 00:36).
+            arm.note(f"look check: too dark to see the {want}")
+            return "dark"
         arm.note(f"look check: no {want} where the map says")
         return False
     hit, (dyaw, dwr) = found["hit"], found["offset"]
@@ -3007,7 +3016,7 @@ def find_object(arm, name, look=True, latest=None):
         # A survey is sweeping the arm; moving it now would file the survey's
         # next stops under a pose it never held. Answer from the map, stay put.
         look = False
-    in_view = None
+    in_view, dark = None, False
     if look and aim and aim.get("confident"):
         if hasattr(arm, "hold"):
             arm.hold(LOOK_HOLD_S + 20.0)   # the seat loop waits for the check
@@ -3028,7 +3037,10 @@ def find_object(arm, name, look=True, latest=None):
             # 2026-10-08).
             time.sleep(max(0.0, t0 + arrival_s(arm, pose0) - time.time()))
             in_view = confirm_look(arm, latest, name)
-            if in_view is False:
+            if in_view == "dark":
+                dark, in_view = True, None
+                text = f"{text} Too dark to check it's there."
+            elif in_view is False:
                 text = f"{text} Not there now."
         _back_to_seat_later(arm)
     elif look and not aim and latest is not None and name:
@@ -3044,6 +3056,7 @@ def find_object(arm, name, look=True, latest=None):
             text = f"{text} I'll look."
     log(f"find {name!r}: {text} moved={moved}")
     return {"say": text, "aim": aim, "moved": moved, "in_view": in_view,
+            "dark": dark,
             "known": [p.label for p, _ in arm.roommap.known()]}
 
 

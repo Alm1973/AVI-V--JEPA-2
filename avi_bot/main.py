@@ -276,6 +276,9 @@ class Avi:
             if got.get("looked") is False:
                 return "I can't see you from here.", dict(info, missed=True)
             return None, info
+        if got.get("dark"):
+            return (f"It's too dark for me to see the {target}.",
+                    dict(info, tell=True))
         if got.get("in_view") is False:
             return (f"I can't see the {target} from here.",
                     dict(info, missed=True))

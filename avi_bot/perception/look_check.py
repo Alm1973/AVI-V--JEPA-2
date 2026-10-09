@@ -8,6 +8,12 @@ and detecting (dashboard/server.py confirm_look); this module only decides
 where to look and what counts as found, so it can be tested on the Mac.
 """
 
+# Mean frame level (0-255) below which a missed look proves nothing. At 9
+# the detector found nothing at all; at 14 only a lit laptop screen
+# (robot, 2026-10-08/09). Same line as /detect_debug's "dark". In the dark
+# only the aim itself is checked, and a miss is "too dark", not "gone".
+DARK_LEVEL = 30.0
+
 # (base_yaw, wrist) offsets from the aim, degrees, in the order tried. On
 # the robot the mug turned up at -15 yaw; the laptop, close and low, at
 # none of the side stops until the arm was given time to arrive.
