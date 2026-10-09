@@ -154,6 +154,9 @@ class Host:
                     self.note(f"brain failed to start: {self.error}")
             return self._brain
 
+    # Tools that play their own motion over seconds.
+    OWN_MOTION = ("perform", "motion_sequence")
+
     def ask(self, text):
         """One text turn. Never raises."""
         text = (text or "").strip()
@@ -177,6 +180,10 @@ class Host:
             elif reply.beep:
                 self.speaker.chirp_later(reply.beep)
         move = body_move(reply.gesture, reply.beep, have_speaker=voiced)
+        if any(c[0] in self.OWN_MOTION for c in decision.calls):
+            # The turn already moves the arm for a while; a reply gesture
+            # pushed on top would cut into the dance it asked for.
+            move = None
         if move and self.perform is not None:
             try:
                 self.perform(move)
@@ -349,6 +356,11 @@ class Host:
 
     def _deliver(self, brain):
         self._sync_missed(brain)
+        # What the brain found out after a turn had already answered, e.g.
+        # that a dance it played never visibly moved the camera.
+        owed = getattr(brain, "owed", None)
+        while isinstance(owed, list) and owed:
+            self.announce(owed.pop(0), kind="perform")
         sched = getattr(brain, "scheduler", None)
         muted = bool(sched is not None and hasattr(sched, "muted")
                      and sched.muted())

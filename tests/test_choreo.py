@@ -243,6 +243,11 @@ class Performing(unittest.TestCase):
         self.avi.skills.run("perform", {"name": "dolphin"})
         self.assertAlmostEqual(self.avi.store.get_move("dolphin")["scale"],
                                1.4)
+        self.assertEqual(len(self.avi.owed), 1, "and it says so")
+
+    def test_a_dance_that_was_seen_owes_nothing(self):
+        self.avi.skills.run("perform", {"name": "dolphin"})
+        self.assertEqual(self.avi.owed, [])
 
     def test_from_rest_it_first_goes_where_it_can_dance(self):
         self.arm.pose = poses.get_pose("REST")
@@ -261,3 +266,28 @@ class Performing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheHost(unittest.TestCase):
+    """dashboard/brain_host.py around a performance."""
+
+    def setUp(self):
+        from avi_bot.dashboard import brain_host
+        self.arm = PerformingArm(moved=False)
+        self.avi = build(clock=Clock(), arm=self.arm)
+        self.addCleanup(self.avi.close)
+        self.avi._sleep = lambda s: None
+        self.avi.background = False
+        self.played = []
+        self.host = brain_host.Host(lambda: self.avi, note=lambda m: None,
+                                    perform=self.played.append)
+
+    def test_no_reply_gesture_on_top_of_a_dance(self):
+        out = self.host.ask("do an interpretive dance like a dolphin")
+        self.assertEqual(out["tools"], ["perform"])
+        self.assertEqual(self.played, [])
+
+    def test_an_unseen_dance_is_told(self):
+        self.host.ask("dance like a dolphin")
+        self.assertEqual(self.host.tick(), "I tried to dance, but my "
+                         "camera saw nothing move. I'll go bigger next time.")

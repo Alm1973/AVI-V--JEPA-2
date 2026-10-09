@@ -136,6 +136,9 @@ class Avi:
         self.logging_enabled = True
         self.turns = []
         self.last_performance = None
+        # Things to tell him that a turn learned after it had answered; the
+        # dashboard host delivers them like announcements.
+        self.owed = []
 
     # --- wiring ----------------------------------------------------------
     def _wire(self):
@@ -509,6 +512,11 @@ class Avi:
             seen = got.get("moved") if isinstance(got, dict) else None
             self.store.performed_move(name, seen=seen)
             self.last_performance = {"name": name, "check": got}
+            if seen is False:
+                # Own up, as a move the picture disagrees with is owned up
+                # to; the next one is bigger (store.performed_move).
+                self.owed.append("I tried to dance, but my camera saw "
+                                 "nothing move. I'll go bigger next time.")
 
         if self.background:
             import threading
