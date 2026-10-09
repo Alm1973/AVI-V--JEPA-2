@@ -334,3 +334,24 @@ class BackToTheSeat(unittest.TestCase):
 
     def test_already_there_does_nothing(self):
         self.assertFalse(pm.seat_return_due(100.0, 0.0, at_seat=True))
+
+
+class Restarting(unittest.TestCase):
+    """2026-10-09 07:21: a restart after a break offer 'arrived' again and
+    the morning rundown was said twice."""
+
+    def test_a_break_offer_is_not_the_last_word_on_presence(self):
+        import os, tempfile
+        path = os.path.join(tempfile.mkdtemp(), "p.db")
+        p = pm.Presence(path)
+        for i in range(3):
+            p.sample(True, at=1000 + 20 * i)
+        self.assertTrue(p.here)
+        p.log_event("break_offered", at=2000)
+        p.close()
+        p = pm.Presence(path)
+        self.addCleanup(p.close)
+        self.assertTrue(p.here)
+        self.assertIsNone(p.sample(True, at=2100))
+        self.assertIsNone(p.sample(True, at=2120), "no second arrival")
+        self.assertEqual(p.arrivals(0), 1)

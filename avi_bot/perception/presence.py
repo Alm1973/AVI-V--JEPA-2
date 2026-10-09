@@ -113,8 +113,12 @@ class Presence:
         self._seen_run = 0
         self._gone_run = 0
         self.since = None
+        # The last arrival or departure: a break offer is logged here too,
+        # and reading IT as the last event made every restart after one an
+        # "arrival" -- with a second morning rundown (2026-10-09 07:21).
         last = self.db.execute(
-            "SELECT ts, kind FROM events ORDER BY ts DESC LIMIT 1").fetchone()
+            "SELECT ts, kind FROM events WHERE kind IN ('arrived', 'left')"
+            " ORDER BY ts DESC LIMIT 1").fetchone()
         if last and last[1] == "arrived":
             # A restart mid-session should not invent a departure.
             self.here, self.since = True, last[0]
@@ -249,6 +253,12 @@ class Presence:
                                 " seen_at = ? WHERE id = ?", (at, d["id"]))
         self.db.commit()
         return real, fake
+
+    def arrivals(self, since):
+        """How many arrivals were logged since `since`."""
+        return self.db.execute(
+            "SELECT COUNT(*) FROM events WHERE kind = 'arrived' AND ts >= ?",
+            (float(since),)).fetchone()[0]
 
     def sessions(self, since=None, min_minutes=MIN_SESSION_MIN):
         """[(start, end_or_None), ...] from the arrival/departure events."""

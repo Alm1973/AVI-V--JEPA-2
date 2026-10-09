@@ -568,9 +568,10 @@ class Arm:
         if host is None:
             return
         try:
-            today = self.presence.sessions(
-                since=habits_mod.day_start_ts(time.time()), min_minutes=0)
-            host.arrived(first_today=len(today) <= 1)
+            # Arrivals, not sessions: a session still open from the first
+            # arrival made the second one "first today" too.
+            host.arrived(first_today=self.presence.arrivals(
+                habits_mod.day_start_ts(time.time())) <= 1)
         except Exception as exc:
             self.note(f"arrival rundown: {exc!r}")
 
