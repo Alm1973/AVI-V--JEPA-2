@@ -13,8 +13,10 @@ Two rules carry the correctness.
 
   ABSENCE NEEDS A VIEW. Not seeing him while the camera points at the ceiling
   says nothing about whether he is there. Every sample records whether the arm
-  was looking at his seat; only those can count as "away". A detection counts
-  from anywhere -- if he is seen, he is there.
+  was looking at his seat; only those can count as "away". (A detection used
+  to count from anywhere -- "if he is seen, he is there" -- until a poster on
+  his wall, seen mid-dance from a new angle, "arrived" 40 s after he left,
+  2026-10-09. The dashboard now samples only the seat view, held still.)
 
   HYSTERESIS. One frame with a person in it is not an arrival and one frame
   without is not a departure; detectors flicker. Arrival needs ARRIVE_AFTER

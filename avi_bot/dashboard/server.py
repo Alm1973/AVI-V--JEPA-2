@@ -525,6 +525,14 @@ class Arm:
         while not self.stop.is_set() and time.time() < deadline:
             time.sleep(period)
             try:
+                if (self.engine.busy() or self.survey_lock.locked()
+                        or not self.view_ok_for_presence()):
+                    # Only the seat view, held still, says anything about
+                    # him. From anywhere else the poster AVI learned is not
+                    # him sits somewhere new -- a dance's frames made it
+                    # "arrive" 40 s after he left (2026-10-09 07:54) -- and
+                    # mid-gesture the seat view is not the seat view.
+                    continue
                 frame, _ = _frame(latest)
                 if frame is None:
                     continue
