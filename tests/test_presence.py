@@ -208,6 +208,42 @@ class APictureOfAPerson(unittest.TestCase):
                           0.4 + rng.uniform(-0.02, 0.02), 0.2, 0.55))
         self.assertFalse(p.still_person())
 
+    def test_a_still_box_is_learned_as_a_decoy_and_ignored(self):
+        """2026-10-09 06:12: it 'arrived' at sunrise, got the rundown and
+        a break offer. Five still minutes, then it is not him."""
+        p = pm.Presence()
+        self.addCleanup(p.close)
+        poster = (0.6201, 0.35, 0.18, 0.40)
+        for i in range(15):
+            p.sample(True, conf=0.89, at=1000 + 20 * i, box=poster)
+        self.assertEqual(p.learn_decoy(), poster)
+        self.assertIsNone(p.learn_decoy(), "learned once")
+        real, fake = p.screen([(0.6202, 0.35, 0.1801, 0.40)])
+        self.assertEqual((real, len(fake)), ([], 1))
+        # He sits down in front of it: a different, bigger box.
+        him = (0.55, 0.55, 0.45, 0.85)
+        self.assertEqual(p.screen([him])[0], [him])
+
+    def test_a_decoy_that_moves_was_a_person(self):
+        p = pm.Presence()
+        self.addCleanup(p.close)
+        for i in range(15):
+            p.sample(True, conf=0.8, at=1000 + 20 * i,
+                     box=(0.5, 0.4, 0.2, 0.55))
+        p.learn_decoy()
+        for k in range(3):
+            moved = (0.5 + (0.025 if k % 2 else -0.025), 0.4, 0.2, 0.55)
+            self.assertEqual(p.screen([moved])[0], [moved])
+        self.assertEqual(p.decoys(), [], "three moves and it is forgotten")
+
+    def test_only_seat_view_samples_count_as_still(self):
+        p = pm.Presence()
+        self.addCleanup(p.close)
+        for i in range(15):
+            p.sample(True, conf=0.89, at=1000 + 20 * i, view_ok=False,
+                     box=(0.5, 0.4, 0.2, 0.55))
+        self.assertIsNone(p.still_person())
+
     def test_too_few_samples_is_unknown(self):
         p = pm.Presence()
         self.addCleanup(p.close)

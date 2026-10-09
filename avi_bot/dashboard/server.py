@@ -516,28 +516,41 @@ class Arm:
                             d["label"] == "cell phone"
                             and d["conf"] >= self.PHONE_MIN_CONF
                             for d in seen))
+                fh, fw = frame.shape[:2]
+                at_seat = self.view_ok_for_presence()
+
+                def frac(d):
+                    return (d["cx"] / fw, d["cy"] / fh, d["w"] / fw,
+                            d["h"] / fh)
+                if at_seat and people:
+                    # A learned decoy (a poster, a photo) is not him.
+                    real, fake = self.presence.screen(
+                        [frac(d) for d in people])
+                    if fake and time.time() - getattr(
+                            self, "_decoy_noted", 0) > 1800:
+                        self._decoy_noted = time.time()
+                        self.note("presence: ignoring the still 'person' "
+                                  "AVI learned is not him")
+                    people = [d for d in people if frac(d) in real]
                 conf = max((d["conf"] for d in people), default=None)
                 top = max(people, key=lambda d: d["conf"], default=None)
-                fh, fw = frame.shape[:2]
                 level = float(frame.mean())
                 event = self.presence.sample(
                     bool(people), conf=conf,
                     # Not seeing him in a black room is not evidence he
                     # left: at 5/255 nothing is detected at all.
-                    view_ok=self.view_ok_for_presence() and (
+                    view_ok=at_seat and (
                         bool(people)
                         or level >= look_check_mod.DARK_LEVEL),
-                    box=(None if top is None else
-                         (top["cx"] / fw, top["cy"] / fh, top["w"] / fw,
-                          top["h"] / fh)),
+                    box=None if top is None else frac(top),
                     light=level)
-                if people and self.presence.still_person():
-                    # Evidence only, for now: a 'person' that has not moved
-                    # in five minutes. Noted at most every half hour.
-                    if time.time() - getattr(self, "_still_noted", 0) > 1800:
-                        self._still_noted = time.time()
-                        self.note("presence: the person in view has not moved"
-                                  " in 5 min (a picture?)")
+                if people and at_seat:
+                    learned = self.presence.learn_decoy()
+                    if learned:
+                        self.note("presence: the 'person' in view has not "
+                                  "moved in 5 min -- learned it is not him "
+                                  "(a picture?) and will ignore it there: "
+                                  + ",".join(f"{v:.2f}" for v in learned))
                 if event:
                     self.mood_event(event)
                     self.note(f"presence: {event}")
@@ -3182,7 +3195,7 @@ def blind_why(detail, before=None, after=None):
     return "; ".join(why)
 
 
-def babble(arm, latest, n=16, max_deg=8.0, seed=None):
+def babble(arm, latest, n=16, max_deg=8.0, seed=None, save=True):
     """Motor babbling (perception/selfmodel.py): small single-joint moves
     from where the arm is, out and back, each measured by ORB and V-JEPA.
     Returns {"rows", "compare"}; rows also go to avi-remote/babble.jsonl.
@@ -3252,14 +3265,16 @@ def babble(arm, latest, n=16, max_deg=8.0, seed=None):
                                     pose_before, before, after))
     finally:
         arm.set_pose(start)
-    try:
-        d = os.path.join(os.environ.get("USERPROFILE", "."), "avi-remote")
-        with open(os.path.join(d, "babble.jsonl"), "a") as f:
-            for r in rows:
-                f.write(json.dumps(dict(r, ts=round(time.time(), 1),
-                                        seed=seed)) + "\n")
-    except Exception as exc:
-        arm.note(f"babble: could not save rows: {exc!r}")
+    if save:
+        try:
+            d = os.path.join(os.environ.get("USERPROFILE", "."),
+                             "avi-remote")
+            with open(os.path.join(d, "babble.jsonl"), "a") as f:
+                for r in rows:
+                    f.write(json.dumps(dict(r, ts=round(time.time(), 1),
+                                            seed=seed)) + "\n")
+        except Exception as exc:
+            arm.note(f"babble: could not save rows: {exc!r}")
     out = {"rows": rows, "seed": seed,
            "compare": {k: selfmodel_mod.compare(rows, model, which=k)
                        for k in ("orb", "jepa")}}

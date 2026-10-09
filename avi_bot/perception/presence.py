@@ -53,7 +53,28 @@ CREATE TABLE IF NOT EXISTS events (
     ts    REAL NOT NULL,
     kind  TEXT NOT NULL            -- arrived | left | break_offered
 );
+-- "People" in the seat view that are not him: a box that sat perfectly
+-- still for five minutes (a poster, a photo). Learned, not configured.
+CREATE TABLE IF NOT EXISTS decoys (
+    id         INTEGER PRIMARY KEY,
+    box        TEXT NOT NULL,      -- cx,cy,w,h as fractions of the frame
+    learned_at REAL NOT NULL,
+    seen_at    REAL,
+    hits       INTEGER NOT NULL DEFAULT 0,
+    moved      INTEGER NOT NULL DEFAULT 0
+);
 """
+
+
+def iou(a, b):
+    """Overlap of two (cx, cy, w, h) boxes, 0..1."""
+    ax0, ay0 = a[0] - a[2] / 2, a[1] - a[3] / 2
+    bx0, by0 = b[0] - b[2] / 2, b[1] - b[3] / 2
+    ix = max(0.0, min(ax0 + a[2], bx0 + b[2]) - max(ax0, bx0))
+    iy = max(0.0, min(ay0 + a[3], by0 + b[3]) - max(ay0, by0))
+    inter = ix * iy
+    union = a[2] * a[3] + b[2] * b[3] - inter
+    return inter / union if union > 0 else 0.0
 
 
 def seat_return_due(now, hold_until, busy=False, surveying=False,
@@ -154,10 +175,11 @@ class Presence:
         """Has the 'person' in the last `n` present samples (5 minutes at
         one per 20 s) not moved at all? A living person shifts more than
         this while sitting still; a photo or poster does not. None without
-        enough boxed samples."""
+        enough boxed samples. Seat-view samples only: box positions from
+        two different views are not comparable."""
         rows = self.db.execute(
             "SELECT box FROM samples WHERE present = 1 AND box IS NOT NULL "
-            "ORDER BY ts DESC LIMIT ?", (int(n),)).fetchall()
+            "AND view_ok = 1 ORDER BY ts DESC LIMIT ?", (int(n),)).fetchall()
         if len(rows) < n:
             return None
         boxes = [[float(v) for v in r[0].split(",")] for r in rows]
@@ -165,6 +187,68 @@ class Presence:
                 for i in range(4)]
         return (span[0] <= tol and span[1] <= tol and span[2] <= size_tol
                 and span[3] <= size_tol)
+
+    # --- decoys: what looks like a person and is not him ----------------
+    # 2026-10-08 08:28-18:19 and 2026-10-09 from 06:12 (sunrise): a 'person'
+    # at 0.89 that never moved. It "arrived" at dawn, got the morning
+    # rundown, and was offered a break after 59 minutes. Once a box has
+    # been perfectly still for five minutes it is remembered as a decoy and
+    # a detection on it no longer counts as him.
+    DECOY_IOU = 0.5
+    # A detection on a decoy that has moved this far (a fraction of the
+    # frame, centre or size) is someone alive there, not the picture.
+    DECOY_MOVED = 0.02
+    # Three such and the "decoy" was a person sitting very still: dropped.
+    DECOY_FORGET_AFTER = 3
+
+    def decoys(self):
+        return [{"id": r[0], "box": tuple(float(v) for v in r[1].split(",")),
+                 "hits": r[2], "moved": r[3]}
+                for r in self.db.execute(
+                    "SELECT id, box, hits, moved FROM decoys")]
+
+    def learn_decoy(self):
+        """If the person in view has been perfectly still for five minutes,
+        remember its box as a decoy. Returns the box when newly learned."""
+        if not self.still_person():
+            return None
+        r = self.db.execute(
+            "SELECT box FROM samples WHERE present = 1 AND box IS NOT NULL "
+            "AND view_ok = 1 ORDER BY ts DESC LIMIT 1").fetchone()
+        box = tuple(float(v) for v in r[0].split(","))
+        if any(iou(box, d["box"]) >= self.DECOY_IOU for d in self.decoys()):
+            return None
+        self.db.execute("INSERT INTO decoys (box, learned_at) VALUES (?,?)",
+                        (",".join(f"{v:.4f}" for v in box), self.clock()))
+        self.db.commit()
+        return box
+
+    def screen(self, boxes, at=None):
+        """Split person boxes seen from the seat view into (real, decoy):
+        a box on a learned decoy that has not moved is the decoy."""
+        at = self.clock() if at is None else float(at)
+        known = self.decoys()
+        real, fake = [], []
+        for box in boxes:
+            d = max(known, key=lambda k: iou(box, k["box"]), default=None)
+            if d is None or iou(box, d["box"]) < self.DECOY_IOU:
+                real.append(box)
+                continue
+            if max(abs(a - b) for a, b in zip(box, d["box"])) \
+                    > self.DECOY_MOVED:
+                real.append(box)
+                if d["moved"] + 1 >= self.DECOY_FORGET_AFTER:
+                    self.db.execute("DELETE FROM decoys WHERE id = ?",
+                                    (d["id"],))
+                else:
+                    self.db.execute("UPDATE decoys SET moved = moved + 1"
+                                    " WHERE id = ?", (d["id"],))
+            else:
+                fake.append(box)
+                self.db.execute("UPDATE decoys SET hits = hits + 1,"
+                                " seen_at = ? WHERE id = ?", (at, d["id"]))
+        self.db.commit()
+        return real, fake
 
     def sessions(self, since=None, min_minutes=MIN_SESSION_MIN):
         """[(start, end_or_None), ...] from the arrival/departure events."""
