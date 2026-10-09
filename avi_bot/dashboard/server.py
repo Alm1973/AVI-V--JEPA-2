@@ -442,6 +442,14 @@ class Arm:
     # needs two minutes of it before anything happens.
     PHONE_MIN_CONF = 0.40
 
+    def travelling(self, tol=1.0):
+        """Is the arm still on its way to the commanded pose? A frame taken
+        then is not the seat view yet: one counted the poster as him right
+        after the 09:01 self-check came home (2026-10-09)."""
+        sent, target = self.sent, self.snapshot()
+        return any(abs(float(sent.get(j, target[j])) - float(target[j]))
+                   > tol for j in poses.JOINTS)
+
     def view_ok_for_presence(self):
         seat = (load_taught() or {}).get(self.SEAT_VIEW)
         if not seat:
@@ -590,7 +598,8 @@ class Arm:
             time.sleep(period)
             try:
                 if (self.engine.busy() or self.survey_lock.locked()
-                        or not self.view_ok_for_presence()):
+                        or not self.view_ok_for_presence()
+                        or self.travelling()):
                     # Only the seat view, held still, says anything about
                     # him. From anywhere else the poster AVI learned is not
                     # him sits somewhere new -- a dance's frames made it
