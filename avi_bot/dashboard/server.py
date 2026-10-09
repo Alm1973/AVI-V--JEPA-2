@@ -282,6 +282,12 @@ class Arm:
     # PERFORM_BACK at the end = it came back to where it started.
     PERFORM_MOVED = 3.0
     PERFORM_BACK = 2.0
+    # "Back" by ORB when the view has texture: the leftover slide between
+    # the start and end pictures, in pixels. 40 px is ~1.5 degrees, about
+    # twice base_yaw's measured repeatability (0.8, motion/backlash.py).
+    # Thumbnails are the fallback only: a one-degree offset already reads
+    # 3-4 on them, so 2.0 judged a good return as a miss.
+    PERFORM_BACK_PX = 40.0
 
     def play_move(self, move, label=None):
         self.engine.push(move)
@@ -344,10 +350,17 @@ class Arm:
         final = None
         if not dark and diffs:
             votes_moved["thumbs"] = max(diffs) >= self.PERFORM_MOVED
+        offset = None
         if after is not None:
             final = float(np.abs(look_check_mod.thumb(after) - t0).mean())
-            if not dark:
-                votes_back["thumbs"] = final <= self.PERFORM_BACK
+            try:
+                reg = horizon_mod.register(before, after)
+                offset = (round(reg["dx_px"], 1), round(reg["dy_px"], 1))
+                votes_back["orb"] = (math.hypot(*offset)
+                                     <= self.PERFORM_BACK_PX)
+            except horizon_mod.NotMeasurable:
+                if not dark:
+                    votes_back["thumbs"] = final <= self.PERFORM_BACK
             if ga is not None:
                 try:
                     gb = _jepa_grid(self, after)
@@ -369,11 +382,13 @@ class Arm:
                "votes": {"moved": votes_moved, "back": votes_back},
                "max_diff": round(max(diffs), 2) if diffs else None,
                "final_diff": None if final is None else round(final, 2),
+               "end_offset_px": offset,
                "jepa_min": round(min(sims), 3) if sims else None,
                "light": round(level, 1), "dark": dark}
         self.note(f"performed {label or move.name}: moved {out['moved']}, "
                   f"back {out['back']} (diff max {out['max_diff']}, end "
-                  f"{out['final_diff']}, jepa min {out['jepa_min']})")
+                  f"{out['final_diff']}, off by {offset} px, jepa min "
+                  f"{out['jepa_min']})")
         self.last_performance = out
         return out
 

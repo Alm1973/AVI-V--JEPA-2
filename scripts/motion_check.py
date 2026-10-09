@@ -47,7 +47,8 @@ def dance(name, moves):
             print(f"{'PASS' if ok else 'FAIL'}  {name}: moved "
                   f"{got.get('moved')}, back {got.get('back')}  votes "
                   f"{json.dumps(got.get('votes'))}  diff max "
-                  f"{got.get('max_diff')} end {got.get('final_diff')} jepa "
+                  f"{got.get('max_diff')} end {got.get('final_diff')} off "
+                  f"{got.get('end_offset_px')} px jepa "
                   f"min {got.get('jepa_min')} light {got.get('light')}")
             return got
     print(f"FAIL  {name}: no verdict in time")
