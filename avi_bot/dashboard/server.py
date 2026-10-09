@@ -421,9 +421,22 @@ class Arm:
                             and d["conf"] >= self.PHONE_MIN_CONF
                             for d in seen))
                 conf = max((d["conf"] for d in people), default=None)
+                top = max(people, key=lambda d: d["conf"], default=None)
+                fh, fw = frame.shape[:2]
                 event = self.presence.sample(
                     bool(people), conf=conf,
-                    view_ok=self.view_ok_for_presence())
+                    view_ok=self.view_ok_for_presence(),
+                    box=(None if top is None else
+                         (top["cx"] / fw, top["cy"] / fh, top["w"] / fw,
+                          top["h"] / fh)),
+                    light=float(frame.mean()))
+                if people and self.presence.still_person():
+                    # Evidence only, for now: a 'person' that has not moved
+                    # in five minutes. Noted at most every half hour.
+                    if time.time() - getattr(self, "_still_noted", 0) > 1800:
+                        self._still_noted = time.time()
+                        self.note("presence: the person in view has not moved"
+                                  " in 5 min (a picture?)")
                 if event:
                     self.mood_event(event)
                     self.note(f"presence: {event}")

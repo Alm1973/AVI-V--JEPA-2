@@ -184,6 +184,50 @@ class Persistence(unittest.TestCase):
         self.assertNotEqual(pm.PROFILES["dev"], pm.PROFILES["live"])
 
 
+
+class APictureOfAPerson(unittest.TestCase):
+    """08:28-18:19 a 'person' at 0.89 in every sample while he was at
+    school. A box that never moves is the evidence."""
+
+    def test_a_box_that_never_moves_is_still(self):
+        p = pm.Presence()
+        self.addCleanup(p.close)
+        for i in range(15):
+            p.sample(True, conf=0.89, at=1000 + 20 * i,
+                     box=(0.5001, 0.40, 0.21, 0.55))
+        self.assertTrue(p.still_person())
+
+    def test_a_living_person_shifts(self):
+        import random
+        rng = random.Random(3)
+        p = pm.Presence()
+        self.addCleanup(p.close)
+        for i in range(15):
+            p.sample(True, conf=0.8, at=1000 + 20 * i,
+                     box=(0.5 + rng.uniform(-0.02, 0.02),
+                          0.4 + rng.uniform(-0.02, 0.02), 0.2, 0.55))
+        self.assertFalse(p.still_person())
+
+    def test_too_few_samples_is_unknown(self):
+        p = pm.Presence()
+        self.addCleanup(p.close)
+        p.sample(True, conf=0.9, box=(0.5, 0.4, 0.2, 0.5))
+        self.assertIsNone(p.still_person())
+
+    def test_an_old_store_gains_the_columns(self):
+        import sqlite3, tempfile, os
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "p.db")
+        db = sqlite3.connect(path)
+        db.executescript(pm.SCHEMA)
+        db.execute("INSERT INTO samples VALUES (1, 1, 0.9, 1)")
+        db.commit()
+        db.close()
+        p = pm.Presence(path)
+        self.addCleanup(p.close)
+        p.sample(True, conf=0.9, box=(0.5, 0.4, 0.2, 0.5), light=120)
+        self.assertEqual(len(p.recent(10)), 2)
+
 if __name__ == "__main__":
     unittest.main()
 

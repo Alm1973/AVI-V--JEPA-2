@@ -75,6 +75,16 @@ class Presence:
                  arrive_after=ARRIVE_AFTER, leave_after=LEAVE_AFTER):
         self.db = locked.connect(path)
         self.db.executescript(SCHEMA)
+        # Where the person box was, and the light, per sample (numbers only).
+        # 2026-10-08: a "person" at 0.89 in every sample from 08:28 to 18:19
+        # while he was at school -- someone else, or a picture of someone?
+        # The box over time tells a still picture from a living person.
+        have = {r[1] for r in self.db.execute("PRAGMA table_info(samples)")}
+        for col in ("box", "light"):
+            if col not in have:
+                self.db.execute(f"ALTER TABLE samples ADD COLUMN {col} "
+                                + ("TEXT" if col == "box" else "REAL"))
+        self.db.commit()
         self.clock = clock
         self.arrive_after = int(arrive_after)
         self.leave_after = int(leave_after)
@@ -91,15 +101,22 @@ class Presence:
     def close(self):
         self.db.close()
 
-    def sample(self, present, conf=None, view_ok=True, at=None):
+    def sample(self, present, conf=None, view_ok=True, at=None, box=None,
+               light=None):
         """Record one look. Returns "arrived", "left" or None.
 
         `view_ok` False with no detection is stored but cannot advance a
         departure -- it is a look at the wrong place, not evidence of absence.
+        `box` is the best person box as fractions of the frame (cx, cy, w,
+        h); `light` the frame's mean level.
         """
         at = self.clock() if at is None else float(at)
-        self.db.execute("INSERT INTO samples VALUES (?,?,?,?)",
-                        (at, int(bool(present)), conf, int(bool(view_ok))))
+        self.db.execute(
+            "INSERT INTO samples (ts, present, conf, view_ok, box, light) "
+            "VALUES (?,?,?,?,?,?)",
+            (at, int(bool(present)), conf, int(bool(view_ok)),
+             None if box is None else ",".join(f"{v:.4f}" for v in box),
+             None if light is None else round(float(light), 1)))
         event = None
         if present:
             self._seen_run += 1
@@ -133,6 +150,22 @@ class Presence:
                     "ORDER BY ts DESC LIMIT ?", (int(n),))]
 
     # --- what has been learned ------------------------------------------
+    def still_person(self, n=15, tol=0.006, size_tol=0.012):
+        """Has the 'person' in the last `n` present samples (5 minutes at
+        one per 20 s) not moved at all? A living person shifts more than
+        this while sitting still; a photo or poster does not. None without
+        enough boxed samples."""
+        rows = self.db.execute(
+            "SELECT box FROM samples WHERE present = 1 AND box IS NOT NULL "
+            "ORDER BY ts DESC LIMIT ?", (int(n),)).fetchall()
+        if len(rows) < n:
+            return None
+        boxes = [[float(v) for v in r[0].split(",")] for r in rows]
+        span = [max(b[i] for b in boxes) - min(b[i] for b in boxes)
+                for i in range(4)]
+        return (span[0] <= tol and span[1] <= tol and span[2] <= size_tol
+                and span[3] <= size_tol)
+
     def sessions(self, since=None, min_minutes=MIN_SESSION_MIN):
         """[(start, end_or_None), ...] from the arrival/departure events."""
         q = "SELECT ts, kind FROM events"
