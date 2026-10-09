@@ -65,6 +65,17 @@ class WhatDoYouKnow(unittest.TestCase):
         self.assertIn("You were at the desk 12 minutes today.", text)
         self.assertLessEqual(len(text.split()), 20, "speech cap")
 
+    def test_as_many_as_fit_not_one_and_a_count(self):
+        store, know = self.tool(None)
+        for fact in ("likes mango lassi", "math test Monday",
+                     "friend Arjun visits Saturday", "plays guitar"):
+            store.remember(fact)
+        text, data = know()
+        self.assertGreaterEqual(text.count("."), 3, text)
+        self.assertLessEqual(len(text.split()), 20, "speech cap")
+        if len(data["facts"]) > text.count(".") - ("more." in text):
+            self.assertTrue(text.endswith("more."), text)
+
     def test_nothing_told_still_has_something_noticed(self):
         _, know = self.tool(lambda: ob.notes(layout=LAYOUT))
         self.assertIn("Your pen", know()[0])

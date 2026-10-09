@@ -44,11 +44,19 @@ def make(store, observed=None):
         data = {"facts": facts, "noticed": seen}
         if not facts and not seen:
             return ("Nothing about that." if query else "Nothing yet."), None
-        # The speech cap is 20 words, so one of each, then a count: two
-        # sentences is already most of the budget.
-        parts = ([facts[0]] if facts else []) + ([seen[0]] if seen else [])
-        rest = max(0, len(facts) - 1) + max(0, len(seen) - 1)
-        text = " ".join(p.rstrip(".") + "." for p in parts)
+        # The speech cap is 20 words: as many as fit, then a count. One of
+        # each and "And 4 more." left most of what it knew unsaid.
+        order = (facts[:1] + seen[:1] + facts[1:] + seen[1:])
+        said, words = [], 0
+        for p in order:
+            n = len(p.split())
+            if said and words + n > 16:
+                break
+            said.append(p)
+            words += n
+        rest = len(order) - len(said)
+        text = " ".join(p[:1].upper() + p[1:].rstrip(".") + "."
+                        for p in said)
         if rest:
             text += f" And {rest} more."
         return text, data
