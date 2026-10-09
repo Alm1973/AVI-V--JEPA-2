@@ -77,5 +77,57 @@ class Search(unittest.TestCase):
         self.assertIsNone(got)
 
 
+
+class ArrivedYet(unittest.TestCase):
+    """A frame from mid-swing was filed as seen from the stop, and the map
+    moved the mug 15 degrees the wrong way (robot, 2026-10-08)."""
+
+    @staticmethod
+    def scene(shift):
+        """A view like a room: a smooth brightness gradient and a few
+        objects, seen through a window `shift` px along it."""
+        import numpy as np
+        wide = np.tile(np.linspace(20, 220, 1680, dtype=np.float32),
+                       (720, 1))
+        for x0, y0, w, h, v in ((300, 200, 180, 220, 250),
+                                (900, 400, 260, 150, 10),
+                                (1350, 100, 120, 300, 240)):
+            wide[y0:y0 + h, x0:x0 + w] = v
+        return wide[:, shift:shift + 1280]
+
+    def test_a_moving_picture_is_waited_out(self):
+        import numpy as np
+        t = {"now": 0.0}
+        shifts = iter([0, 30, 60, 90, 120, 120, 120, 120, 120])
+        seen = []
+
+        def next_frame():
+            t["now"] += 0.033
+            s = next(shifts)
+            seen.append(s)
+            return self.scene(s) + np.random.default_rng(len(seen)).normal(
+                0, 3.0, size=(720, 1280))
+        self.assertTrue(lc.wait_still(next_frame, clock=lambda: t["now"]))
+        self.assertEqual(seen[-1], 120, "returned while still moving")
+        self.assertGreaterEqual(seen.count(120), 3)
+
+    def test_a_picture_that_never_settles_times_out(self):
+        t = {"now": 0.0}
+        n = {"i": 0}
+
+        def next_frame():
+            t["now"] += 0.1
+            n["i"] += 1
+            return self.scene((n["i"] * 30) % 400)
+        self.assertFalse(lc.wait_still(next_frame, timeout=1.0,
+                                       clock=lambda: t["now"]))
+
+    def test_no_stream_is_not_still(self):
+        self.assertFalse(lc.wait_still(lambda: None))
+
+    def test_centred_means_near_the_middle(self):
+        self.assertTrue(lc.centred({"cx": 684, "cy": 284}, 1280, 720))
+        self.assertFalse(lc.centred({"cx": 1167, "cy": 300}, 1280, 720))
+
 if __name__ == "__main__":
     unittest.main()

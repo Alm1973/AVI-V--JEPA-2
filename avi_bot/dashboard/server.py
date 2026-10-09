@@ -2655,6 +2655,18 @@ def arrival_s(arm, before, margin=0.5):
     return far / max(1.0, arm.config.achievable) + margin
 
 
+def _settle(latest, timeout=2.5):
+    """Wait until the picture stops changing: the servos report nothing,
+    so a still view is the evidence the arm has arrived
+    (look_check.wait_still)."""
+    seq = {"s": -1}
+
+    def next_frame():
+        f, seq["s"] = _frame(latest, after=seq["s"])
+        return f
+    return look_check_mod.wait_still(next_frame, timeout=timeout)
+
+
 def _surveying(arm):
     scanning = getattr(arm, "survey_lock", None)
     return scanning is not None and scanning.locked()
@@ -2712,6 +2724,7 @@ def confirm_look(arm, latest, name):
             time.sleep(0.6)
 
     def detect():
+        _settle(latest)               # the picture, not the clock, says
         got = steady_detections(arm, latest)
         return None if got is None else got[:3]
 
@@ -2723,26 +2736,41 @@ def confirm_look(arm, latest, name):
         arm.note(f"look check: no {want} where the map says")
         return False
     hit, (dyaw, dwr) = found["hit"], found["offset"]
-    pose = arm.snapshot()
-    try:
-        kw = dict(conf=hit["conf"], px_size=max(hit["w"], hit["h"]),
-                  shoulder=pose["shoulder"], elbow=pose["elbow"])
-        if dyaw or dwr:
-            # Not at the aim: the map was wrong, and now it knows where.
-            arm.roommap.correct(want, hit["cx"], hit["cy"],
-                                pose["base_yaw"], pose["wrist"],
-                                was=(start["base_yaw"], start["wrist"]),
-                                **kw)
-        else:
-            arm.roommap.observe(want, hit["cx"], hit["cy"],
-                                pose["base_yaw"], pose["wrist"], **kw)
-        arm.save_roommap()
-    except Exception as exc:              # the look still counts
-        arm.note(f"look check: not filed in the map ({exc!r})")
     centre_on(arm, hit["cx"], hit["cy"], found["w"], found["h"])
+    # The map learns only from a sighting NEAR THE MIDDLE of a still
+    # picture, after centring: there "the pose that centres it" is a
+    # measurement. The first fix filed the search's own sighting, and one
+    # from mid-swing moved the mug 15 degrees the wrong way.
+    _settle(latest)
+    again = steady_detections(arm, latest)
+    sure = None
+    if again is not None:
+        kept, w, h, _ = again
+        sure = look_check_mod.best(kept, want)
+        if sure is not None and not look_check_mod.centred(sure, w, h):
+            sure = None
+    filed = "map unchanged"
+    if sure is not None:
+        pose = arm.snapshot()
+        try:
+            kw = dict(conf=sure["conf"], px_size=max(sure["w"], sure["h"]),
+                      shoulder=pose["shoulder"], elbow=pose["elbow"])
+            if dyaw or dwr:
+                # Not at the aim: the map was wrong, and now it knows where.
+                arm.roommap.correct(want, sure["cx"], sure["cy"],
+                                    pose["base_yaw"], pose["wrist"],
+                                    was=(start["base_yaw"], start["wrist"]),
+                                    **kw)
+                filed = "map corrected"
+            else:
+                arm.roommap.observe(want, sure["cx"], sure["cy"],
+                                    pose["base_yaw"], pose["wrist"], **kw)
+                filed = "map reinforced"
+            arm.save_roommap()
+        except Exception as exc:          # the look still counts
+            filed = f"not filed in the map ({exc!r})"
     arm.note(f"look check: {want} in view ({hit['conf']:.2f}, "
-             f"yaw {dyaw:+.0f} wrist {dwr:+.0f}), centred"
-             + (", map corrected" if dyaw or dwr else ""))
+             f"yaw {dyaw:+.0f} wrist {dwr:+.0f}), centred, {filed}")
     return True
 
 
