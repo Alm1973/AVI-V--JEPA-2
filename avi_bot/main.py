@@ -667,6 +667,10 @@ class Avi:
             for d, words in dated.ahead(self.store.facts(), today):
                 start = datetime(d.year, d.month, d.day).timestamp()
                 later = d != today
+                if not later and datetime.fromtimestamp(now).hour >= 12:
+                    # A fact has a day, not a time: by an after-school
+                    # sit-down, "Today: chemistry test" is likely over.
+                    continue
                 items.append((max(start, now) + (86400 if later else 0),
                               f"{words} tomorrow" if later else words))
                 if later:

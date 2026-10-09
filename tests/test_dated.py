@@ -102,6 +102,14 @@ class TheMorningRundown(unittest.TestCase):
         a = self.avi(datetime(2026, 10, 9, 7, 30).timestamp())
         self.assertEqual(a.rundown(), "Today: Chemistry test.")
 
+    def test_the_day_itself_after_school_is_not_announced(self):
+        a = self.avi(datetime(2026, 10, 9, 15, 30).timestamp())
+        self.assertIsNone(a.rundown())
+
+    def test_the_evening_before_still_says_tomorrow(self):
+        a = self.avi(datetime(2026, 10, 8, 18, 0).timestamp())
+        self.assertEqual(a.rundown(), "Tomorrow: Chemistry test.")
+
     def test_after_it_nothing(self):
         a = self.avi(datetime(2026, 10, 10, 9, 0).timestamp())
         self.assertIsNone(a.rundown())
