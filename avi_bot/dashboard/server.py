@@ -290,6 +290,9 @@ class Arm:
     PERFORM_BACK_PX = 40.0
 
     def play_move(self, move, label=None):
+        # A composed move has the mood folded in already (choreo.compose);
+        # the engine's own styling would apply it twice, past the limits.
+        self.engine.style = engine.Style()
         self.engine.push(move)
         self.note(f"perform {label or move.name} ({move.duration:.1f} s)")
         return move

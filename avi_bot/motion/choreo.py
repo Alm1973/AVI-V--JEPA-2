@@ -181,13 +181,13 @@ def clean(moves):
     return out, dropped
 
 
-def frames(moves, scale=1.0):
+def frames(moves, scale=1.0, tempo=1.0):
     """[(seconds_wanted, {joint: offset})], the dance at its intended
-    tempo, each primitive ending back at the start pose."""
+    tempo (beats x `tempo`), each primitive ending back at the start pose."""
     out = []
     for m in moves:
         a = SIZES[m["size"]] * float(scale)
-        beat = TEMPO[m["speed"]]
+        beat = TEMPO[m["speed"]] * float(tempo)
         for beats, off in PRIMITIVES[m["move"]][1](a, m["times"]):
             out.append((beats * beat, dict(off)))
         if out and out[-1][1]:
@@ -269,11 +269,16 @@ def _timed(seq, rate):
 
 
 def compose(moves, start, config=None, body=None, scale=1.0, rate=None,
-            name="perform"):
+            name="perform", style=None):
     """(KeyframeMove, info) for `moves` played from pose `start`.
 
     info: seconds, frames, notes (what was changed to make it safe), and
     the clamped `moves`. Raises ValueError when nothing valid is left.
+
+    `style` is the mood's {"speed", "amplitude"} (personality/mood.py):
+    folded in HERE, before the dance is fitted to the limits and the arm's
+    speed. Applied by the engine afterwards, an excited 1.15x tempo and
+    1.1x size went past both.
     """
     config = config or poses.load()
     if body is None:
@@ -286,7 +291,14 @@ def compose(moves, start, config=None, body=None, scale=1.0, rate=None,
     rate = float(rate or getattr(config, "achievable", None)
                  or poses.load().achievable)
     start = {j: float(start[j]) for j in poses.JOINTS}
-    seq = frames(moves, scale=scale)
+    style = style or {}
+    speed = max(0.3, float(style.get("speed", 1.0)))
+    # Most of a dance runs at the arm's speed ceiling, so a sleepy tempo
+    # only reads as slow if the ceiling it is timed against comes down too.
+    # An excited one cannot go above it.
+    rate *= min(1.0, speed)
+    seq = frames(moves, scale=scale * float(style.get("amplitude", 1.0)),
+                 tempo=1.0 / speed)
     notes = _fit_limits(seq, start, config)
     notes += _fit_body(seq, start, body)
     seq = _timed(seq, rate)

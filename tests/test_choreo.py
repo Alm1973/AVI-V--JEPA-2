@@ -432,3 +432,29 @@ class Taste(unittest.TestCase):
                            ("walk like a zombie", "lean_in")):
             moves, idea = choreo.improvise(name)
             self.assertIn(move, [m["move"] for m in moves], name)
+
+
+
+class Moody(unittest.TestCase):
+    """The mood shapes a dance before it is fitted, not after."""
+
+    def test_sleepy_is_slower_and_smaller_excited_bigger(self):
+        from avi_bot.personality import mood
+        moves = [{"move": "sway", "times": 2}, {"move": "bob"}]
+        plain, _ = choreo.compose(moves, SEAT, config=CFG)
+        sleepy, _ = choreo.compose(moves, SEAT, config=CFG,
+                                   style=mood.style_for("sleepy"))
+        excited, _ = choreo.compose(moves, SEAT, config=CFG,
+                                    style=mood.style_for("excited"))
+        swing = lambda m: max(abs(o["base_yaw"]) for o in sample(m)
+                              if abs(o["base_yaw"]) < 17)
+        self.assertGreater(sleepy.duration, plain.duration)
+        self.assertLess(swing(sleepy), swing(plain))
+        self.assertGreater(swing(excited), swing(plain))
+
+    def test_excited_still_fits_the_arm(self):
+        from avi_bot.personality import mood
+        moves, _ = choreo.improvise("happy party dance")
+        move, _ = choreo.compose(moves, SEAT, config=CFG,
+                                 style=mood.style_for("excited"))
+        self.assertLessEqual(move.peak_rate(), CFG.achievable + 1e-6)

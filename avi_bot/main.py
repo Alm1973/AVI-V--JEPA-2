@@ -519,10 +519,19 @@ class Avi:
             # Folded (REST) or a shape the body model does not describe:
             # dance from where it looks at him instead.
             stage = poses_mod.get_pose(poses_mod.OBSERVE_POSE)
+        emotion, style = None, None
+        if self.mood is not None:
+            try:
+                from avi_bot.personality import mood as mood_mod
+                emotion = self.mood.emotion()
+                style = mood_mod.style_for(emotion)
+            except Exception:
+                emotion, style = None, None
         try:
             move, info = choreo.compose(moves, stage or here, config=config,
                                         body=body, scale=scale,
-                                        name=f"perform {name}"[:40])
+                                        name=f"perform {name}"[:40],
+                                        style=style)
         except ValueError as exc:
             return f"I can't do that one: {exc}.", {"missed": True}
         self._hold(info["seconds"] + 40.0)
@@ -551,6 +560,7 @@ class Avi:
         else:
             run()
         return None, {"performing": name, "made": made, "idea": idea,
+                      "mood": emotion,
                       "moves": [m["move"] for m in info["moves"]],
                       "seconds": info["seconds"], "notes": info["notes"]}
 
