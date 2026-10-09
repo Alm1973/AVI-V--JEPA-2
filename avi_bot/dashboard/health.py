@@ -14,7 +14,7 @@ LATENT_STALE_S = 120            # one latent every 15 s
 def check(now, presence_last_ts=None, latents_on=False, latent_last_ts=None,
           latent_error=None, brain_error=None, brain_started=False,
           scan_every_min=0.0, last_scan_ts=None, ends_in_s=None,
-          voice=None, arm_link=None):
+          voice=None, arm_link=None, selfcheck=None):
     out = {}
     if presence_last_ts is None:
         out["presence"] = {"state": "stale", "why": "no looks recorded"}
@@ -58,6 +58,15 @@ def check(now, presence_last_ts=None, latents_on=False, latent_last_ts=None,
         else:
             out["voice"] = {"state": "ok", "said": voice.get("said", 0),
                             "backend": voice.get("backend")}
+    if selfcheck is not None:
+        # The daily self-check (perception/selfmodel.py): a joint that no
+        # longer moves the picture is broken until a later check says not.
+        stuck = [j for j, v in (selfcheck.get("joints") or {}).items()
+                 if v.get("ok") is False]
+        out["joints"] = ({"state": "broken", "why": "not moving: "
+                          + ", ".join(stuck), "day": selfcheck.get("day")}
+                         if stuck else {"state": "ok",
+                                        "day": selfcheck.get("day")})
     if ends_in_s is not None:
         out["dashboard"] = {"state": "ok", "ends_in_min":
                             round(ends_in_s / 60.0)}

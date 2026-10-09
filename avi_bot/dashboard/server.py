@@ -515,6 +515,70 @@ class Arm:
             except Exception as exc:
                 self.note(f"scan loop: {exc!r}")
 
+    @staticmethod
+    def selfcheck_path():
+        d = os.path.join(os.environ.get("USERPROFILE", "."), "avi-remote")
+        return os.path.join(d, "selfcheck.json")
+
+    def last_selfcheck(self):
+        try:
+            with open(self.selfcheck_path()) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    def selfcheck_loop(self, latest, deadline, period=120.0):
+        """Once a day, while he is away and the room is lit: one small move
+        per joint, out and back, held against what babbling learned
+        (perception/selfmodel.py). A joint that stopped moving the picture
+        is told to him when he is back. Switch: self_check_daily."""
+        while time.time() < deadline:
+            time.sleep(period)
+            try:
+                on = settings_mod.load(settings_mod.path()).get(
+                    "self_check_daily", True)
+                last = (self.last_selfcheck() or {}).get("day")
+                today = time.strftime("%Y-%m-%d")
+                if (self.survey_lock.locked() or self.paused.is_set()
+                        or self.engine.busy()
+                        or not self.view_ok_for_presence()):
+                    continue
+                frame, _ = _frame(latest)
+                light = None if frame is None else float(frame.mean())
+                ok, _ = selfmodel_mod.check_due(
+                    today, last, self.presence.here, light,
+                    time.localtime().tm_hour, enabled=bool(on))
+                if not ok:
+                    continue
+                history = []
+                try:
+                    d = os.path.dirname(self.selfcheck_path())
+                    with open(os.path.join(d, "babble.jsonl")) as f:
+                        history = [json.loads(x) for x in f if x.strip()]
+                except OSError:
+                    pass
+                pose = self.snapshot()
+                self.note("daily self-check: one small move per joint")
+                with self.survey_lock:
+                    out = babble(self, latest, n=4,
+                                 max_deg=selfmodel_mod.CHECK_DEG)
+                expect = selfmodel_mod.expected(history[-200:],
+                                                body_mod.load(), pose)
+                verdicts = selfmodel_mod.judge_check(out["rows"], expect)
+                rec = {"day": today, "at": round(time.time(), 1),
+                       "joints": verdicts}
+                with open(self.selfcheck_path(), "w") as f:
+                    json.dump(rec, f)
+                words = selfmodel_mod.check_words(verdicts)
+                self.note("daily self-check: " + (words or "every joint "
+                          "moved as learned ") + json.dumps(
+                              {j: v["ratio"] for j, v in verdicts.items()}))
+                host = getattr(self, "brain_host", None)
+                if words and host is not None:
+                    host.announce(words, kind="health")
+            except Exception as exc:
+                self.note(f"self-check loop: {exc!r}")
+
     def presence_loop(self, latest, deadline, period=20.0):
         """Look for him every `period` seconds and learn when he is here.
 
@@ -2117,6 +2181,7 @@ def make_handler(st):
                         or 0),
                     last_scan_ts=last_scan,
                     ends_in_s=max(0.0, deadline - time.time()),
+                    selfcheck=arm.last_selfcheck(),
                     voice=(host.speaker.status()
                            if host is not None and host.speaker is not None
                            else None),
@@ -3303,7 +3368,7 @@ def babble(arm, latest, n=16, max_deg=8.0, seed=None, save=True):
                 rows.append(measure(joint, to - pose_before[joint],
                                     pose_before, before, after))
     finally:
-        arm.set_pose(start)
+        arrive(arm, start)        # the same view it started from
     if save:
         try:
             d = os.path.join(os.environ.get("USERPROFILE", "."),
@@ -4540,6 +4605,8 @@ def main():
     threading.Thread(target=arm.seat_loop, args=(deadline,),
                      daemon=True).start()
     threading.Thread(target=arm.scan_loop, args=(latest, deadline),
+                     daemon=True).start()
+    threading.Thread(target=arm.selfcheck_loop, args=(latest, deadline),
                      daemon=True).start()
     arm.latest = latest
     brain = arm.make_brain_host(latest)

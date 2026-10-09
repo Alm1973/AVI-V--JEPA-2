@@ -63,3 +63,22 @@ class ArmLink(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class TheDailySelfCheck(unittest.TestCase):
+    def test_a_stuck_joint_is_broken(self):
+        from avi_bot.dashboard import health
+        got = health.check(1000.0, selfcheck={
+            "day": "2026-10-09", "joints": {
+                "elbow": {"ok": False, "ratio": 0.05},
+                "wrist": {"ok": True, "ratio": 0.9}}})
+        self.assertEqual(got["joints"]["state"], "broken")
+        self.assertIn("elbow", got["joints"]["why"])
+        self.assertIn("joints", got["summary"])
+
+    def test_all_moving_is_ok(self):
+        from avi_bot.dashboard import health
+        got = health.check(1000.0, selfcheck={
+            "day": "2026-10-09", "joints": {"wrist": {"ok": True}}})
+        self.assertEqual(got["joints"]["state"], "ok")

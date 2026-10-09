@@ -190,3 +190,86 @@ def _verdict(row):
     return (f"model directions {frac('model'):.0%}, old rule "
             f"{frac('old_rule'):.0%}, learned {frac('learned'):.0%}; "
             f"closest in pixels: {best}")
+
+
+# --- the daily self-check: is every joint still doing what it learned? ---
+# Lipson's self-modelling robots use the model to notice when the body has
+# stopped matching it (a damaged leg). AVI's version: once a day, while he
+# is away and the room is lit, one small move per joint, out and back,
+# compared with the slopes it learned. A joint that no longer moves the
+# picture -- a loose horn, an unplugged servo, a browned-out supply -- is
+# something to tell him, rather than something every later move silently
+# gets wrong.
+CHECK_HOURS = (9, 15)          # [from, to): when he is at school
+CHECK_DEG = 4.0
+CHECK_MIN_LIGHT = 60.0         # ORB needs a lit room
+STUCK_FRAC = 0.3               # under 30% of the learned slide = not moving
+
+
+def check_due(today, last_day, here, light, hour, enabled=True):
+    """(due, why). `today`/`last_day` are date strings."""
+    if not enabled:
+        return False, "switched off"
+    if last_day == today:
+        return False, "already done today"
+    if not CHECK_HOURS[0] <= hour < CHECK_HOURS[1]:
+        return False, "outside the check hours"
+    if here:
+        return False, "he is here"
+    if light is None or light < CHECK_MIN_LIGHT:
+        return False, "too dark to see the moves"
+    return True, "due"
+
+
+def expected(history, body=None, pose=None):
+    """{joint: (dx, dy) px per degree} to hold a check against: what the
+    earlier babbling learned, else what the body model predicts."""
+    got = {j: (v["dx"], v["dy"]) for j, v in slopes(history).items()
+           if v["n"] >= 2}
+    if body is not None and pose is not None:
+        for j in JOINTS:
+            if j not in got:
+                to = dict(pose, **{j: float(pose[j]) + 1.0})
+                got[j] = predicted_px(body, pose, to)
+    return got
+
+
+def judge_check(rows, expect, frac=STUCK_FRAC, which="orb"):
+    """{joint: {"ratio", "ok", "n"}}: the share of the expected slide each
+    joint produced (median over its rows). ok None when the camera could
+    not measure it."""
+    out = {}
+    for j in JOINTS:
+        e = expect.get(j)
+        ratios = []
+        for r in rows:
+            if r["joint"] != j or not e:
+                continue
+            m = _measured(r, which) or _measured(r, "jepa")
+            ee = e[0] ** 2 + e[1] ** 2
+            if m is None or ee <= 0 or not r["delta"]:
+                continue
+            ratios.append((m[0] * e[0] + m[1] * e[1])
+                          / (float(r["delta"]) * ee))
+        if not ratios:
+            out[j] = {"ratio": None, "ok": None, "n": 0}
+            continue
+        ratios.sort()
+        mid = ratios[len(ratios) // 2]
+        out[j] = {"ratio": round(mid, 2), "ok": mid >= frac,
+                  "n": len(ratios)}
+    return out
+
+
+_SAY = {"base_yaw": "base", "shoulder": "shoulder", "elbow": "elbow",
+        "wrist": "camera tilt"}
+
+
+def check_words(verdicts):
+    """What to tell him, or None when every joint it could see moved."""
+    bad = [_SAY[j] for j in JOINTS if verdicts.get(j, {}).get("ok") is False]
+    if not bad:
+        return None
+    what = bad[0] if len(bad) == 1 else ", ".join(bad[:-1]) + " and " + bad[-1]
+    return (f"My {what} didn't move in today's self-check. A servo may be "
+            "loose or unpowered.")

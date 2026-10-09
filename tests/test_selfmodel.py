@@ -86,3 +86,46 @@ class Learning(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheDailyCheck(unittest.TestCase):
+    """Once a day, while he is away: does every joint still move?"""
+
+    TRUE = Learning.TRUE
+
+    def test_when_it_runs(self):
+        due = selfmodel.check_due
+        self.assertTrue(due("10-09", "10-08", False, 120, 10)[0])
+        self.assertFalse(due("10-09", "10-09", False, 120, 10)[0])
+        self.assertFalse(due("10-09", "10-08", True, 120, 10)[0])
+        self.assertFalse(due("10-09", "10-08", False, 20, 10)[0])
+        self.assertFalse(due("10-09", "10-08", False, 120, 20)[0])
+        self.assertFalse(due("10-09", "10-08", False, 120, 10,
+                             enabled=False)[0])
+
+    def test_a_stuck_elbow_is_told(self):
+        trials = selfmodel.plan(SEAT, 8, 6.0, CFG.soft_limits, seed=2)
+        history = rows_from(self.TRUE, trials, noise=3)
+        expect = selfmodel.expected(history)
+        broken = dict(self.TRUE, elbow=(0.5, -1.0))
+        today = rows_from(broken, [(j, 4.0 if k % 2 else -4.0) for k, j in
+                                   enumerate(poses.JOINTS * 2)], noise=2)
+        v = selfmodel.judge_check(today, expect)
+        self.assertEqual([j for j in poses.JOINTS if not v[j]["ok"]],
+                         ["elbow"])
+        self.assertEqual(selfmodel.check_words(v),
+                         "My elbow didn't move in today's self-check. A "
+                         "servo may be loose or unpowered.")
+
+    def test_all_well_says_nothing(self):
+        trials = selfmodel.plan(SEAT, 8, 6.0, CFG.soft_limits, seed=2)
+        expect = selfmodel.expected(rows_from(self.TRUE, trials))
+        v = selfmodel.judge_check(rows_from(self.TRUE, trials, noise=5),
+                                  expect)
+        self.assertTrue(all(x["ok"] for x in v.values()))
+        self.assertIsNone(selfmodel.check_words(v))
+
+    def test_no_history_uses_the_body_model(self):
+        b = body_mod.load()
+        expect = selfmodel.expected([], body=b, pose=SEAT)
+        self.assertEqual(set(expect), set(poses.JOINTS))
