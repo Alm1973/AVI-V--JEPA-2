@@ -82,6 +82,9 @@ class TestServedPages(unittest.TestCase):
             {"tool": "look_at", "args": {"target": "mug"}, "ok": True,
              "in_view": False},
             {"tool": "move_joints", "args": {"base_yaw": 60}, "ok": True},
+            {"tool": "set_timer", "args": {"seconds": 600}, "ok": True},
+            {"tool": "remember", "args": {"text": "math test Monday"},
+             "ok": True},
         ]
         prog = m.group(0) + "\nconsole.log(JSON.stringify(" + \
             __import__("json").dumps(cases) + ".map(didLine)));"
@@ -101,6 +104,8 @@ class TestServedPages(unittest.TestCase):
         self.assertEqual(out[2], {"bad": True, "text": "look at mug "
                                                        "\u2717 not in view"})
         self.assertEqual(out[3]["text"], "move joints base_yaw 60")
+        self.assertEqual(out[4]["text"], "set timer 10 min")
+        self.assertEqual(out[5]["text"], "remember: math test Monday")
 
     def test_the_mic_button_turns_speech_into_an_ask(self):
         """Runs the page's micSetup()/listen() in node with a fake

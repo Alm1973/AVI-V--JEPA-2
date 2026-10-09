@@ -1271,6 +1271,10 @@ function didLine(d){
   else if (a.target) s += " " + a.target;
   else if (a.name) s += " " + a.name;
   else if (a.steps) s += " (" + a.steps.length + " steps)";
+  else if (a.text) s += ": " + a.text;
+  else if (a.seconds) s += " " + (a.seconds % 60 ? a.seconds + "s"
+                                  : a.seconds / 60 + " min");
+  else if (a.minutes) s += " " + a.minutes + " min";
   else {
     const js = ["base_yaw", "shoulder", "elbow", "wrist"]
       .filter(k => a[k] != null).map(k => k + " " + a[k]);
