@@ -1294,10 +1294,28 @@ function didLine(d){
   }
   return {bad: false, text: s};
 }
+// Announcements join the conversation once each, keyed by when they were
+// made; the ones already there when the page opened are not replayed.
+const HEARD = new Set();
+let HEARD_INIT = false;
+function heardFrom(list){
+  let added = false;
+  for (const a of list) {
+    const key = a.at + "|" + a.text;
+    if (HEARD.has(key)) continue;
+    HEARD.add(key);
+    if (!HEARD_INIT) continue;
+    CHAT.push({you: "", avi: a.text, did: [], err: "",
+               note: (a.kind || "").replace(/_/g, " ")});
+    added = true;
+  }
+  HEARD_INIT = true;
+  if (added) paintChat();
+}
 function paintChat(){
   const out = document.getElementById("said");
   out.innerHTML = CHAT.slice(-8).map(e =>
-    `<div class="you">you: ${esc(e.you)}</div>` +
+    (e.you ? `<div class="you">you: ${esc(e.you)}</div>` : "") +
     (e.avi ? `<div class="avi">avi: ${esc(e.avi)}</div>` : "") +
     e.did.map(d => `<div class="did${d.bad ? " bad" : ""}">\\u2192 ` +
                    `${esc(d.text)}</div>`).join("") +
@@ -1572,6 +1590,7 @@ setInterval(async () => {
   showLink(s);
   paintCommon(s);
   tick(s.ends_in);
+  heardFrom(s.announced || []);
 }, 700);
 let SET = {};
 function paintSettings(){
@@ -1701,6 +1720,11 @@ def make_handler(st):
                      "near": arm.roommap.nearest_anchor(p.yaw, p.wrist)[0]}
                     for p, w in arm.roommap.known()[:12]],
                 "track_label": arm.track_label,
+                # What AVI said on its own (timers, reminders, the
+                # rundown): spoken only, it never reached the page, so a
+                # timer going off with the speaker off was invisible.
+                "announced": list(getattr(getattr(arm, "brain_host", None),
+                                          "said", [])[-5:]),
                 "mood_events": ["praise", "scold", "arrived", "left",
                                 "task_ok", "task_failed", "new_object",
                                 "focus_start", "focus_end"],

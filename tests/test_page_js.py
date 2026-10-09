@@ -150,6 +150,40 @@ console.log(JSON.stringify([run(true, true), run(false, true),
         self.assertIn("https", http["said"][0])
         self.assertTrue(none["hidden"])
 
+    def test_announcements_join_the_chat_once(self):
+        """A timer going off with the speaker off never reached the page.
+        Runs the page's heardFrom(): no replay on load, each new one once."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed")
+        html = dict(self.pages)["server.py"]
+        js = html.split("<script>")[1].split("</script>", 1)[0]
+        m = re.search(r"const HEARD = new Set\(\);.*?\nfunction heardFrom"
+                      r"\(list\)\{.*?\n\}\n", js, re.S)
+        self.assertIsNotNone(m, "heardFrom not found in the page")
+        prog = ("const CHAT = []; let painted = 0;\n"
+                "function paintChat(){ painted++; }\n" + m.group(0) + '''
+const old = {at: 1, kind: "timer", text: "Your 1 minute timer is done."};
+const fresh = {at: 2, kind: "rundown", text: "Today: Chemistry test."};
+heardFrom([old]);
+heardFrom([old, fresh]);
+heardFrom([old, fresh]);
+console.log(JSON.stringify({chat: CHAT, painted}));
+''')
+        tmp = ROOT / ".page_heard_check.js"
+        tmp.write_text(prog)
+        try:
+            r = subprocess.run([node, str(tmp)], capture_output=True,
+                               text=True)
+        finally:
+            tmp.unlink(missing_ok=True)
+        self.assertEqual(r.returncode, 0, r.stderr[:600])
+        out = __import__("json").loads(r.stdout)
+        self.assertEqual([e["avi"] for e in out["chat"]],
+                         ["Today: Chemistry test."])
+        self.assertEqual(out["chat"][0]["note"], "rundown")
+        self.assertEqual(out["painted"], 1)
+
     def test_no_script_reaches_for_an_element_that_is_not_there(self):
         """A null from getElementById throws, and the throw kills the rest of
         the callback it was in -- which is how a stale id froze the whole UI
