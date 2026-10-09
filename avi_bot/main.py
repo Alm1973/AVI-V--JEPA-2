@@ -408,7 +408,7 @@ class Avi:
         direction = verify_mod.dominant(before, expect)
         # Like a big nudge, a big move goes in judged steps: base_yaw 90 ->
         # 60 in one go came back blind on the robot (2026-10-08).
-        big = max(abs(expect[j] - before[j]) for j in ("base_yaw", "wrist")
+        big = max(abs(expect[j] - before[j]) for j in tools.JOINT_NAMES
                   if j in before)
         steps = (max(1, math.ceil(big / self.JUDGE_STEP_DEG - 1e-9))
                  if direction else 1)

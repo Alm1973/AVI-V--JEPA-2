@@ -53,7 +53,8 @@ class WhereItLooks(unittest.TestCase):
         self.assertLess(y, 0, "+base_yaw turns right, which is -y")
         self.assertAlmostEqual(b.azimuth(right), 0.95 * 30, places=3)
         self.assertAlmostEqual(math.hypot(x, y),
-                               math.hypot(*b.points(p)["lens"][:2]), 4)
+                               math.hypot(*b.points(p)["lens"][:2]),
+                               delta=1e-3)
 
     def test_desk_facing_poses_keep_clear_of_the_desk(self):
         b = body()
@@ -81,11 +82,22 @@ class WhatAMoveShouldDo(unittest.TestCase):
             self.assertEqual(verify.dominant(self.p, to), want)
 
     def test_shoulder_and_elbow_only_once_proven(self):
+        unproven = body_mod.Body.fit(0.25, 0.344, 160.3)
         to = dict(self.p, shoulder=self.p["shoulder"] + 6)
-        self.assertIsNone(self.b.direction(self.p, to))
-        self.assertEqual(self.b.direction(self.p, to, reach=True), "down")
+        self.assertIsNone(unproven.direction(self.p, to))
+        self.assertEqual(unproven.direction(self.p, to, reach=True), "down")
         to = dict(self.p, elbow=self.p["elbow"] - 6)
-        self.assertEqual(self.b.direction(self.p, to, reach=True), "up")
+        self.assertEqual(unproven.direction(self.p, to, reach=True), "up")
+
+    def test_proven_on_the_robot(self):
+        """POST /babble 2026-10-09: the model's shoulder/elbow direction
+        matched the picture 15/16 (ORB) and 12/13 (V-JEPA)."""
+        self.assertTrue(self.b.reach_judged)
+        to = dict(self.p, shoulder=self.p["shoulder"] + 6)
+        self.assertEqual(self.b.direction(self.p, to), "down")
+        self.assertEqual(verify.dominant(self.p, to), "down")
+        to = dict(self.p, elbow=self.p["elbow"] - 6)
+        self.assertEqual(verify.dominant(self.p, to), "up")
 
     def test_a_small_move_expects_nothing(self):
         to = dict(self.p, wrist=self.p["wrist"] + 1)

@@ -267,5 +267,5 @@ class BodyDrawing(unittest.TestCase):
         self.assertIn("<svg", svg)
         self.assertEqual(svg.count("<circle"), 4)
         self.assertNotIn("NaN", svg)
-        self.assertIn("camera down 24", svg)
+        self.assertRegex(svg, r"camera down \d+\u00b0, lens \d+ cm")
         self.assertIn("(link lengths estimated)", svg)

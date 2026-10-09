@@ -423,3 +423,27 @@ offset_over_height = 0.727
 # MEASURED 2026-10-08: 34.4 cm. The prior from the laptop screen's apparent
 # size (~0.3 m) agreed to within its own range.
 lens_height_m = 0.344
+
+[body]
+# AVI's 3D self-model (avi_bot/motion/body.py). Lengths are PRIORS, not
+# measured: the fit anchors them to the [horizon] ruler numbers at TALL.
+measured = false
+base_height_m = 0.10
+upper_arm_m = 0.15
+lens_m = 0.06
+upright = 90.0
+# MEASURED 2026-10-09 ~08:05 by POST /babble at ATTENTIVE (32 single-joint
+# moves of 3-6 deg, out and back, daylight), as picture slide per degree,
+# ORB / V-JEPA:  base_yaw -21.8 / -29.1   shoulder -19.4 / -23.6
+#                elbow    -14.9 / -20.3   wrist    +19.8 / +25.6  px/deg
+# The two judges differ in scale by ~25% (JEPA's token shift is coarse) but
+# agree on RATIOS. Against the wrist (gain 1.03, [horizon]): shoulder 0.98
+# and 0.92 of it, elbow 0.75 and 0.79. So shoulder ~1.0 (as assumed) and the
+# elbow turns the view ~0.79 deg per deg.
+shoulder_gain = 1.0
+elbow_gain = 0.79
+# The model's shoulder/elbow DIRECTION was right on 15/16 moves by ORB and
+# 12/13 by V-JEPA (the one miss each was also missed by the learned slopes:
+# a move the camera barely saw). The old rule predicted none of them. So the
+# move judge now uses shoulder and elbow too.
+reach_judged = true
