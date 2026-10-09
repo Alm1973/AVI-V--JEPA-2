@@ -324,6 +324,13 @@ class Router:
                     hint = (f"Quick-rule reading of his words: {name}"
                             f"({', '.join(f'{k}={v!r}' for k, v in args.items())})"
                             ". Use it unless he clearly meant something else.")
+                    if name == "perform":
+                        # Copied as-is it is a name with no moves, and AVI
+                        # improvises offline instead of the model composing
+                        # (robot, 2026-10-09 08:15).
+                        hint += (" It is only the name: compose the moves "
+                                 "yourself unless the context lists this "
+                                 "dance as one you made.")
                     hinted = f"{context}\n{hint}" if context else hint
                 self.last_rejected = None
                 decision = self._try_cloud(utterance, hinted)
