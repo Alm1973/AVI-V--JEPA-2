@@ -627,6 +627,8 @@ class Avi:
 
     # --- the first sit-down of the day ---------------------------------
     RUNDOWN_ITEMS = 3
+    # From this hour, the first sit-down gets tomorrow's heads-up.
+    EVENING_HOUR = 17
 
     def rundown(self, now=None):
         """What is still ahead today, for his first sit-down. BUILD_SPEC 9.
@@ -680,6 +682,9 @@ class Avi:
                     tomorrow_only.append(words)
         except Exception:
             pass                      # a misread fact never costs the rundown
+        if datetime.fromtimestamp(now).hour >= self.EVENING_HOUR:
+            # An evening rundown already says what is on tomorrow.
+            self._heads_up_day = day
         if not items:
             return None
         if len(tomorrow_only) == len(items):
@@ -692,6 +697,43 @@ class Avi:
         head = [w for _, w in items[:self.RUNDOWN_ITEMS]]
         more = len(items) - len(head)
         return ("Today: " + "; ".join(head)
+                + (f"; and {more} more." if more else "."))
+
+    def heads_up(self, now=None):
+        """The night before: "Tomorrow: Math test." -- once, at his first
+        sit-down from EVENING_HOUR, when the morning rundown was hours ago
+        and tonight is when he would study for it. Facts that name tomorrow
+        and reminders due tomorrow. None outside the evening, after it was
+        said, or with nothing on.
+        """
+        from avi_bot.memory import dated
+        from avi_bot.perception import habits
+        now = self.clock() if now is None else float(now)
+        if datetime.fromtimestamp(now).hour < self.EVENING_HOUR:
+            return None
+        day = habits.day_of(now)
+        if getattr(self, "_heads_up_day", None) == day:
+            return None
+        self._heads_up_day = day
+        start = habits.day_start_ts(now) + 86400.0
+        items = []
+        for r in self.store.reminders("pending"):
+            if r.get("kind") != "timer" and start <= r["due_ts"] < start + \
+                    86400.0:
+                items.append((r["due_ts"], f"{r['text']} at "
+                              f"{numbers.clock_time(r['due_ts'], am_pm=True)}"))
+        try:
+            for d, words in dated.ahead(self.store.facts(), day):
+                if d != day:
+                    items.append((start, words))
+        except Exception:
+            pass
+        if not items:
+            return None
+        items.sort(key=lambda i: i[0])
+        head = [w for _, w in items[:self.RUNDOWN_ITEMS]]
+        more = len(items) - len(head)
+        return ("Tomorrow: " + "; ".join(head)
                 + (f"; and {more} more." if more else "."))
 
     def tick(self):

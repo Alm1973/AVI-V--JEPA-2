@@ -291,20 +291,20 @@ class Host:
 
     def arrived(self, first_today=True):
         """He sat down. The first time each day, tell him what is ahead
-        (Avi.rundown). Returns the text queued, or None."""
-        if not first_today:
-            return None
+        (Avi.rundown); after that, the first time in the evening, what is
+        on tomorrow (Avi.heads_up). Returns the text queued, or None."""
         brain = self._brain
-        if brain is None or not hasattr(brain, "rundown"):
+        what = "rundown" if first_today else "heads_up"
+        if brain is None or not hasattr(brain, what):
             return None
         try:
             with self._turn:
-                text = brain.rundown()
+                text = getattr(brain, what)()
         except Exception as exc:
-            self.note(f"rundown failed: {exc!r}")
+            self.note(f"{what} failed: {exc!r}")
             return None
         if text:
-            self.announce(text, kind="rundown")
+            self.announce(text, kind=what)
         return text
 
     def announce(self, text, kind="found"):

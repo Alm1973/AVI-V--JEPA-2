@@ -123,5 +123,34 @@ class TheMorningRundown(unittest.TestCase):
         self.assertTrue(text.endswith("; Chemistry test tomorrow."), text)
 
 
+
+class TheNightBefore(unittest.TestCase):
+    """Morning rundown said it at 08:00; at 19:00, when he would study,
+    nothing did."""
+
+    avi = TheMorningRundown.avi
+
+    def test_the_first_evening_sit_down_says_tomorrow_once(self):
+        a = self.avi(datetime(2026, 10, 8, 19, 0).timestamp())
+        self.assertEqual(a.heads_up(), "Tomorrow: Chemistry test.")
+        self.assertIsNone(a.heads_up(), "said twice")
+
+    def test_not_before_the_evening(self):
+        a = self.avi(datetime(2026, 10, 8, 15, 0).timestamp())
+        self.assertIsNone(a.heads_up())
+
+    def test_an_evening_rundown_already_said_it(self):
+        a = self.avi(datetime(2026, 10, 8, 19, 0).timestamp())
+        self.assertEqual(a.rundown(), "Tomorrow: Chemistry test.")
+        self.assertIsNone(a.heads_up())
+
+    def test_reminders_due_tomorrow_too(self):
+        now = datetime(2026, 10, 8, 19, 0).timestamp()
+        a = self.avi(now)
+        a.store.add_reminder(datetime(2026, 10, 9, 7, 0).timestamp(),
+                             "bring the calculator")
+        self.assertEqual(a.heads_up(), "Tomorrow: Chemistry test; bring "
+                         "the calculator at 7:00 AM.")
+
 if __name__ == "__main__":
     unittest.main()

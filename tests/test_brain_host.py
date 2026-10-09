@@ -319,6 +319,16 @@ class Arrival(unittest.TestCase):
         self.assertIsNone(h.arrived(first_today=False))
         self.assertEqual(h.pending, [])
 
+    def test_a_later_sit_down_asks_for_the_heads_up(self):
+        class B(Brain):
+            def heads_up(self):
+                return "Tomorrow: Math test."
+        h = bh.Host(lambda: B([]), note=lambda m: None)
+        h.brain
+        self.assertEqual(h.arrived(first_today=False),
+                         "Tomorrow: Math test.")
+        self.assertEqual(h.pending[-1]["kind"], "heads_up")
+
     def test_nothing_ahead_says_nothing(self):
         h = self.host(None)
         h.arrived()
