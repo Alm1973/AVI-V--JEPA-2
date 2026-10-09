@@ -333,6 +333,7 @@ class Host:
         on tomorrow (Avi.heads_up). Returns the text queued, or None."""
         brain = self._brain
         what = "rundown" if first_today else "heads_up"
+        self._greet(brain)
         if brain is None or not hasattr(brain, what):
             return None
         try:
@@ -344,6 +345,22 @@ class Host:
         if text:
             self.announce(text, kind=what)
         return text
+
+    # What the body does when he sits down: a wave hello. Only now that an
+    # arrival is HIM -- the poster on his wall "arrived" at every sunrise
+    # until presence learned it was not (perception/presence.py decoys).
+    GREETING = "wave"
+
+    def _greet(self, brain):
+        sched = getattr(brain, "scheduler", None)
+        muted = bool(sched is not None and hasattr(sched, "muted")
+                     and sched.muted())
+        if muted or self.perform is None:
+            return
+        try:
+            self.perform(self.GREETING)
+        except Exception as exc:
+            self.note(f"greeting failed: {exc!r}")
 
     def announce(self, text, kind="found"):
         """Queue something to tell him when he is next at the desk."""

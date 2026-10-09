@@ -334,6 +334,29 @@ class Arrival(unittest.TestCase):
         h.arrived()
         self.assertEqual(h.pending, [])
 
+    def test_it_waves_hello(self):
+        moved = []
+        h = bh.Host(lambda: Brain([]), note=lambda m: None,
+                    perform=moved.append)
+        h.brain
+        h.arrived(first_today=False)
+        self.assertEqual(moved, ["wave"])
+
+    def test_not_while_quiet_asleep_or_with_a_guest(self):
+        class Quiet(Sched):
+            def muted(self):
+                return True
+
+        class B(Brain):
+            def __init__(self, pending):
+                super().__init__(pending)
+                self.scheduler = Quiet()
+        moved = []
+        h = bh.Host(lambda: B([]), note=lambda m: None, perform=moved.append)
+        h.brain
+        h.arrived()
+        self.assertEqual(moved, [])
+
 
 class FocusSeesThePhone(unittest.TestCase):
     """focus.py decided well and was never told anything."""
