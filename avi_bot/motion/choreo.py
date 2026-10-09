@@ -25,6 +25,7 @@ way the result is kept (memory/db.py learned_moves) and replayed, scaled up
 when the camera saw nothing happen, and dropped when he says it was bad.
 """
 import math
+import re
 import zlib
 
 from . import backlash as backlash_mod
@@ -375,8 +376,21 @@ THEMES = (
      ["wiggle", "lean_in", "bob", "shake"], "normal"),
     (("sad", "tired", "sleepy", "rain", "lonely", "slow"),
      ["look_down", "sway", "pause", "duck"], "slow"),
-    (("happy", "party", "celebrat", "excited", "disco", "victory", "win"),
+    (("happy", "party", "celebrate", "celebration", "excited", "disco",
+      "victory", "win"),
      ["wiggle", "sway", "bob", "spin", "wiggle"], "fast"),
+    (("bee", "butterfly", "fly", "bug", "hummingbird"),
+     ["wiggle", "circle", "wiggle", "look_up", "circle"], "fast"),
+    (("horse", "pony", "gallop", "kangaroo", "bunny", "rabbit", "frog"),
+     ["bob", "nod", "bob", "leap", "bob"], "fast"),
+    (("tree", "wind", "breeze", "grass", "flower", "leaf", "cloud"),
+     ["sway", "rise", "sway", "circle"], "slow"),
+    (("ballet", "elegant", "graceful", "waltz", "swan"),
+     ["rise", "circle", "sway", "look_up", "duck"], "slow"),
+    (("zombie", "ghost", "spooky", "monster"),
+     ["look_down", "lean_in", "shake", "lean_in", "pause"], "slow"),
+    (("monkey", "crazy", "silly", "wild", "chaos"),
+     ["wiggle", "shake", "spin", "bob", "wiggle"], "fast"),
 )
 
 
@@ -386,7 +400,9 @@ def improvise(name, variant=0):
     low = (name or "").lower()
     seed = zlib.crc32(f"{low}#{int(variant)}".encode("utf-8"))
     for words, prims, speed in THEMES:
-        hit = next((w for w in words if w in low), None)
+        # Whole words (a plural too): "win" must not be found in "wind".
+        hit = next((w for w in words
+                    if re.search(rf"\b{w}(?:s|es)?\b", low)), None)
         if hit:
             prims = list(prims)
             if variant:

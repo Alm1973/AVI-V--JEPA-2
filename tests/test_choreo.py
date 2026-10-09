@@ -394,3 +394,41 @@ class Correcting(unittest.TestCase):
         self.assertEqual(d.reply.gesture, "fidget")
         d, _ = self.avi.handle("bad robot")
         self.assertEqual(d.reply.gesture, "embarrassed")
+
+
+
+class Taste(unittest.TestCase):
+    def setUp(self):
+        self.arm = PerformingArm()
+        self.avi = build(clock=Clock(), arm=self.arm)
+        self.addCleanup(self.avi.close)
+        self.avi._sleep = lambda s: None
+        self.avi.background = False
+
+    def test_just_dance_picks_one_he_liked(self):
+        self.avi.skills.run("perform", {"name": "dolphin"})
+        self.avi.handle("good job avi")
+        self.avi.skills.run("perform", {"name": "robot"})
+        r = self.avi.skills.run("perform", {"name": "dance"})
+        self.assertEqual(r.data["performing"], "dolphin")
+        self.assertEqual(r.data["made"], "remembered")
+
+    def test_nothing_liked_yet_makes_one_up(self):
+        r = self.avi.skills.run("perform", {"name": "dance"})
+        self.assertEqual(r.data["made"], "improvised")
+
+    def test_whole_words_only(self):
+        """'win' is not in 'wind': the tree in the wind is slow, not a
+        victory dance."""
+        moves, idea = choreo.improvise("sway like a tree in the wind")
+        self.assertIn("tree", idea)
+        self.assertTrue(all(m["speed"] == "slow" for m in moves))
+
+    def test_more_things_it_can_picture(self):
+        for name, move in (("buzz like a bee", "circle"),
+                           ("gallop like a horse", "bob"),
+                           ("sway like a tree in the wind", "sway"),
+                           ("a ballet dance", "rise"),
+                           ("walk like a zombie", "lean_in")):
+            moves, idea = choreo.improvise(name)
+            self.assertIn(move, [m["move"] for m in moves], name)

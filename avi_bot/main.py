@@ -482,6 +482,14 @@ class Avi:
             name, _ = self.store.last_move()
             if not name:
                 return "I haven't danced yet.", {"missed": True}
+        if not moves and self.store.move_key(name) == "dance":
+            # Just "dance": one he liked, if he has liked any -- what AVI
+            # has learned of his taste, rather than something generic.
+            liked = [m for m in self.store.moves_known(limit=20)
+                     if m["score"] > 0]
+            if liked:
+                import random
+                name = random.choice(liked)["name"]
         known = self.store.get_move(name)
         scale = 1.0
         if moves:
