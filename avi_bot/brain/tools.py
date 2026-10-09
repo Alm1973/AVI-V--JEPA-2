@@ -76,7 +76,8 @@ TOOLS = [
           confirm=True),
     _tool("weather", "Weather for Phoenix.",
           {"day": {"type": "string", "enum": ["today", "tomorrow"]}}),
-    _tool("remember", "Store a fact about him. At most 280 characters.",
+    _tool("remember", "Store a fact about him: a plan with its day, a "
+          "person, a like. At most 280 characters.",
           {"text": {"type": "string", "maxLength": 280}}, ["text"]),
     _tool("forget", "Drop a stored fact.",
           {"text": {"type": "string", "maxLength": 280}}, ["text"]),
