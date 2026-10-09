@@ -298,6 +298,15 @@ class Arm:
         while self.engine.busy() and time.time() < t_end:
             time.sleep(0.1)
         latest = self.latest
+        # Start from where every base move ends: arrived going up. A start
+        # reached going down is up to the backlash away from the one the
+        # dance comes home to, and "did it come back" would be meaningless.
+        if any(abs(k[1].get("base_yaw", 0.0)) > 1e-6
+               for k in getattr(move, "keys", [])):
+            here = self.snapshot()["base_yaw"]
+            _yaw_to(self, here, 0.6)
+            if latest is not None:
+                _settle(latest)
         before, seq = _frame(latest) if latest is not None else (None, -1)
         self.play_move(move, label)
         if before is None:
@@ -456,7 +465,12 @@ class Arm:
                         paused=self.paused.is_set(),
                         tracking=self.tracking.is_set(),
                         at_seat=self.view_ok_for_presence()):
-                    self.set_pose({j: seat[j] for j in poses.JOINTS})
+                    # Base last and going up: the seat view has to be the
+                    # SAME view every time -- the poster AVI learned is not
+                    # him is remembered by where it sits in that picture.
+                    self.set_pose({j: seat[j] for j in poses.JOINTS
+                                   if j != "base_yaw"})
+                    _yaw_to(self, seat["base_yaw"], 0.6)
                     self.note(f"back to {self.SEAT_VIEW}: absence only "
                               "counts from there")
             except Exception as exc:

@@ -205,6 +205,16 @@ class Presence:
     # Three such and the "decoy" was a person sitting very still: dropped.
     DECOY_FORGET_AFTER = 3
 
+    # How far sideways a decoy may appear and still be the decoy: base_yaw
+    # backlash (~13 degrees, ~0.15 of the frame) plus margin.
+    DECOY_SLIDE = 0.25
+
+    def _same_shape(self, box, d):
+        return (abs(box[0] - d[0]) <= self.DECOY_SLIDE
+                and abs(box[1] - d[1]) <= self.DECOY_MOVED
+                and abs(box[2] - d[2]) <= self.DECOY_MOVED
+                and abs(box[3] - d[3]) <= self.DECOY_MOVED)
+
     def decoys(self):
         return [{"id": r[0], "box": tuple(float(v) for v in r[1].split(",")),
                  "hits": r[2], "moved": r[3]}
@@ -234,6 +244,16 @@ class Presence:
         known = self.decoys()
         real, fake = [], []
         for box in boxes:
+            same = [k for k in known if self._same_shape(box, k["box"])]
+            if same:
+                # The decoy, possibly slid sideways: base_yaw's backlash
+                # can put the seat view a few degrees off, and a poster
+                # does not change its size or height in the picture.
+                d = same[0]
+                fake.append(box)
+                self.db.execute("UPDATE decoys SET hits = hits + 1,"
+                                " seen_at = ? WHERE id = ?", (at, d["id"]))
+                continue
             d = max(known, key=lambda k: iou(box, k["box"]), default=None)
             if d is None or iou(box, d["box"]) < self.DECOY_IOU:
                 real.append(box)

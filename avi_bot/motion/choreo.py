@@ -27,6 +27,7 @@ when the camera saw nothing happen, and dropped when he says it was bad.
 import math
 import zlib
 
+from . import backlash as backlash_mod
 from . import body as body_mod
 from . import poses
 from .engine import KeyframeMove
@@ -297,6 +298,19 @@ def compose(moves, start, config=None, body=None, scale=1.0, rate=None,
         t = max(0.4, max(abs(v) for v in seq[-1][1].values()) * _PEAK / rate)
         seq.append((t, {}))
         total += t
+    # The base has ~18 degrees of backlash (motion/backlash.py): a dance
+    # that comes home from the right stops ~13 short, and on the robot both
+    # first dances ended on a different view (2026-10-09 07:55). Like every
+    # other base move, it finishes going UP: dip below the start, come back.
+    if any(abs(off.get("base_yaw", 0.0)) > 1e-6 for _, off in seq):
+        lo, _ = config.soft_limits("base_yaw")
+        dip = min(backlash_mod.YAW_BACKLASH_DEG,
+                  max(0.0, start["base_yaw"] - lo))
+        if dip >= 1.0:
+            down = max(0.4, dip * _PEAK / rate)
+            seq += [(down, {"base_yaw": -dip}), (down, {})]
+            total += 2 * down
+            notes.append("ends going up (backlash)")
     keys, t = [(0.0, {})], 0.0
     for dt, off in seq:
         t += dt

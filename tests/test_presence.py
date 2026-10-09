@@ -224,6 +224,19 @@ class APictureOfAPerson(unittest.TestCase):
         him = (0.55, 0.55, 0.45, 0.85)
         self.assertEqual(p.screen([him])[0], [him])
 
+    def test_the_decoy_slid_sideways_is_still_the_decoy(self):
+        """The seat view lands a few degrees off after a move (backlash):
+        the poster slides across the picture but keeps its size."""
+        p = pm.Presence()
+        self.addCleanup(p.close)
+        poster = (0.40, 0.53, 0.13, 0.40)
+        for i in range(15):
+            p.sample(True, conf=0.89, at=1000 + 20 * i, box=poster)
+        p.learn_decoy()
+        real, fake = p.screen([(0.55, 0.535, 0.131, 0.402)])
+        self.assertEqual((real, len(fake)), ([], 1))
+        self.assertIsNone(p.learn_decoy())
+
     def test_a_decoy_that_moves_was_a_person(self):
         p = pm.Presence()
         self.addCleanup(p.close)
@@ -232,7 +245,8 @@ class APictureOfAPerson(unittest.TestCase):
                      box=(0.5, 0.4, 0.2, 0.55))
         p.learn_decoy()
         for k in range(3):
-            moved = (0.5 + (0.025 if k % 2 else -0.025), 0.4, 0.2, 0.55)
+            # Alive: shifts and changes height, not only slides sideways.
+            moved = (0.5 + (0.025 if k % 2 else -0.025), 0.43, 0.2, 0.58)
             self.assertEqual(p.screen([moved])[0], [moved])
         self.assertEqual(p.decoys(), [], "three moves and it is forgotten")
 

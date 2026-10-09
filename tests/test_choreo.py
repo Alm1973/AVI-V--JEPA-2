@@ -49,6 +49,20 @@ class Composing(unittest.TestCase):
                             <= max(hi, start[j]) + 1e-6,
                             f"{pose} {name} {j} {v}")
 
+    def test_a_dance_that_turns_the_base_comes_home_going_up(self):
+        """Both first dances on the robot ended ~13 degrees off: home from
+        the right, into the backlash (2026-10-09 07:55)."""
+        move, info = choreo.compose([{"move": "sway"}], SEAT, config=CFG)
+        yaw = [o["base_yaw"] for o in sample(move, 800)]
+        low = min(range(len(yaw)), key=lambda i: yaw[i])
+        self.assertLessEqual(yaw[low], -17.9)
+        self.assertTrue(all(b >= a - 1e-9 for a, b in
+                            zip(yaw[low:], yaw[low + 1:])),
+                        "after the dip it only goes up")
+        self.assertIn("ends going up (backlash)", info["notes"])
+        move, info = choreo.compose([{"move": "bob"}], SEAT, config=CFG)
+        self.assertNotIn("ends going up (backlash)", info["notes"])
+
     def test_it_is_never_faster_than_the_arm(self):
         moves, _ = choreo.improvise("happy party dance")
         move, _ = choreo.compose(moves, SEAT, config=CFG)
