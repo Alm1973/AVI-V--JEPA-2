@@ -298,19 +298,24 @@ def compose(moves, start, config=None, body=None, scale=1.0, rate=None,
         t = max(0.4, max(abs(v) for v in seq[-1][1].values()) * _PEAK / rate)
         seq.append((t, {}))
         total += t
-    # The base has ~18 degrees of backlash (motion/backlash.py): a dance
-    # that comes home from the right stops ~13 short, and on the robot both
-    # first dances ended on a different view (2026-10-09 07:55). Like every
-    # other base move, it finishes going UP: dip below the start, come back.
-    if any(abs(off.get("base_yaw", 0.0)) > 1e-6 for _, off in seq):
-        lo, _ = config.soft_limits("base_yaw")
-        dip = min(backlash_mod.YAW_BACKLASH_DEG,
-                  max(0.0, start["base_yaw"] - lo))
-        if dip >= 1.0:
-            down = max(0.4, dip * _PEAK / rate)
-            seq += [(down, {"base_yaw": -dip}), (down, {})]
-            total += 2 * down
-            notes.append("ends going up (backlash)")
+    # Every joint has slack (motion/backlash.py: the base ~18 degrees, the
+    # others ~1-1.5): a dance that comes home from the wrong side stops
+    # short, and on the robot the first dances ended 13 degrees (base) and
+    # 23-39 px (pitch) off their start (2026-10-09). So it comes home the
+    # way every move arrives: a run-up past the start on each joint the
+    # dance used, then the last approach from its ARRIVE side.
+    used = [j for j in poses.JOINTS
+            if any(abs(off.get(j, 0.0)) > 1e-6 for _, off in seq)]
+    dip = {}
+    for j in used:
+        pre = backlash_mod.run_up(j, start[j], config.soft_limits(j))
+        if pre is not None:
+            dip[j] = pre - start[j]
+    if dip:
+        t = max(0.4, max(abs(v) for v in dip.values()) * _PEAK / rate)
+        seq += [(t, dip), (t, {})]
+        total += 2 * t
+        notes.append("comes home from one side (backlash)")
     keys, t = [(0.0, {})], 0.0
     for dt, off in seq:
         t += dt

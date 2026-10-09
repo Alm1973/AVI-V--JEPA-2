@@ -307,10 +307,12 @@ class Arm:
         # Start from where every base move ends: arrived going up. A start
         # reached going down is up to the backlash away from the one the
         # dance comes home to, and "did it come back" would be meaningless.
-        if any(abs(k[1].get("base_yaw", 0.0)) > 1e-6
-               for k in getattr(move, "keys", [])):
-            here = self.snapshot()["base_yaw"]
-            _yaw_to(self, here, 0.6)
+        used = [j for j in poses.JOINTS
+                if any(abs(k[1].get(j, 0.0)) > 1e-6
+                       for k in getattr(move, "keys", []))]
+        if used:
+            here = self.snapshot()
+            arrive(self, {j: here[j] for j in used})
             if latest is not None:
                 _settle(latest)
         before, seq = _frame(latest) if latest is not None else (None, -1)
@@ -480,12 +482,11 @@ class Arm:
                         paused=self.paused.is_set(),
                         tracking=self.tracking.is_set(),
                         at_seat=self.view_ok_for_presence()):
-                    # Base last and going up: the seat view has to be the
-                    # SAME view every time -- the poster AVI learned is not
-                    # him is remembered by where it sits in that picture.
-                    self.set_pose({j: seat[j] for j in poses.JOINTS
-                                   if j != "base_yaw"})
-                    _yaw_to(self, seat["base_yaw"], 0.6)
+                    # Every joint from its own side (backlash): the seat
+                    # view has to be the SAME view every time -- the poster
+                    # AVI learned is not him is remembered by where it sits
+                    # in that picture.
+                    arrive(self, {j: seat[j] for j in poses.JOINTS})
                     self.note(f"back to {self.SEAT_VIEW}: absence only "
                               "counts from there")
             except Exception as exc:
@@ -3311,6 +3312,27 @@ def babble(arm, latest, n=16, max_deg=8.0, seed=None, save=True):
     arm.note("babbling done: " + "; ".join(
         f"{j}: {v}" for j, v in out["compare"]["orb"]["verdict"].items()))
     return out
+
+
+def arrive(arm, pose):
+    """Put the arm at `pose` with each joint's last approach from its
+    ARRIVE side, after a run-up past it (motion/backlash.py): the same
+    pose, the same view, every time. Waits until it is there."""
+    here = arm.snapshot()
+    pre = {}
+    for j, deg in pose.items():
+        p = backlash_mod.run_up(j, deg, arm.config.soft_limits(j))
+        if p is not None:
+            pre[j] = p
+    if pre:
+        arm.set_pose(dict(pose, **pre))
+        time.sleep(arrival_s(arm, here))
+        here = arm.snapshot()
+    arm.set_pose(pose)
+    slack = getattr(arm, "yaw_slack", None)
+    if "base_yaw" in pose and slack is not None:
+        slack.command(pre.get("base_yaw"), pose["base_yaw"])
+    time.sleep(arrival_s(arm, here))
 
 
 def nudge_arm(arm, direction, degrees, settle=0.6):

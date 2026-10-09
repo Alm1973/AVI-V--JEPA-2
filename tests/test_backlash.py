@@ -94,3 +94,20 @@ class ColumnOrder(unittest.TestCase):
     def test_far_less_base_travel_than_row_by_row(self):
         self.assertLess(self.base_travel(bl.column_order(self.GRID)) * 2.5,
                         self.base_travel(self.GRID))
+
+
+
+class EveryJointFromOneSide(unittest.TestCase):
+    """POST /babble 2026-10-09: pitch joints stop ~1-1.5 degrees short
+    coming home the wrong way; they get a run-up too."""
+
+    def test_run_ups(self):
+        from avi_bot.motion import backlash
+        self.assertEqual(backlash.run_up("wrist", 131.0, (20, 176)), 127.0)
+        self.assertEqual(backlash.run_up("shoulder", 29.5, (25, 155)), 33.5)
+        self.assertEqual(backlash.run_up("base_yaw", 90.0, (20, 160)), 72.0)
+
+    def test_no_room_no_run_up(self):
+        from avi_bot.motion import backlash
+        self.assertIsNone(backlash.run_up("wrist", 20.5, (20, 176)))
+        self.assertEqual(backlash.run_up("wrist", 22.0, (20, 176)), 20.0)

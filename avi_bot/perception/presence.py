@@ -208,10 +208,13 @@ class Presence:
     # How far sideways a decoy may appear and still be the decoy: base_yaw
     # backlash (~13 degrees, ~0.15 of the frame) plus margin.
     DECOY_SLIDE = 0.25
+    # ...and up or down: the pitch joints' slack, ~1.5 degrees (0.05 of the
+    # frame's height) before every joint arrived from one side.
+    DECOY_SLIDE_Y = 0.05
 
     def _same_shape(self, box, d):
         return (abs(box[0] - d[0]) <= self.DECOY_SLIDE
-                and abs(box[1] - d[1]) <= self.DECOY_MOVED
+                and abs(box[1] - d[1]) <= self.DECOY_SLIDE_Y
                 and abs(box[2] - d[2]) <= self.DECOY_MOVED
                 and abs(box[3] - d[3]) <= self.DECOY_MOVED)
 

@@ -59,9 +59,24 @@ class Composing(unittest.TestCase):
         self.assertTrue(all(b >= a - 1e-9 for a, b in
                             zip(yaw[low:], yaw[low + 1:])),
                         "after the dip it only goes up")
-        self.assertIn("ends going up (backlash)", info["notes"])
-        move, info = choreo.compose([{"move": "bob"}], SEAT, config=CFG)
-        self.assertNotIn("ends going up (backlash)", info["notes"])
+        self.assertIn("comes home from one side (backlash)", info["notes"])
+        last_dip = max((i for i, o in enumerate(sample(move, 800))
+                        if abs(o["wrist"]) > 1e-6), default=None)
+        self.assertIsNone(last_dip, "a sway never touches the wrist")
+
+    def test_every_joint_it_used_comes_home_from_its_side(self):
+        """Pitch joints stop ~1-1.5 degrees short coming home from the
+        wrong side (POST /babble 2026-10-09)."""
+        from avi_bot.motion import backlash
+        move, _ = choreo.compose([{"move": "leap"}, {"move": "bob"}], SEAT,
+                                 config=CFG)
+        path = sample(move, 1600)
+        for j in ("shoulder", "elbow", "wrist"):
+            vals = [o[j] for o in path]
+            # the last time it was away from home, it was on the far side
+            away = [v for v in vals if abs(v) > 1e-3]
+            self.assertTrue(away, j)
+            self.assertEqual(away[-1] < 0, backlash.ARRIVE[j] > 0, j)
 
     def test_it_is_never_faster_than_the_arm(self):
         moves, _ = choreo.improvise("happy party dance")

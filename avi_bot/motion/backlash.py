@@ -40,6 +40,36 @@ def plan(current, target, lo, backlash=YAW_BACKLASH_DEG, settled=False):
     pre = max(float(lo), target - float(backlash))
     return [pre, target] if pre < target else [target]
 
+# THE OTHER JOINTS HAVE SLACK TOO. POST /babble, 2026-10-09 ~08:05, at
+# ATTENTIVE: 3-6 degree moves out and straight back, measured by ORB. The
+# base, sent through plan(), came back within 4 px every time; the others
+# stopped short on the return, the same way whichever side they went:
+#
+#     wrist     +33 +41 -19 -37 px    (~1.5 deg; ~25 px per degree)
+#     elbow     -11 +9 -25 +22 px     (~1 deg)
+#     shoulder  -0 -28 +12 -14 px     (~1 deg)
+#
+# and two dances ended 23 and 39 px off vertically. So every joint arrives
+# from one side, after a run-up of at least its slack: base, elbow and wrist
+# going UP in logical degrees; the shoulder going DOWN, because ATTENTIVE --
+# where AVI spends its day -- sits 4.5 degrees above the shoulder's soft
+# minimum, with no room for a run-up from below.
+ARRIVE = {"base_yaw": +1, "shoulder": -1, "elbow": +1, "wrist": +1}
+SLACK_DEG = {"base_yaw": YAW_BACKLASH_DEG, "shoulder": 4.0, "elbow": 4.0,
+             "wrist": 4.0}
+
+
+def run_up(joint, target, limits):
+    """Where to send `joint` first so that the move to `target` arrives
+    from its ARRIVE side, taking up SLACK_DEG; None when there is no room
+    (the soft limit is right there) or nothing to do."""
+    lo, hi = limits
+    side = ARRIVE[joint]
+    pre = float(target) - side * SLACK_DEG[joint]
+    pre = max(float(lo), min(float(hi), pre))
+    return pre if abs(pre - float(target)) >= 1.0 else None
+
+
 # Measured top speed of the arm on the current supply; see HANDOFF section 4.
 SPEED_DEG_S = 27.0
 
