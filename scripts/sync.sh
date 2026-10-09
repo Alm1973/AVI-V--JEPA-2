@@ -24,6 +24,14 @@ if ! msi_awake; then
   ./wake-msi.sh >/dev/null || { echo "could not wake MSI (not on the home LAN?)" >&2; exit 1; }
 fi
 ./keepawake-msi.sh start 30 >/dev/null 2>&1 || true
+# Port 22 answers before a just-woken MSI accepts logins: the first sync
+# after a night's sleep closed the sftp connection and failed on the
+# manifest (2026-10-09). Wait for a real login, up to a minute.
+for _ in $(seq 1 12); do
+  ssh -n "${SSH_OPTS[@]}" -o ConnectTimeout=5 "$MSI_HOST" "exit" \
+    >/dev/null 2>&1 && break
+  sleep 5
+done
 
 BATCH=$(mktemp -t avi-sync)
 MANIFEST=$(mktemp -t avi-manifest)
