@@ -423,13 +423,18 @@ class Arm:
                 conf = max((d["conf"] for d in people), default=None)
                 top = max(people, key=lambda d: d["conf"], default=None)
                 fh, fw = frame.shape[:2]
+                level = float(frame.mean())
                 event = self.presence.sample(
                     bool(people), conf=conf,
-                    view_ok=self.view_ok_for_presence(),
+                    # Not seeing him in a black room is not evidence he
+                    # left: at 5/255 nothing is detected at all.
+                    view_ok=self.view_ok_for_presence() and (
+                        bool(people)
+                        or level >= look_check_mod.DARK_LEVEL),
                     box=(None if top is None else
                          (top["cx"] / fw, top["cy"] / fh, top["w"] / fw,
                           top["h"] / fh)),
-                    light=float(frame.mean()))
+                    light=level)
                 if people and self.presence.still_person():
                     # Evidence only, for now: a 'person' that has not moved
                     # in five minutes. Noted at most every half hour.

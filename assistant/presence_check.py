@@ -28,3 +28,6 @@ for hr in sorted(by):
     med = c[len(c) // 2] if c else None
     print(f"{hr:02d}h  samples {h['n']:3d}  present {h['yes']:3d}  "
           f"seat-view {h['view']:3d}  median conf {med}")
+print("last samples:")
+for r in db.execute("SELECT * FROM samples ORDER BY ts DESC LIMIT 3"):
+    print(" ", datetime.fromtimestamp(r[0]).strftime("%H:%M:%S"), r[1:])
