@@ -1251,3 +1251,17 @@ Research and the decisions behind it are in `docs/RESEARCH-motion.md`: GenEM, V-
 - **The "person" at his seat is a POSTER on his wall** (Shaurya confirmed).
   - Presence learns a box that stays perfectly still for 5 minutes as a decoy (box 0.40,0.53,0.13,0.40, learned 07:51) and ignores it afterwards.
   - It made a false "arrived" at sunrise, a rundown and a break offer. After a restart it made a second "arrived" and a second rundown (fixed: break offers were read as the last presence event). It also "arrived" from frames taken mid-dance (fixed: samples come only from the seat view, held still).
+- **Reactions and corrections (deployed about 09:15).**
+  - AVI **waves hello** when he sits down, but not when quiet, asleep or with a guest.
+  - Praise gets a happy wiggle and a scold gets an embarrassed look-away. Both are offset-only, so the seat view is kept.
+  - **"do it faster / bigger / smaller / slower"** edits the last dance one notch (GenEM's feedback step). "Faster" also shrinks the swings, because the arm is at its 27°/s ceiling. Live: the AI turned "do it faster" into perform(last, adjust=faster) in 1.4 s.
+- **Daily self-check** (`selfcheck_loop`, switch `self_check_daily`, on by default). It runs between 09:00 and 15:00, when he's away and the room is lit. It makes one 4° move per joint, out and back, and compares each against the learned slopes. Under 30% of the learned motion means "not moving", which shows in `/health` as joints and is told to him. The first run (09:01) passed: base 1.32, shoulder 0.98, elbow 0.80, wrist 0.92.
+- **Presence hardening:**
+  - Samples are skipped while the arm is travelling.
+  - The decoy now tolerates ±0.15 of vertical slide (pitch slack).
+  - Decoy "moves" must come in a row before the decoy is forgotten.
+  - A restart arrives at the seat properly.
+- **Measured latencies.** These run from the command to the arm starting:
+  - a new command the AI composes: 2.1–3.7 s;
+  - a learned shortcut: 0.7 s;
+  - quick rules: under 1 s.
