@@ -98,7 +98,9 @@ WANTED = [
 
 
 def log(msg):
-    print(f"[calib {datetime.now():%H:%M:%S}] {msg}", flush=True)
+    # The date too: one log spans days, and "00:40 model skipped" from
+    # yesterday read as tonight (2026-10-09).
+    print(f"[calib {datetime.now():%m-%d %H:%M:%S}] {msg}", flush=True)
 
 
 def load_taught():

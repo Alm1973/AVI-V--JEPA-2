@@ -39,7 +39,7 @@ BOUNDARY = "avi-frame"
 
 
 def log(msg):
-    print(f"[stream {datetime.now():%H:%M:%S}] {msg}", flush=True)
+    print(f"[stream {datetime.now():%m-%d %H:%M:%S}] {msg}", flush=True)
 
 
 class Latest:
