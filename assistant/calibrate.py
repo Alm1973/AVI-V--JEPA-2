@@ -572,6 +572,9 @@ def main():
         "arm": arm, "latest": latest, "deadline": deadline,
         "fps": args.fps, "stop": stop_event}))
     srv.daemon_threads = True
+    # Without it the deadline is only checked when the next request comes
+    # in, and an ended run keeps the camera (dashboard.py, 2026-10-09).
+    srv.timeout = 1.0
     log(f"backend={backend.name} page build {BUILD}")
     log(f"serving http://{host}:{args.port}/ (http://msi:{args.port}/) "
         f"for {args.minutes:.0f} min")

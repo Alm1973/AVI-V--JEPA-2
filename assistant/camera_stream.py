@@ -259,6 +259,9 @@ def main():
     srv = ThreadingHTTPServer((host, args.port), make_handler(latest, deadline,
                                                               args.fps))
     srv.daemon_threads = True
+    # Without it the deadline is only checked when the next request comes
+    # in, and an ended run keeps the camera (dashboard.py, 2026-10-09).
+    srv.timeout = 1.0
     log(f"serving http://{host}:{args.port}/  (also http://msi:{args.port}/ "
         f"with MagicDNS) for {args.minutes:.0f} min")
     try:

@@ -4070,6 +4070,12 @@ def main():
         "arm": arm, "latest": latest, "deadline": deadline, "brain": brain,
         "fps": args.fps, "stop": stop_event}))
     srv.daemon_threads = True
+    # handle_request() waits for a request; without a timeout the deadline
+    # was only checked when someone next opened the page. A run that ended
+    # at 23:20 was still holding the camera and the serial port at 00:17,
+    # loops stopped, until a health check happened to arrive (2026-10-09) --
+    # and the 08:10 start needs both free.
+    srv.timeout = 1.0
     log(f"backend={backend.name} page build {BUILD}")
     log(f"serving http://{host}:{args.port}/ (http://msi:{args.port}/) "
         f"for {args.minutes:.0f} min")
