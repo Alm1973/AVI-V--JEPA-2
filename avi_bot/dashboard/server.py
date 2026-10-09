@@ -1847,7 +1847,8 @@ def make_handler(st):
                     ends_in_s=max(0.0, deadline - time.time()),
                     voice=(host.speaker.status()
                            if host is not None and host.speaker is not None
-                           else None)))
+                           else None),
+                    arm_link=arm.link_status()))
             elif self.path == "/settings":
                 path = settings_mod.path()
                 for key, name in (("voice_speed", "speed"),

@@ -49,5 +49,17 @@ class Voice(unittest.TestCase):
         self.assertEqual(h["voice"], {"state": "ok", "said": 3,
                                       "backend": "piper"})
 
+
+class ArmLink(unittest.TestCase):
+    def test_a_dead_serial_link_is_broken(self):
+        h = health.check(NOW, presence_last_ts=NOW,
+                         arm_link="could not open port 'COM5'")
+        self.assertEqual(h["arm"]["state"], "broken")
+        self.assertIn("arm", h["summary"])
+
+    def test_ok_is_ok(self):
+        h = health.check(NOW, presence_last_ts=NOW, arm_link="ok")
+        self.assertEqual(h["arm"], {"state": "ok"})
+
 if __name__ == "__main__":
     unittest.main()

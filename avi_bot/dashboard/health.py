@@ -14,7 +14,7 @@ LATENT_STALE_S = 120            # one latent every 15 s
 def check(now, presence_last_ts=None, latents_on=False, latent_last_ts=None,
           latent_error=None, brain_error=None, brain_started=False,
           scan_every_min=0.0, last_scan_ts=None, ends_in_s=None,
-          voice=None):
+          voice=None, arm_link=None):
     out = {}
     if presence_last_ts is None:
         out["presence"] = {"state": "stale", "why": "no looks recorded"}
@@ -41,6 +41,11 @@ def check(now, presence_last_ts=None, latents_on=False, latent_last_ts=None,
         "state": "on" if scan_every_min else "off",
         "every_min": scan_every_min or 0,
         "last_s": None if last_scan_ts is None else round(now - last_scan_ts)}
+    if arm_link is not None:
+        # The serial link to the Arduino. Without it here, a dropped USB
+        # cable left health saying "all running" over a dead arm.
+        out["arm"] = ({"state": "ok"} if arm_link == "ok"
+                      else {"state": "broken", "why": str(arm_link)[:160]})
     if voice is not None:
         # Speaker.status(). "silent" is the fallback when Piper fails: it
         # "speaks" without a sound, so it counts as broken, not quiet.
