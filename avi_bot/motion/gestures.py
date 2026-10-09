@@ -331,3 +331,29 @@ def make(name, **kw):
         return GESTURES[name](**kw)
     except KeyError:
         raise KeyError(f"unknown gesture {name!r}; have {sorted(GESTURES)}")
+
+
+# Never the same gesture twice. Anki's animators gave Cozmo's actions a
+# RANGE to play within rather than one fixed take, and the same nod every
+# time is what reads as a machine (docs/RESEARCH-motion.md). Each play is
+# drawn from that range: size and tempo each within +-15%.
+VARY_SIZE = 0.15
+VARY_TEMPO = 0.15
+
+
+def vary(move, rng=None):
+    """`move` with its keyframe legs' size and tempo drawn from the range,
+    refitted to what the arm can do. Pose legs (perk_up's rise to TALL) go
+    where they go; only the expressive part varies."""
+    import random
+    rng = rng or random
+    legs = getattr(move, "moves", None)
+    for leg in (legs if legs is not None else [move]):
+        if not isinstance(leg, KeyframeMove):
+            continue
+        a = 1.0 + rng.uniform(-VARY_SIZE, VARY_SIZE)
+        leg.keys = [(t, {j: v * a for j, v in off.items()})
+                    for t, off in leg.keys]
+        leg.duration *= 1.0 + rng.uniform(-VARY_TEMPO, VARY_TEMPO)
+        leg._fit(_rate())
+    return move

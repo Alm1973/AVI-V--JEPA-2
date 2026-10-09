@@ -267,7 +267,7 @@ class Arm:
         return self.engine.busy()
 
     def play(self, name, why=""):
-        move = gestures.make(name)
+        move = gestures.vary(gestures.make(name))
         self.engine.push(move)
         # Mood changes how a move reads, not which move it is (BUILD_SPEC 5.5).
         emotion = self.mood.emotion()

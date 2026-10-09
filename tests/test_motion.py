@@ -505,3 +505,37 @@ class TestBackends(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+
+class NeverTheSameTwice(unittest.TestCase):
+    """gestures.vary: Cozmo-style ranges instead of one fixed take."""
+
+    def test_two_nods_differ_but_stay_a_nod(self):
+        import random
+        from avi_bot.motion import gestures
+        rng = random.Random(4)
+        a = gestures.vary(gestures.make("nod"), rng)
+        b = gestures.vary(gestures.make("nod"), rng)
+        base = gestures.make("nod")
+        self.assertNotEqual(a.keys, b.keys)
+        for m in (a, b):
+            for (t, off), (t0, off0) in zip(m.keys, base.keys):
+                self.assertEqual(t, t0)
+                for j, v in off.items():
+                    self.assertLessEqual(abs(v), abs(off0[j]) * 1.15 + 1e-9)
+                    self.assertGreaterEqual(abs(v),
+                                            abs(off0[j]) * 0.85 - 1e-9)
+
+    def test_never_faster_than_the_arm(self):
+        import random
+        from avi_bot.motion import gestures
+        rng = random.Random(1)
+        for name in ("shake", "wave", "excited_wiggle", "celebrate"):
+            for _ in range(20):
+                m = gestures.vary(gestures.make(name), rng)
+                legs = getattr(m, "moves", [m])
+                for leg in legs:
+                    if hasattr(leg, "peak_rate"):
+                        self.assertLessEqual(leg.peak_rate(),
+                                             gestures._rate() + 1e-6, name)
