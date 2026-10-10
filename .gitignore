@@ -22,3 +22,6 @@ taught_poses.json
 models/
 *.onnx
 *.onnx.json
+
+# This machine's network names and addresses (the repo is public).
+scripts/local.env

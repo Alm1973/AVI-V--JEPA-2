@@ -13,7 +13,9 @@ import sys
 import time
 import urllib.request
 
-HOST = "http://msi.your-tailnet.ts.net:8000"
+from msi_host import host as _host  # noqa: E402
+
+HOST = _host()
 
 
 def post(path, body=None, timeout=90):

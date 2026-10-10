@@ -6,8 +6,8 @@
 param(
   [int]$Minutes = 60,
   # Must be passed explicitly: this task runs as SYSTEM, whose $env:USERPROFILE
-  # is the system profile, not C:\Users\MSI-User.
-  [string]$LogPath = "C:\Users\MSI-User\avi-remote\keepawake.log"
+  # is the system profile, not the user's. keepawake-ctl.ps1 passes it.
+  [string]$LogPath = "$env:PUBLIC\keepawake.log"
 )
 
 $ErrorActionPreference = "Stop"

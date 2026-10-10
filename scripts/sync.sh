@@ -14,7 +14,7 @@
 # length limit, and binary transfer instead of base64's 4/3 inflation.
 #
 # Paths are relative to the remote HOME on purpose. The account is
-# "MSI-User", and a home-relative path keeps that space out of every
+# "First Last", and a home-relative path keeps that space out of every
 # filename rather than escaping it correctly in several places.
 set -uo pipefail
 cd "$(dirname "$0")"

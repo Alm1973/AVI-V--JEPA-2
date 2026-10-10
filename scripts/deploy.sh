@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Push the Mac's code to C:\Users\MSI-User\avi\ on the MSI.
+# Push the Mac's code to %USERPROFILE%\avi\ on the MSI.
 # The Mac is the source of truth; never edit files on the MSI by hand.
 #
 #   assistant/  -> avi\assistant\   (runs beside the GPU modules it imports)
@@ -94,4 +94,4 @@ done
 # Prove the import actually resolves, rather than trusting that files landed.
 echo "--- import check on the MSI ---"
 ssh "${SSH_OPTS[@]}" "$MSI_HOST" \
-  "& \"$REMOTE/.venv-yolo/Scripts/python.exe\" -c \"import sys; sys.path.insert(0, r'C:/Users/MSI-User/avi'); from avi_bot.motion import poses, gestures; c=poses.load(); print('avi_bot ok: tick', c.tick_hz, 'cap', c.speed_cap, len(gestures.GESTURES), 'gestures')\""
+  "& \"$REMOTE/.venv-yolo/Scripts/python.exe\" -c \"import os, sys; sys.path.insert(0, os.path.join(os.environ['USERPROFILE'], 'avi')); from avi_bot.motion import poses, gestures; c=poses.load(); print('avi_bot ok: tick', c.tick_hz, 'cap', c.speed_cap, len(gestures.GESTURES), 'gestures')\""

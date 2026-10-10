@@ -19,8 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from avi_bot.perception import look_check  # noqa: E402
 
 secs = float(sys.argv[1]) if len(sys.argv) > 1 else 8.0
-url = sys.argv[2] if len(sys.argv) > 2 else \
-    "http://100.x.y.z:8000/stream.mjpg"
+if len(sys.argv) > 2:
+    url = sys.argv[2]
+else:
+    from camera_stream import tailscale_ip  # noqa: E402
+    url = f"http://{tailscale_ip()}:8000/stream.mjpg"
 stream = urllib.request.urlopen(url, timeout=10)
 buf, prev, t0 = b"", None, time.time()
 while time.time() - t0 < secs:
