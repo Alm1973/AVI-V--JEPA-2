@@ -446,8 +446,9 @@ class Moody(unittest.TestCase):
                                    style=mood.style_for("sleepy"))
         excited, _ = choreo.compose(moves, SEAT, config=CFG,
                                     style=mood.style_for("excited"))
-        swing = lambda m: max(abs(o["base_yaw"]) for o in sample(m)
-                              if abs(o["base_yaw"]) < 17)
+        # The sway's rightward peak; the backlash dip at the end is
+        # leftward and the same 18 degrees whatever the mood.
+        swing = lambda m: max(o["base_yaw"] for o in sample(m))
         self.assertGreater(sleepy.duration, plain.duration)
         self.assertLess(swing(sleepy), swing(plain))
         self.assertGreater(swing(excited), swing(plain))
