@@ -226,3 +226,20 @@ Facts measured here that override anything stale above or in `BUILD_SPEC.md`:
   is the pre-registered metric for the 80 %-agreement audit: it is now **frozen**.
 - **`audit.py` needs a GUI window** (`cv2.imshow`), so it cannot run over SSH as written.
   A remote audit path is still owed. See HANDOFF.
+## OmniRoute second opinion (for Claude Code's own work, not `avi_bot`)
+
+For these tasks only, get a second opinion through OmniRoute before answering:
+- Reviewing logs and experimental results
+- Checking hypotheses and spotting inconsistencies
+- Critiquing code or proposing isolated fixes
+
+Call `omniroute_route_request` with exactly:
+- model: `openrouter/nvidia/nemotron-3-super-120b-a12b:free`
+- role: `analysis`, budget: `0`, stream: `false`, and no `combo`
+
+Rules:
+- Ordinary conversation and final decisions stay with Claude. Treat the reply as input to check, not as the answer.
+- Never use a different or paid model. Don't swap models, add a combo, or pass a fallback.
+- After each call, check that `response.model` matches the requested ID and `routing.cost` is `0`. If either doesn't match, ignore the output and tell Shaurya.
+- If the call fails (429, 502, empty response), say so and continue without it. Don't retry with another model.
+- Send text only. Never send camera frames, audit thumbnails, `desk_memory.db` contents or anything from `scripts/local.env`. Strip real IPs, MACs and usernames from logs first.
