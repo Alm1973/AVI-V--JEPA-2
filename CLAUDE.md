@@ -14,6 +14,8 @@ Shaurya is a high-school researcher. He wants short, to-the-point answers, with 
 
 ## 1. Machines and network
 
+> The repo is public, so the Windows profile name, tailnet name, MAC address and Tailscale IPs below are placeholders (`MSI-User`, `your-tailnet`, `XX:XX:...`, `100.x.y.z`). The real values are in `scripts/local.env` on the Mac, which is gitignored; `scripts/local.env.example` lists them.
+
 | Item | Value |
 |---|---|
 | MSI laptop | Windows, hostname `MSI`, profile `C:\Users\MSI-User` (**the path has a space**), RTX 3060 Laptop GPU 6 GB |
