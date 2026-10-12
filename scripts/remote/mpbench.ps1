@@ -25,10 +25,17 @@ if (-not (Test-Path $py)) {
   # A half-made env from a failed run makes `conda create -p` refuse; clear it.
   if (Test-Path $env_) { Remove-Item -Recurse -Force $env_ }
   Write-Output "creating Python 3.12 env at $env_ (one time, a few minutes)"
-  & $conda create -y -q -p $env_ -c conda-forge --override-channels python=3.12 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 15
+  & $conda create -y -q -p $env_ -c conda-forge --override-channels python=3.12 pip 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 15
   if ($LASTEXITCODE -ne 0 -or -not (Test-Path $py)) { Write-Output "conda create failed (exit $LASTEXITCODE); output above"; exit 1 }
 }
 
+# conda-forge's python ships without pip unless asked; an env made before
+# `pip` was in the create line needs it bootstrapped.
+& $py -c "import pip" 2>$null
+if ($LASTEXITCODE -ne 0) {
+  & $py -m ensurepip --upgrade 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 3
+  if ($LASTEXITCODE -ne 0) { Write-Output "ensurepip failed (exit $LASTEXITCODE)"; exit 1 }
+}
 & $py -m pip install -q --disable-pip-version-check mediapipe opencv-python psutil 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 10
 if ($LASTEXITCODE -ne 0) { Write-Output "pip install failed (exit $LASTEXITCODE); output above"; exit 1 }
 & $py -c "import mediapipe, cv2, psutil, sys; print('python', sys.version.split()[0], 'mediapipe', mediapipe.__version__)" 2>&1 | ForEach-Object { "$_" }
