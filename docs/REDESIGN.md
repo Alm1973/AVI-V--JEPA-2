@@ -1,6 +1,6 @@
 # REDESIGN: one directive, self-supervised learning
 
-Status: **draft for Shaurya to mark up.** Agreed in conversation on 2026-10-12. No code yet.
+Status: **direction approved, open questions answered.** Agreed in conversation on 2026-10-12. No code yet.
 
 Where this disagrees with `BUILD_SPEC.md` sections 5, 9, 10 and 11, this file wins once Shaurya signs off.
 `docs/LEARNING-DESIGN.md` (layers 1-4) carries over almost whole. This doc puts it at the centre.
@@ -90,8 +90,8 @@ Things AVI discovers get placeholder names (`person_B`, `gesture_7`). The LLM ca
 **once** what they are. That is a name, not a training label, and the clustering already happened.
 
 **Sleep.** The C270 cannot see in the dark, so sleep is inferred from last seen, lights off,
-lying down, lights on and first seen. How good this can be depends on whether the camera can
-see the bed (open question 2).
+lying down, lights on and first seen. The camera can see the bed (decision 2), so lying in bed is observed directly
+while the lights are on.
 
 ## 6. Proving the thesis
 
@@ -122,12 +122,14 @@ see the bed (open question 2).
 | gestures and chirps, as **tools** | |
 | the free LLM provider chain (spec section 8.2) | |
 
-## 9. Open questions for Shaurya
+## 9. Decisions (Shaurya, 2026-10-12)
 
-1. **Captions:** may a local one-line scene caption every few minutes go to the cloud LLM? It
-   covers what structured events miss, but it is text *about* his room leaving the MSI.
-2. **Bed:** can the camera see the bed, or only the desk?
-3. **Enrollment:** is it OK for AVI to ask him to name a cluster (a person or a gesture) once?
+1. **Captions: yes.** A local one-line scene caption may go to the cloud LLM every few minutes.
+   It is generated on the MSI; the frame never leaves.
+2. **Bed: yes, the camera can see it.** Sleep can use lying-down detection in the bed area,
+   not only desk presence. Lights off still stands in for "asleep" once it is dark, since the
+   C270 cannot see without light.
+3. **Naming: yes.** AVI may ask him **once** to name a person or gesture cluster it discovered.
 
 ## 10. Order of work (proposed)
 
