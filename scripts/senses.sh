@@ -30,9 +30,10 @@ ctl() {  # ctl <Action> [ScriptArgs] [Tail]
   ssh "${SSH_OPTS[@]}" "$MSI_HOST" \
     "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"\$env:USERPROFILE\\avi-remote\\task-ctl.ps1\" -Action $1 -TaskName 'AVI senses' -Script senses.py -Venv desk $argpart ${3:+-Tail $3}"
 }
-fg() {  # a short foreground run over plain ssh
+fg() {  # a short foreground run over plain ssh. Exit is python's own: MediaPipe's
+        # stderr warnings otherwise made PowerShell report 1 on a clean run.
   ssh "${SSH_OPTS[@]}" "$MSI_HOST" \
-    "if (-not (Test-Path \"$PY\")) { 'no Python 3.12 env yet: run ./scripts/mp-bench.sh 20 once'; exit 1 }; Set-Location \"\$env:USERPROFILE\\avi\\assistant\"; & \"$PY\" -u \"$SCRIPT\" $* 2>&1 | ForEach-Object { \"\$_\" } | Where-Object { \$_ -notmatch '^(W|I)0000|inference_feedback|^WARNING: Logging|^INFO: Created' }"
+    "if (-not (Test-Path \"$PY\")) { 'no Python 3.12 env yet: run ./scripts/mp-bench.sh 20 once'; exit 1 }; Set-Location \"\$env:USERPROFILE\\avi\\assistant\"; & \"$PY\" -u \"$SCRIPT\" $* 2>&1 | ForEach-Object { \"\$_\" } | Where-Object { \$_ -notmatch '^(W|I)0000|inference_feedback|^WARNING: Logging|^INFO: Created' }; exit \$LASTEXITCODE"
 }
 
 ./wake-msi.sh >/dev/null || { echo "could not wake MSI (not on the home LAN?)" >&2; exit 1; }
