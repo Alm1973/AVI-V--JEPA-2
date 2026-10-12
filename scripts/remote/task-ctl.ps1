@@ -13,11 +13,15 @@ param(
   [string]$Script   = "observer.py",
   [string]$ScriptArgs = "--no-preview",
   [int]$Tail = 40,
-  [string]$At = "08:10"
+  [string]$At = "08:10",
+  # yolo = .venv-yolo (the paper's env, the default for everything old);
+  # desk = avi-desk\.conda312, the Python 3.12 env of the redesign (senses.py).
+  [ValidateSet("yolo","desk")][string]$Venv = "yolo"
 )
 $ErrorActionPreference = "Stop"
 $Assistant = "$env:USERPROFILE\avi\assistant"
 $Python    = "$env:USERPROFILE\avi\.venv-yolo\Scripts\python.exe"
+if ($Venv -eq "desk") { $Python = "$env:USERPROFILE\avi-desk\.conda312\python.exe" }
 $Log       = "$env:USERPROFILE\avi-remote\$($TaskName -replace '[^\w]','_').log"
 
 function Show-Status {

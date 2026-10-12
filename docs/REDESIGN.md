@@ -134,7 +134,9 @@ while the lights are on.
 ## 10. Order of work (proposed)
 
 1. Senses → text events: face, hands, pose, lights. Log only, no brain yet. Start immediately,
-   because every self-learned model needs data.
+   because every self-learned model needs data. **Built 2026-10-12:** `avi_bot/senses/`
+   (rules, 19 tests), `assistant/senses.py` (camera loop), `scripts/senses.sh once|start|stop|report`.
+   Face identity (InsightFace) is step 1b.
 2. Self-learned identity and routine models on those logs. Check the curves.
 3. The brain loop with tools and memory. Reactions logged as feedback.
 4. Bandit over actions, and nightly reflection.
