@@ -11,7 +11,7 @@
 # conda-forge with --override-channels: the default Anaconda channels now
 # require accepting their Terms of Service interactively, which over SSH just
 # fails.
-param([int]$Seconds = 60, [switch]$Mjpg)
+param([int]$Seconds = 60, [switch]$Mjpg, [string]$Size = "1280x720")
 $ErrorActionPreference = "Continue"
 $env_ = "$env:USERPROFILE\avi-desk\.conda312"
 $py = "$env_\python.exe"
@@ -39,6 +39,6 @@ if ($LASTEXITCODE -ne 0) {
 & $py -m pip install -q --disable-pip-version-check mediapipe opencv-python psutil 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 10
 if ($LASTEXITCODE -ne 0) { Write-Output "pip install failed (exit $LASTEXITCODE); output above"; exit 1 }
 & $py -c "import mediapipe, cv2, psutil, sys; print('python', sys.version.split()[0], 'mediapipe', mediapipe.__version__)" 2>&1 | ForEach-Object { "$_" }
-$extra = @(); if ($Mjpg) { $extra += "--mjpg" }
+$extra = @("--size", $Size); if ($Mjpg) { $extra += "--mjpg" }
 & $py -u $script --seconds $Seconds @extra 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -notmatch '^(W|I)0000|inference_feedback' }
 exit $LASTEXITCODE

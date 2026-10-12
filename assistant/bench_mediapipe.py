@@ -51,18 +51,23 @@ def model(name):
     return BaseOptions(model_asset_path=str(path))
 
 
-def open_camera(index, mjpg=False):
+def open_camera(index, mjpg=False, size=(1280, 720)):
     cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
     if mjpg:
         # The C270's default 720p mode is uncompressed and USB 2.0 carries only
         # ~10 fps of it (measured 9.9, 2026-10-12). MJPG should allow 30.
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
     # The C270's first ~5 frames are black with ok=True (CLAUDE.md).
     for _ in range(60):
         ok, frame = cap.read()
         if ok and frame.mean() >= 1.0:
+            # What the driver actually agreed to, not what was asked for.
+            cc = int(cap.get(cv2.CAP_PROP_FOURCC))
+            cc = "".join(chr((cc >> 8 * i) & 0xFF) for i in range(4))
+            print(f"camera: {frame.shape[1]}x{frame.shape[0]} format={cc!r} "
+                  f"driver fps={cap.get(cv2.CAP_PROP_FPS):.0f} brightness={frame.mean():.0f}/255")
             return cap
     raise SystemExit(f"camera {index}: no live frame (is the dashboard holding it? ./runHome stop)")
 
@@ -72,6 +77,7 @@ def main():
     ap.add_argument("--seconds", type=float, default=60)
     ap.add_argument("--camera", type=int, default=1)
     ap.add_argument("--mjpg", action="store_true", help="ask the camera for MJPG (faster than raw at 720p)")
+    ap.add_argument("--size", default="1280x720", help="capture size, e.g. 640x480")
     ap.add_argument("--width", type=int, default=640, help="frames are downscaled to this before inference")
     args = ap.parse_args()
 
@@ -94,7 +100,7 @@ def main():
     seen = {k: 0 for k in senses}
     due = {k: 0.0 for k in senses}
 
-    cap = open_camera(args.camera, args.mjpg)
+    cap = open_camera(args.camera, args.mjpg, tuple(int(v) for v in args.size.split("x")))
     me = psutil.Process()
     me.cpu_percent(None)
     psutil.cpu_percent(None)
@@ -124,6 +130,9 @@ def main():
             cpu_all.append(psutil.cpu_percent(None))
             last_sample = now
     cap.release()
+    if not cpu_me:  # a run shorter than one 5 s sample
+        cpu_me.append(me.cpu_percent(None) / psutil.cpu_count())
+        cpu_all.append(psutil.cpu_percent(None))
     elapsed = time.perf_counter() - t0
 
     print(f"\ncamera frames: {frames / elapsed:.1f} fps")
