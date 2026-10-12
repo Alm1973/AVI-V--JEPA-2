@@ -1,0 +1,16 @@
+$ ./scripts/senses.sh once 60
+# 2026-10-12 02:44:37 MST
+[senses 02:47:25] running: senses-dev.db, camera 1 at 640x480, for 60 s
+[senses 02:47:29] arrived
+[senses 02:47:30] gesture {"name": "Thumb_Up", "hand": "Left", "facing_avi": true}
+[senses 02:47:30] looked_at_avi
+[senses 02:47:34] gesture {"name": "Closed_Fist", "hand": "Right", "facing_avi": false}
+[senses 02:47:45] gesture {"name": "Thumb_Up", "hand": "Right", "facing_avi": false}
+[senses 02:47:50] gesture {"name": "Thumb_Up", "hand": "Left", "facing_avi": false}
+[senses 02:47:58] gesture {"name": "Closed_Fist", "hand": "Left", "facing_avi": false}
+[senses 02:48:00] looked_at_avi
+[senses 02:48:01] gesture {"name": "Closed_Fist", "hand": "Left", "facing_avi": true}
+[senses 02:48:06] gesture {"name": "Open_Palm", "hand": "Right", "facing_avi": false}
+[senses 02:48:18] gesture {"name": "Closed_Fist", "hand": "Right", "facing_avi": false}
+[senses 02:48:26] stopped after 60 s: 14.9 fps, 11 events, rows {'events': 11, 'samples': 5, 'vectors': 174}, lights threshold 40 (default), decoys known 0
+# exit 1
