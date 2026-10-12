@@ -51,8 +51,12 @@ def model(name):
     return BaseOptions(model_asset_path=str(path))
 
 
-def open_camera(index):
+def open_camera(index, mjpg=False):
     cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+    if mjpg:
+        # The C270's default 720p mode is uncompressed and USB 2.0 carries only
+        # ~10 fps of it (measured 9.9, 2026-10-12). MJPG should allow 30.
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     # The C270's first ~5 frames are black with ok=True (CLAUDE.md).
@@ -67,6 +71,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seconds", type=float, default=60)
     ap.add_argument("--camera", type=int, default=1)
+    ap.add_argument("--mjpg", action="store_true", help="ask the camera for MJPG (faster than raw at 720p)")
     ap.add_argument("--width", type=int, default=640, help="frames are downscaled to this before inference")
     args = ap.parse_args()
 
@@ -89,7 +94,7 @@ def main():
     seen = {k: 0 for k in senses}
     due = {k: 0.0 for k in senses}
 
-    cap = open_camera(args.camera)
+    cap = open_camera(args.camera, args.mjpg)
     me = psutil.Process()
     me.cpu_percent(None)
     psutil.cpu_percent(None)

@@ -139,3 +139,15 @@ while the lights are on.
 3. The brain loop with tools and memory. Reactions logged as feedback.
 4. Bandit over actions, and nightly reflection.
 5. Pre-registered 4-week run and the ablation.
+
+## 11. Measured (2026-10-12)
+
+| Check | Result | Consequence |
+|---|---|---|
+| Groq free tier, live headers (`scripts/groq-limits.sh`) | `gpt-oss-20b`, `gpt-oss-120b`, `qwen3.8-27b`: **1,000 requests/day and 8K tokens/min each** (200K tokens/day each, per providers.py) | ~85 turns per model per day at ~2.3K tokens/turn, so **~255/day across the three**, plus OpenRouter 50 |
+| MediaPipe hands + body + face together on the MSI CPU, live camera, person in view (`scripts/mp-bench.sh 60`) | **3 % of the machine** (16 threads), 8 % total. Median per frame: hands 19 ms, body 14 ms, face 11 ms | CPU is **not** a constraint. The senses fit with room to spare |
+| Same run, camera rate | **9.9 fps** at 1280x720; hands got 8.6 Hz of a 15 Hz target | the limit is the C270's uncompressed 720p over USB 2.0. Re-test with `mp-bench.sh 60 mjpg` |
+| `gpt-oss-20b` on the R820 | not run: the R820 is not yet on the tailnet | `scripts/r820-bench.sh` once it is |
+
+The Python 3.12 env for the new pipeline now exists on the MSI at `%USERPROFILE%\avi-desk\.conda312`
+(conda-forge, mediapipe 1.1.0). `.venv-yolo` is untouched.
