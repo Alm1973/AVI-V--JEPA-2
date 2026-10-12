@@ -120,7 +120,9 @@ def main():
         for name, (hz, run, found) in senses.items():
             if now < due[name]:
                 continue
-            due[name] = now + 1.0 / hz
+            # 10 % slack: frames land a hair before a model is due, and without
+            # it a 15 Hz model on a 14.7 fps camera ran on only 10.6 Hz of them.
+            due[name] = now + 0.9 / hz
             s = time.perf_counter()
             result = run(image, ts)
             ms[name].append((time.perf_counter() - s) * 1000)
